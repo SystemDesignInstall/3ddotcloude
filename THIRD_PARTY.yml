@@ -1,0 +1,236 @@
+# THIRD_PARTY.yml - Dependency and backend registry (single source of record)
+#
+# ADR-003 (dependency manager) and ADR-031 (M0 scope) make this file the
+# authoritative registry for every library and backend in the Spatial
+# Platform. CI's `check-dependencies` gate (scripts/check_dependencies.py)
+# rejects any conanfile.txt package that is not registered here and any
+# `status: active` dependency whose license is not permissive/allowlisted.
+#
+# Field reference:
+#   name             Registry key; matches the conan package name
+#                    (`_` and `-` are treated as equivalent).
+#   repository       Upstream source URL.
+#   version          Pinned or minimum version tracked by the platform.
+#   code_license     License of the code/tool itself.
+#   model_license    License of any distributed model weights (null if none).
+#   commercial_use   yes | no | conditional - is commercial use permitted?
+#   redistribution   yes | no | conditional - may we redistribute it?
+#   status           planned | active | removed.
+#   notes            Registration rationale and caveats.
+#   security_notes   Tracked security/CVSS considerations (null when none).
+#
+# Active = linked into the M0 kernel build. Planned = approved direction for a
+# later milestone, never built in M0 (ADR-031). Copyleft licenses on planned
+# backends (AGPL-3.0, LGPL-2.1) are WARNINGS here: they may only enter the
+# product through the separate-adapter process after legal review.
+dependencies:
+  - name: eigen
+    repository: https://gitlab.com/libeigen/eigen
+    version: "3.4"
+    code_license: MPL-2.0
+    model_license: null
+    commercial_use: yes
+    redistribution: yes
+    status: active
+    notes: M0 dependency (ADR-019). Header-only linear algebra; matrix types stay inside core/geometry/ and adapters/ per the domain-types gate.
+    security_notes: null
+  - name: protobuf
+    repository: https://github.com/protocolbuffers/protobuf
+    version: tracked-by-conan
+    code_license: Apache-2.0
+    model_license: null
+    commercial_use: yes
+    redistribution: yes
+    status: active
+    notes: M0 dependency. Cross-language worker-protocol and schema serialization (ADR-012).
+    security_notes: null
+  - name: sqlite3
+    repository: https://www.sqlite.org/
+    version: tracked-by-conan
+    code_license: Public Domain
+    model_license: null
+    commercial_use: yes
+    redistribution: yes
+    status: active
+    notes: M0 dependency. Metadata and indices only; payloads live in the content-addressed artifact store (ADR-008, ADR-009).
+    security_notes: null
+  - name: nlohmann-json
+    repository: https://github.com/nlohmann/json
+    version: tracked-by-conan
+    code_license: MIT
+    model_license: null
+    commercial_use: yes
+    redistribution: yes
+    status: active
+    notes: M0 dependency. Manifest and metadata JSON handling.
+    security_notes: null
+  - name: gtest
+    repository: https://github.com/google/googletest
+    version: tracked-by-conan
+    code_license: BSD-3-Clause
+    model_license: null
+    commercial_use: yes
+    redistribution: yes
+    status: active
+    notes: M0 dependency. Kernel and integration test harness (ADR-016).
+    security_notes: null
+  - name: COLMAP
+    repository: https://github.com/colmap/colmap
+    version: planned
+    code_license: BSD-3-Clause
+    model_license: null
+    commercial_use: yes
+    redistribution: yes
+    status: planned
+    notes: Canonical SfM backend behind a capability adapter (ADR-004). Planned; never built in M0.
+    security_notes: null
+  - name: OpenMVS
+    repository: https://github.com/cdcseacave/openMVS
+    version: planned
+    code_license: AGPL-3.0
+    model_license: null
+    commercial_use: conditional
+    redistribution: yes
+    status: planned
+    notes: AGPL-3.0 has commercial licensing requirements - AGPL use requires source disclosure and/or a commercial license. Only via the separate-adapter process after legal review; never in the kernel.
+    security_notes: null
+  - name: Open3D
+    repository: https://github.com/isl-org/Open3D
+    version: planned
+    code_license: MIT
+    model_license: null
+    commercial_use: yes
+    redistribution: yes
+    status: planned
+    notes: Point cloud / geometry processing adapter for later milestones.
+    security_notes: null
+  - name: GTSAM
+    repository: https://github.com/borglab/gtsam
+    version: planned
+    code_license: BSD-2-Clause
+    model_license: null
+    commercial_use: yes
+    redistribution: yes
+    status: planned
+    notes: Unified sensor factor graph for SLAM / pose optimization (ADR-005).
+    security_notes: null
+  - name: Ceres Solver
+    repository: https://github.com/ceres-solver/ceres-solver
+    version: planned
+    code_license: BSD-3-Clause
+    model_license: null
+    commercial_use: yes
+    redistribution: yes
+    status: planned
+    notes: Nonlinear least-squares backend for bundle adjustment and alignment.
+    security_notes: null
+  - name: KISS-ICP
+    repository: https://github.com/PRBonn/kiss-icp
+    version: planned
+    code_license: MIT
+    model_license: null
+    commercial_use: yes
+    redistribution: yes
+    status: planned
+    notes: Lightweight LiDAR odometry backend for the SLAM milestone.
+    security_notes: null
+  - name: VGGT
+    repository: https://github.com/facebookresearch/vggt
+    version: planned
+    code_license: Apache-2.0
+    model_license: verification-required
+    commercial_use: conditional
+    redistribution: conditional
+    status: planned
+    notes: Model license requires verification before commercial use; research only until verified. See MODEL_LICENSES.yml. AI outputs are priors only (ADR-006).
+    security_notes: null
+  - name: LingBot-Map
+    repository: https://github.com/LingBot/LingBot-Map
+    version: planned
+    code_license: unspecified
+    model_license: verification-required
+    commercial_use: conditional
+    redistribution: conditional
+    status: planned
+    notes: License verification required before any use. See MODEL_LICENSES.yml.
+    security_notes: null
+  - name: gsplat
+    repository: https://github.com/nerfstudio-project/gsplat
+    version: planned
+    code_license: Apache-2.0
+    model_license: null
+    commercial_use: yes
+    redistribution: yes
+    status: planned
+    notes: Gaussian Splatting rasterizer adapter for the Gaussian milestone.
+    security_notes: null
+  - name: Nerfstudio
+    repository: https://github.com/nerfstudio-project/nerfstudio
+    version: planned
+    code_license: Apache-2.0
+    model_license: null
+    commercial_use: yes
+    redistribution: yes
+    status: planned
+    notes: Neural rendering framework; selected priors only, never authoritative geometry (ADR-006).
+    security_notes: null
+  - name: FFmpeg
+    repository: https://github.com/FFmpeg/FFmpeg
+    version: planned
+    code_license: LGPL-2.1+ with GPL-compatible options
+    model_license: null
+    commercial_use: conditional
+    redistribution: yes
+    status: planned
+    notes: Video ingestion/export. LGPL-2.1 or GPL build options have distinct obligations; select and document the configuration per use.
+    security_notes: null
+  - name: OpenCV
+    repository: https://github.com/opencv/opencv
+    version: planned
+    code_license: Apache-2.0
+    model_license: null
+    commercial_use: yes
+    redistribution: yes
+    status: planned
+    notes: Image I/O and feature utilities behind adapters.
+    security_notes: null
+  - name: PROJ
+    repository: https://github.com/OSGeo/PROJ
+    version: planned
+    code_license: MIT
+    model_license: null
+    commercial_use: yes
+    redistribution: yes
+    status: planned
+    notes: Coordinate reference system / datum transformation for georeferencing.
+    security_notes: null
+  - name: GDAL
+    repository: https://github.com/OSGeo/gdal
+    version: planned
+    code_license: MIT
+    model_license: null
+    commercial_use: yes
+    redistribution: yes
+    status: planned
+    notes: Geospatial raster/vector formats for GIS import/export.
+    security_notes: null
+  - name: LASzip
+    repository: https://github.com/LASzip/LASzip
+    version: planned
+    code_license: LGPL-2.1
+    model_license: null
+    commercial_use: conditional
+    redistribution: yes
+    status: planned
+    notes: LAS/LAZ point-cloud compression. LGPL-2.1 obligations apply; adapter-only use after legal review.
+    security_notes: null
+  - name: libE57Format
+    repository: https://github.com/asmaloney/libE57Format
+    version: planned
+    code_license: Boost-1.0
+    model_license: null
+    commercial_use: yes
+    redistribution: yes
+    status: planned
+    notes: E57 (ASTM) point-cloud format importer/exporter.
+    security_notes: null

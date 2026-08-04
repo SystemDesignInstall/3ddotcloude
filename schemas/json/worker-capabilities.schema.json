@@ -1,0 +1,55 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://spatial-platform.dev/schemas/json/worker-capabilities.schema.json",
+  "title": "Worker Capabilities",
+  "description": "Capability declaration for workers and adapters (ADR-034). Capabilities are declared by name from the taxonomy; the engine selects implementations by capability, not by tool name.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["worker_id", "protocol_version", "capabilities", "resources"],
+  "properties": {
+    "worker_id": { "type": "string", "format": "uuid" },
+    "protocol_version": { "type": "integer", "minimum": 1 },
+    "capabilities": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": [
+          "sparse_reconstruction",
+          "dense_stereo",
+          "bundle_adjustment",
+          "icp",
+          "surface_reconstruction",
+          "texturing",
+          "gaussian_generation",
+          "lidar_odometry",
+          "loop_closure",
+          "gnss_integration"
+        ],
+        "description": "Extending this taxonomy requires an RFC (Capability API is Constitution-protected)."
+      }
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cpu_cores", "ram_mb", "gpu_mem_mb", "os"],
+      "properties": {
+        "cpu_cores": { "type": "integer", "minimum": 1 },
+        "ram_mb": { "type": "integer", "minimum": 1 },
+        "gpu_mem_mb": { "type": "integer", "minimum": 0 },
+        "os": { "type": "string" },
+        "arch": { "type": "string" }
+      }
+    },
+    "max_concurrency": { "type": "integer", "minimum": 1 }
+  },
+  "examples": [
+    {
+      "worker_id": "9f8e7d6c-5b4a-4c3d-8e2f-1a0b9c8d7e6f",
+      "protocol_version": 1,
+      "capabilities": ["sparse_reconstruction", "bundle_adjustment"],
+      "resources": { "cpu_cores": 16, "ram_mb": 65536, "gpu_mem_mb": 24576, "os": "windows", "arch": "x64" },
+      "max_concurrency": 4
+    }
+  ]
+}

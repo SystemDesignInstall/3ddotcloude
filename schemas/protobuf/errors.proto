@@ -1,0 +1,33 @@
+syntax = "proto3";
+
+package spatial;
+
+// Error model contract (ADR-014). Error codes are part of the public
+// contract and are carried across the worker protocol boundary (never
+// exceptions). See docs/architecture/error-model.md.
+
+enum ErrorDomain {
+  ERROR_DOMAIN_UNSPECIFIED = 0;
+  ERROR_DOMAIN_PROJECT     = 1;
+  ERROR_DOMAIN_STORAGE     = 2;
+  ERROR_DOMAIN_SCHEMA      = 3;
+  ERROR_DOMAIN_COORDINATE  = 4;
+  ERROR_DOMAIN_CALIBRATION = 5;
+  ERROR_DOMAIN_IMPORT      = 6;
+  ERROR_DOMAIN_ARTIFACT    = 7;
+  ERROR_DOMAIN_SCHEDULER   = 8;
+  ERROR_DOMAIN_WORKER      = 9;
+  ERROR_DOMAIN_ADAPTER     = 10;
+  ERROR_DOMAIN_VALIDATION  = 11;
+  ERROR_DOMAIN_UNKNOWN     = 12;
+}
+
+message ErrorInfo {
+  string        code             = 1; // stable machine-readable code, e.g. "STORAGE_ATOMIC_WRITE_FAILED"
+  string        message          = 2; // human-readable message
+  string        context          = 3; // technical context
+  bool          recoverable      = 4; // drives retry policy
+  string        suggested_action = 5;
+  string        cause_code       = 6; // chained cause, empty if none
+  ErrorDomain   domain           = 7;
+}

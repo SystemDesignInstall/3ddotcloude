@@ -1,0 +1,53 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://spatial-platform.dev/schemas/json/recipe.schema.json",
+  "title": "Recipe",
+  "description": "Versioned, immutable pipeline definition (ADR-026). IMPLEMENTATION DEFERRED past M0; schema frozen in P0. Recipes are referenced by task-cache identity.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "name", "version", "git_commit", "stages"],
+  "properties": {
+    "id": { "type": "string", "description": "Stable recipe id, e.g. rc_high_accuracy." },
+    "name": { "type": "string" },
+    "version": { "type": "string", "description": "Semantic version; immutable per build." },
+    "git_commit": { "type": "string" },
+    "config_schema": {
+      "type": ["string", "null"],
+      "description": "Reference to the JSON Schema validating parameters."
+    },
+    "stages": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["stage", "capability"],
+        "properties": {
+          "stage": {
+            "type": "string",
+            "enum": ["validate", "reconstruct", "dense", "mesh", "texture", "gaussian", "quality"]
+          },
+          "capability": {
+            "type": "string",
+            "enum": [
+              "sparse_reconstruction", "dense_stereo", "bundle_adjustment", "icp",
+              "surface_reconstruction", "texturing", "gaussian_generation",
+              "lidar_odometry", "loop_closure", "gnss_integration"
+            ]
+          },
+          "parameters": { "type": "object" }
+        }
+      }
+    },
+    "parameters": { "type": "object" },
+    "cache_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "recipe_version": { "type": "string" },
+        "git_commit": { "type": "string" }
+      },
+      "description": "Identity components folded into the scheduler cache key (ADR-020)."
+    }
+  }
+}

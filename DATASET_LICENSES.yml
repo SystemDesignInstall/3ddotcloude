@@ -1,0 +1,83 @@
+# DATASET_LICENSES.yml - Registry of datasets used for validation and benchmarks
+#
+# Datasets are inputs to the benchmark framework (ADR-029) and to research.
+# Benchmark results shipped to customers must only come from datasets whose
+# terms permit that use. Every dataset referenced by tests or benchmarks must
+# be registered here before use.
+#
+#   name              Dataset short name.
+#   source_url        Where the dataset is obtained.
+#   license           License / terms of use.
+#   commercial_use    yes | no | conditional - may results be used commercially?
+#   redistribution    yes | no - may the dataset itself be redistributed?
+#   checksum_status   recorded | pending - is a known-good checksum pinned?
+#   notes             Caveats and provenance policy.
+#
+# General rule: a dataset whose terms restrict commercial use may only support
+# research and benchmark reporting that respects those terms; it never licenses
+# customer-facing benchmark claims (ADR-029) unless a commercial license is
+# obtained.
+datasets:
+  - name: ETH3D
+    source_url: https://www.eth3d.net/
+    license: research / non-commercial
+    commercial_use: no
+    redistribution: no
+    checksum_status: pending
+    notes: Reference multi-view benchmark. Research use only; obtain permission for any commercial benchmarking.
+  - name: Tanks and Temples
+    source_url: https://www.tanksandtemples.org/
+    license: non-commercial research
+    commercial_use: no
+    redistribution: no
+    checksum_status: pending
+    notes: Non-commercial research dataset; contact the organizers for commercial benchmarking.
+  - name: DTU
+    source_url: https://roboimagedata2.compute.dtu.dk/
+    license: research use
+    commercial_use: no
+    redistribution: no
+    checksum_status: pending
+    notes: Research use only per the DTU terms.
+  - name: KITTI
+    source_url: https://www.cvlibs.net/datasets/kitti/
+    license: Creative Commons BY-NC-SA 4.0
+    commercial_use: no
+    redistribution: yes
+    checksum_status: pending
+    notes: CC BY-NC-SA 4.0 - non-commercial, share-alike; attribution required.
+  - name: TUM RGB-D
+    source_url: https://cvg.cit.tum.de/data/datasets/rgbd-dataset
+    license: CC BY 3.0
+    commercial_use: yes
+    redistribution: yes
+    checksum_status: pending
+    notes: CC BY 3.0 - commercial use permitted with attribution.
+  - name: Replica
+    source_url: https://github.com/facebookresearch/Replica-Dataset
+    license: MIT
+    commercial_use: yes
+    redistribution: yes
+    checksum_status: pending
+    notes: MIT-licensed synthetic indoor scenes; useful for geometry and simulation tests.
+  - name: ScanNet
+    source_url: http://www.scan-net.org/
+    license: CC BY-SA 4.0
+    commercial_use: yes
+    redistribution: yes
+    checksum_status: pending
+    notes: CC BY-SA 4.0 - commercial use permitted, share-alike and attribution required.
+  - name: MegaDepth
+    source_url: https://www.cs.cornell.edu/projects/megadepth/
+    license: non-commercial research
+    commercial_use: no
+    redistribution: no
+    checksum_status: pending
+    notes: Research-only terms; contact the authors for commercial use.
+  - name: BlendedMVS
+    source_url: https://github.com/YoYo000/BlendedMVS
+    license: MIT
+    commercial_use: yes
+    redistribution: yes
+    checksum_status: pending
+    notes: MIT-licensed synthetic multi-view dataset; redistribution permitted with attribution.

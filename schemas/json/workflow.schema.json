@@ -1,0 +1,38 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://spatial-platform.dev/schemas/json/workflow.schema.json",
+  "title": "Workflow",
+  "description": "Durable, replayable, undoable workflow of stages (ADR-028). IMPLEMENTATION DEFERRED past M0; schema frozen in P0.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "project_id", "scene_id", "steps"],
+  "properties": {
+    "id": { "type": "string", "format": "uuid" },
+    "project_id": { "type": "string", "format": "uuid" },
+    "scene_id": { "type": "string", "format": "uuid" },
+    "steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["stage", "status"],
+        "properties": {
+          "stage": {
+            "type": "string",
+            "enum": ["import", "validate", "optimize", "review", "improve", "finalize"]
+          },
+          "recipe_ref": {
+            "type": "object",
+            "properties": {
+              "recipe_id": { "type": "string" },
+              "version": { "type": "string" }
+            }
+          },
+          "snapshot_ref": { "type": ["string", "null"], "description": "Scene version snapshot created by this step." },
+          "status": { "type": "string", "enum": ["pending", "running", "succeeded", "failed", "cancelled"] }
+        }
+      }
+    },
+    "current_step": { "type": "integer", "minimum": 0 }
+  }
+}

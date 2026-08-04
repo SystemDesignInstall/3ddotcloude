@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Build
+build/
+build-*/
+out/
+cmake-build-*/
+CMakeUserPresets.json
+
+# Conan
+conan_data/
+**/.conan/
+
+# Editor / OS
+.vscode/
+.idea/
+*.user
+Thumbs.db
+.DS_Store
+
+# Local project data
+*.spx/
+logs/

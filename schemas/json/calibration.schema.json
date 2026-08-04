@@ -1,0 +1,71 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://spatial-platform.dev/schemas/json/calibration.schema.json",
+  "title": "Calibration",
+  "description": "Sensor calibration record (sensor-model.md). Intrinsics/distortion/extrinsics are stored declaratively; solving is deferred.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["calibration_id", "sensor_id", "version", "calibration_time_ns", "source"],
+  "properties": {
+    "calibration_id": { "type": "string", "format": "uuid" },
+    "sensor_id": { "type": "string", "format": "uuid" },
+    "version": { "type": "integer", "minimum": 1 },
+    "calibration_time_ns": { "type": "integer" },
+    "source": { "type": "string", "description": "Provenance of this calibration (factory, self-calibration, import)." },
+    "intrinsic_model": {
+      "type": "string",
+      "enum": ["opencv", "pinhole", "opencv_fisheye", "omnidirectional", "opengl", "custom"]
+    },
+    "intrinsics": {
+      "type": "object",
+      "description": "Model parameters, e.g. {fx, fy, cx, cy} in pixels.",
+      "additionalProperties": true
+    },
+    "distortion": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "model": { "type": "string", "enum": ["none", "opencv_radial", "opencv_fisheye", "equirectangular", "custom"] },
+        "coefficients": {
+          "type": "array",
+          "items": { "type": "number" }
+        }
+      }
+    },
+    "extrinsics": {
+      "type": "object",
+      "description": "Rig-relative pose as strict transform: {from_frame, to_frame, rot_xyzw:[4], t_xyz:[3]}.",
+      "additionalProperties": false,
+      "required": ["from_frame", "to_frame", "rot_xyzw", "t_xyz"],
+      "properties": {
+        "from_frame": { "type": "string" },
+        "to_frame": { "type": "string" },
+        "rot_xyzw": { "type": "array", "minItems": 4, "maxItems": 4, "items": { "type": "number" } },
+        "t_xyz": { "type": "array", "minItems": 3, "maxItems": 3, "items": { "type": "number" } }
+      }
+    },
+    "uncertainty": {
+      "type": "object",
+      "description": "Optional calibration uncertainty (covariance).",
+      "additionalProperties": true
+    }
+  },
+  "examples": [
+    {
+      "calibration_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+      "sensor_id": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e",
+      "version": 2,
+      "calibration_time_ns": 1783123200000000000,
+      "source": "factory",
+      "intrinsic_model": "opencv",
+      "intrinsics": { "fx": 2457.4, "fy": 2456.9, "cx": 2000.0, "cy": 1500.0 },
+      "distortion": { "model": "opencv_radial", "coefficients": [-0.12, 0.03, 0.0, 0.0] },
+      "extrinsics": {
+        "from_frame": "camera_1",
+        "to_frame": "sensor_rig_0",
+        "rot_xyzw": [0.0, 0.0, 0.0, 1.0],
+        "t_xyz": [0.0, 0.0, 0.0]
+      }
+    }
+  ]
+}

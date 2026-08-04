@@ -1,0 +1,27 @@
+# MODEL_LICENSES.yml - Registry of AI model weights and their license status
+#
+# Governing rule (ADR-006, ADR-031): AI outputs are priors, and no
+# non-commercial model may enter the commercial build. Every model whose
+# weights we evaluate, fine-tune, or distribute must be registered here with a
+# license status before it can appear in any pipeline. Models are consumed
+# through adapters as priors only and never produce authoritative geometry.
+#
+#   license_status    verification_required | non_commercial | permissive | proprietary
+#   commercial_use    yes | no | research_only_pending | research_only
+#
+# Registration does not grant permission - it records the decision to verify.
+# Any model with license_status != permissive requires Architecture Review and
+# legal sign-off before it may enter a non-research build.
+models:
+  - name: VGGT
+    license_status: verification_required
+    commercial_use: research_only_pending
+    note: Model license requires verification before commercial use; research only until verified. See THIRD_PARTY.yml.
+  - name: MASt3R
+    license_status: non_commercial
+    commercial_use: research_only
+    note: Non-commercial research license. Excluded from the commercial build by the general rule below.
+  - name: DUSt3R
+    license_status: non_commercial
+    commercial_use: research_only
+    note: Non-commercial research license. Excluded from the commercial build by the general rule below.

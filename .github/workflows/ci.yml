@@ -1,0 +1,99 @@
+# ci — Spatial Platform continuous validation and build pipeline
+#
+# Pipeline overview
+# ---------------
+#   validation:  P0 governance + static gates, Python 3.11 stdlib only.
+#                Runs the constitution change-control gate, the governance
+#                (RFC/ADR) validator, the domain-types gate, the architecture
+#                debt gate, the dependency-registry gate, and schema
+#                validation. Ruff/pytest over python/ are best-effort in P0.
+#   python-lint: Python SDK quality gates (ruff + mypy + pytest). P0 runs
+#                best-effort (failures are tolerated with `|| true`).
+#   build:       P1 placeholder for the C++ toolchain matrix. The matrix
+#                (os x config) is fixed now so P1 only fills in the steps.
+#
+# P1 build-job insertion point
+# ----------------------------
+# In the `build` job, replace the placeholder step body with the real
+# toolchain bootstrap defined in docs/development/build.md (ADR-022):
+#   conan install . --build=missing
+#   cmake --preset default           # or `release` for ${{ matrix.config }}
+#   cmake --build --preset default
+#   ctest --test-dir build/default --output-on-failure
+# Keep the matrix structure; it already covers ubuntu-latest/windows-latest
+# x Debug/Release.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  validation:
+    name: validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout governance repo (spatial-rfcs)
+        uses: actions/checkout@v4
+        with:
+          repository: spatial-platform/spatial-rfcs
+          path: spatial-rfcs
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Governance validation (RFC / ADR)
+        run: python scripts/check_rfc.py --rfcs spatial-rfcs
+      - name: Constitution change-control gate
+        run: >-
+          python scripts/check_constitution.py
+          --repo .
+          --rfcs spatial-rfcs
+          --base "${{ github.event.pull_request.base.sha || github.event.before || '' }}"
+      - name: Domain-types gate
+        run: python scripts/check_domain_types.py
+      - name: Architecture-debt gate
+        run: python scripts/check_arch_debt.py
+      - name: Dependency-registry gate
+        run: python scripts/check_dependencies.py
+      - name: Schema validation gate
+        run: python scripts/check_schemas.py
+      - name: Python lint (best-effort in P0)
+        run: python -m ruff check python/ 2>/dev/null || true
+      - name: Python tests (best-effort in P0)
+        run: python -m pytest python/ 2>/dev/null || true
+
+  python-lint:
+    name: python-lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install Python tooling
+        run: python -m pip install ruff mypy pytest
+      - name: Ruff check
+        run: ruff check python/ --output-format=github || true
+      - name: Mypy check
+        run: mypy python/spatial_sdk --ignore-missing-imports || true
+
+  build:
+    name: build (${{ matrix.os }} / ${{ matrix.config }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        config: [Debug, Release]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: P0 placeholder (C++ build added in P1)
+        run: |
+          python scripts/check_arch_debt.py
+          echo "C++ build added in P1 (conan install + cmake --preset + ctest)"

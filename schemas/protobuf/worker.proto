@@ -1,0 +1,115 @@
+syntax = "proto3";
+
+package spatial;
+
+// Worker IPC protocol (ADR-011, ADR-012).
+//
+// Transport: child process stdin/stdout. Framing: [u32 little-endian
+// length][protobuf bytes]. stderr is captured separately into logs.
+// The protocol is versioned; the version is negotiated in WorkerHello.
+// Unknown messages are ignored and logged.
+
+message ResourceProfile {
+  int64 cpu_cores   = 1;
+  int64 ram_mb      = 2;
+  int64 gpu_mem_mb  = 3;
+  string os         = 4;
+  string arch       = 5;
+}
+
+// Capabilities are declared by name from the Capability taxonomy
+// (schemas/json/worker-capabilities.schema.json), e.g.
+// sparse_reconstruction, dense_stereo, bundle_adjustment, icp,
+// surface_reconstruction, texturing, gaussian_generation,
+// lidar_odometry, loop_closure, gnss_integration.
+message WorkerCapabilities {
+  repeated string  capabilities    = 1;
+  ResourceProfile  resources       = 2;
+  int32            max_concurrency = 3;
+}
+
+message ArtifactInfo {
+  string artifact_id    = 1; // UUID of the produced artifact
+  string content_hash   = 2; // SHA-256 of the payload
+  string type           = 3;
+  int64  size           = 4;
+  string mime           = 5;
+  string manifest_json  = 6; // full artifact manifest (artifact-format.md)
+}
+
+message WorkerHello {
+  int32              protocol_version = 1;
+  string             worker_id        = 2;
+  WorkerCapabilities capabilities     = 3;
+}
+
+message TaskRequest {
+  string task_id    = 1;
+  string task_type  = 2;
+  string spec_json  = 3; // task spec per task-model.md
+  string workspace  = 4; // deterministic per-task temp workspace
+}
+
+message TaskAccepted {
+  string task_id = 1;
+}
+
+message TaskProgress {
+  string task_id  = 1;
+  int32  percent  = 2;
+  string substage = 3;
+  string message  = 4;
+}
+
+message TaskLog {
+  string task_id    = 1;
+  string level      = 2;
+  string message    = 3;
+  string context_json = 4;
+}
+
+message TaskArtifactProduced {
+  string       task_id  = 1;
+  ArtifactInfo artifact = 2;
+}
+
+message TaskCompleted {
+  string              task_id = 1;
+  repeated ArtifactInfo outputs = 2;
+}
+
+message TaskFailed {
+  string    task_id = 1;
+  ErrorInfo error   = 2;
+}
+
+message TaskCancelled {
+  string task_id = 1;
+  string reason  = 2;
+}
+
+message Heartbeat {
+  string worker_id    = 1;
+  int64  timestamp_ns = 2;
+  int64  rss_bytes    = 3;
+}
+
+message Shutdown {
+  string reason = 1;
+}
+
+message WorkerMessage {
+  oneof payload {
+    WorkerHello            hello             = 1;
+    TaskRequest            task_request      = 2;
+    TaskAccepted           task_accepted     = 3;
+    TaskProgress           task_progress     = 4;
+    TaskLog                task_log          = 5;
+    TaskArtifactProduced   task_artifact     = 6;
+    TaskCompleted          task_completed    = 7;
+    TaskFailed             task_failed       = 8;
+    TaskCancelled          task_cancelled    = 9;
+    Heartbeat              heartbeat         = 10;
+    Shutdown               shutdown          = 11;
+  }
+}

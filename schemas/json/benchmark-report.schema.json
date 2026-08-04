@@ -1,0 +1,43 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://spatial-platform.dev/schemas/json/benchmark-report.schema.json",
+  "title": "Benchmark Report",
+  "description": "Result of a benchmark run against a registered dataset (ADR-029). IMPLEMENTATION DEFERRED past M0; format frozen in P0.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["run_id", "dataset_id", "recipe_ref", "environment", "metrics"],
+  "properties": {
+    "run_id": { "type": "string", "format": "uuid" },
+    "dataset_id": {
+      "type": "string",
+      "enum": ["eth3d", "tanks_and_temples", "dtu", "kitti", "tum_rgbd", "replica", "scannet", "megadepth", "blendedmvs"]
+    },
+    "recipe_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["recipe_id", "version"],
+      "properties": {
+        "recipe_id": { "type": "string" },
+        "version": { "type": "string" }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["os", "cpu", "ram_gb", "gpu", "git_commit"],
+      "properties": {
+        "os": { "type": "string" },
+        "cpu": { "type": "string" },
+        "ram_gb": { "type": "number" },
+        "gpu": { "type": ["string", "null"] },
+        "git_commit": { "type": "string" }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "description": "Metric map, e.g. {accuracy_median_mm, completeness_pct, f_score, runtime_s, peak_ram_mb, throughput_mpts_s}.",
+      "additionalProperties": true
+    },
+    "report_artifact": { "type": ["string", "null"], "format": "uuid" }
+  }
+}

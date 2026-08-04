@@ -1,0 +1,92 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://spatial-platform.dev/schemas/json/artifact-manifest.schema.json",
+  "title": "Artifact Manifest",
+  "description": "Metadata manifest for an immutable artifact in the content-addressed store (ADR-010).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["artifact_uuid", "content_hash", "type", "schema_version", "producer", "creation_timestamp"],
+  "properties": {
+    "artifact_uuid": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Immutable artifact identity."
+    },
+    "content_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "SHA-256 of the payload bytes; content address."
+    },
+    "type": {
+      "type": "string",
+      "description": "Artifact type, e.g. image, lidar_scan, point_cloud, mesh, texture, gaussian, report."
+    },
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "git_commit"],
+      "properties": {
+        "id": { "type": "string", "description": "Producer/component id, e.g. importer.images" },
+        "version": { "type": "string" },
+        "git_commit": { "type": "string" }
+      }
+    },
+    "input_artifact_hashes": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+      "description": "Content hashes of input artifacts (provenance)."
+    },
+    "configuration_hash": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "Hash of the configuration that produced this artifact."
+    },
+    "creation_timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "coordinate_frame": {
+      "type": ["string", "null"],
+      "description": "Coordinate frame this artifact is expressed in (mandatory for geometry types)."
+    },
+    "unit": {
+      "type": ["string", "null"],
+      "enum": ["meters", "radians", "nanoseconds", "pixels", "none"]
+    },
+    "file_size": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "mime_type": {
+      "type": "string"
+    },
+    "validation_status": {
+      "type": "string",
+      "enum": ["valid", "invalid", "unverified"]
+    }
+  },
+  "examples": [
+    {
+      "artifact_uuid": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+      "content_hash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "type": "point_cloud",
+      "schema_version": 1,
+      "producer": { "id": "adapter.colmap.dense", "version": "3.11", "git_commit": "abc1234" },
+      "input_artifact_hashes": [
+        "1111111111111111111111111111111111111111111111111111111111111111",
+        "2222222222222222222222222222222222222222222222222222222222222222"
+      ],
+      "configuration_hash": "3333333333333333333333333333333333333333333333333333333333333333",
+      "creation_timestamp": "2026-08-04T10:15:00Z",
+      "coordinate_frame": "project_world",
+      "unit": "meters",
+      "file_size": 1048576,
+      "mime_type": "application/octet-stream",
+      "validation_status": "valid"
+    }
+  ]
+}

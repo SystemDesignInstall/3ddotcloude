@@ -1,0 +1,56 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://spatial-platform.dev/schemas/json/scene.schema.json",
+  "title": "Scene",
+  "description": "The Scene — the central domain object (ADR-023). Serialized form mirrors scene.proto.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["scene_id", "schema_version", "project_id", "name", "stage", "status"],
+  "properties": {
+    "scene_id": { "type": "string", "format": "uuid" },
+    "schema_version": { "type": "integer", "minimum": 1 },
+    "project_id": { "type": "string", "format": "uuid" },
+    "name": { "type": "string" },
+    "version_id": { "type": "string", "format": "uuid" },
+    "parent_version_id": { "type": ["string", "null"], "format": "uuid" },
+    "stage": {
+      "type": "string",
+      "enum": ["created", "imported", "aligned", "dense", "meshed", "textured", "gaussian", "finalized"]
+    },
+    "created_by": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["app", "version", "git_commit"],
+      "properties": {
+        "app": { "type": "string" },
+        "version": { "type": "string" },
+        "git_commit": { "type": "string" }
+      }
+    },
+    "created_at_ns": { "type": "integer" },
+    "origin_frame": { "type": ["string", "null"] },
+    "crs": { "type": ["string", "null"] },
+    "status": {
+      "type": "string",
+      "enum": ["open", "read_only", "archived"]
+    },
+    "properties": { "type": "object" }
+  },
+  "examples": [
+    {
+      "scene_id": "6c8f8c9a-0a2b-4c3d-8e4f-5a6b7c8d9e0f",
+      "schema_version": 1,
+      "project_id": "3f2a1b7c-9d4e-4f8a-b2c1-5d6e7f8a9b0c",
+      "name": "Factory North Wing — Primary",
+      "version_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+      "parent_version_id": null,
+      "stage": "imported",
+      "created_by": { "app": "spatial", "version": "0.1.0", "git_commit": "abc1234" },
+      "created_at_ns": 1783123200000000000,
+      "origin_frame": "project_world",
+      "crs": "EPSG:25833",
+      "status": "open",
+      "properties": {}
+    }
+  ]
+}

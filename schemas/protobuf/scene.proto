@@ -1,0 +1,155 @@
+syntax = "proto3";
+
+package spatial;
+
+// Scene entity metadata envelope. This is the cross-language contract for
+// scene entities (scene-model.md). Payloads (images, point buffers, meshes)
+// are referenced as artifact refs and are never embedded here.
+//
+// Conventions (ADR-007): right-handed; meters (DistanceMeters); nanoseconds
+// (TimestampNs); quaternion scalar-last (x,y,z,w); column vectors;
+// p_world = R * p_sensor + t with convention world_from_sensor; SE(3) = (R,t);
+// covariance ordering translation-then-rotation.
+
+message Uuid {
+  bytes value = 1; // 16 bytes, RFC 4122
+}
+
+message TimestampNs {
+  int64 value = 1;
+}
+
+message DistanceMeters {
+  double value = 1;
+}
+
+message AngleRadians {
+  double value = 1;
+}
+
+message Transform {
+  string from_frame   = 1; // source frame id (resolved via frame graph)
+  string to_frame     = 2; // target frame id
+  double rot_xyzw     = 3; // 4 values, scalar-last quaternion
+  double t_xyz        = 4; // 3 values, meters
+  // Applying the transform maps points from `from_frame` to `to_frame`.
+  // For world_from_sensor: p_world = R * p_sensor + t.
+}
+
+message CoordinateFrame {
+  string frame_id       = 1;
+  string parent_frame   = 2;
+  string type           = 3; // project_world | local_enu | ecef | camera |
+                             // lidar | imu | gnss_antenna | sensor_rig |
+                             // scanner_local | external_survey | custom
+  string properties_json = 4;
+}
+
+message Scene {
+  string scene_id         = 1;
+  int32  schema_version   = 2;
+  string project_id       = 3;
+  string name             = 4;
+  string version_id       = 5; // current scene version (ADR-033)
+  string parent_version_id = 6;
+  string stage            = 7; // created | imported | aligned | dense |
+                               // meshed | textured | gaussian | finalized
+  string created_by_json  = 8; // ProducerInfo
+  int64  created_at_ns    = 9;
+  string origin_frame     = 10;
+  string crs              = 11;
+  string status           = 12; // open | read_only | archived
+  string properties_json  = 13;
+}
+
+message Sensor {
+  string sensor_id    = 1;
+  string type         = 2; // camera | lidar | imu | gnss | rgbd |
+                           // panoramic | unknown
+  string manufacturer = 3;
+  string model        = 4;
+  string serial_number = 5;
+  string time_domain  = 6;
+  string calibration_id = 7;
+  string rig_id       = 8;
+  string source_json  = 9;
+  string status       = 10;
+}
+
+message SensorRig {
+  string           rig_id  = 1;
+  string           name    = 2;
+  repeated RigLink links   = 3;
+  int32            calibration_version = 4;
+}
+
+message RigLink {
+  string    sensor_id      = 1;
+  Transform rig_from_sensor = 2; // strict type RigFromSensor
+  int64     time_offset_ns = 3;
+}
+
+message Frame {
+  string frame_id       = 1;
+  string scene_id       = 2;
+  string session_id     = 3;
+  int64  timestamp_ns   = 4;
+  int64  sequence_index = 5;
+  string sensor_id      = 6;
+  string pose_ref       = 7;
+  string properties_json = 8;
+}
+
+message Pose {
+  string    pose_id             = 1;
+  string    frame_id            = 2;
+  Transform world_from_sensor   = 3;
+  string    covariance_json     = 4; // 6x6, translation-then-rotation
+  string    source_json         = 5;
+  string    status              = 6;
+}
+
+message Observation {
+  string observation_id = 1;
+  string scene_id       = 2;
+  string sensor_id      = 3;
+  string frame_id       = 4;
+  string session_id     = 5;
+  int64  timestamp_ns   = 6;
+  string artifact_ref   = 7;
+  string type           = 8; // image | lidar | imu | gnss | depth | panoramic
+  string source_json    = 9;
+  string properties_json = 10;
+  // Observations are immutable measurements (Architecture Principle 3).
+}
+
+message GeometryElement {
+  string element_id     = 1;
+  string kind           = 2; // point | triangle | voxel | gaussian |
+                             // spline | primitive | surface_patch |
+                             // implicit_surface
+  string frame          = 3; // EXPLICIT frame (mandatory)
+  string bounds_json    = 4;
+  int32  lod            = 5;
+  string parent_id      = 6;
+  string provenance_json = 7;
+  string artifact_ref   = 8;
+  string uncertainty_ref = 9;
+}
+
+message ControlPoint {
+  string          control_point_id  = 1;
+  string          name              = 2;
+  string          crs               = 3;
+  string          coordinates_json  = 4;
+  string          covariance_json   = 5;
+  string          constraint_type   = 6; // xyz | xy | z
+  repeated string observation_refs  = 7;
+  string          status            = 8;
+}
+
+message QualityReportRef {
+  string report_id    = 1;
+  string artifact_ref = 2;
+  string metrics_json = 3;
+}

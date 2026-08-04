@@ -1,0 +1,13 @@
+[requires]
+# M0 dependency manifest (ADR-003, ADR-031).
+#
+# This file is the dependency manifest referenced by check_dependencies.py:
+# every package listed here must be registered in THIRD_PARTY.yml. Conan 2
+# recipes, generators, and the committed per-platform profiles ship with P1
+# (see docs/development/build.md); the resolution/lockstep (conan.lock) and
+# CMake preset wiring are part of the P1 build job.
+eigen/3.4.*
+protobuf/*
+sqlite3/*
+nlohmann_json/*
+gtest/*

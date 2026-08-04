@@ -1,0 +1,85 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://spatial-platform.dev/schemas/json/geometry-element.schema.json",
+  "title": "GeometryElement",
+  "description": "Geometry-first model (ADR-032): the typed handle to an immutable geometry artifact. Every element MUST name its coordinate frame (Architecture Principle 13).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["element_id", "kind", "frame", "payload"],
+  "properties": {
+    "element_id": { "type": "string", "format": "uuid" },
+    "kind": {
+      "type": "string",
+      "enum": ["point", "triangle", "voxel", "gaussian", "spline", "primitive", "surface_patch", "implicit_surface"]
+    },
+    "frame": {
+      "type": "string",
+      "description": "EXPLICIT coordinate frame; resolvable via the scene frame graph."
+    },
+    "bounds": {
+      "type": ["object", "null"],
+      "description": "Optional AABB: {min:[x,y,z], max:[x,y,z]} in meters."
+    },
+    "lod": { "type": "integer", "minimum": 0, "default": 0 },
+    "parent": { "type": ["string", "null"], "format": "uuid", "description": "Parent element id (Geometry Graph DAG)." },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["producer", "git_commit", "input_artifact_hashes", "configuration_hash"],
+      "properties": {
+        "producer": { "type": "string" },
+        "git_commit": { "type": "string" },
+        "input_artifact_hashes": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        },
+        "configuration_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_ref", "content_hash", "mime"],
+      "properties": {
+        "artifact_ref": { "type": "string", "format": "uuid" },
+        "content_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "mime": { "type": "string" }
+      }
+    },
+    "uncertainty": {
+      "type": ["object", "null"],
+      "description": "Optional uncertainty block (ADR-025): covariance, confidence, source_count, residual, normal_confidence, texture_confidence, color_confidence. May reference an artifact for large channel data.",
+      "properties": {
+        "artifact_ref": { "type": ["string", "null"] },
+        "confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "source_count": { "type": ["integer", "null"], "minimum": 0 },
+        "residual": { "type": ["number", "null"], "minimum": 0 },
+        "normal_confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "texture_confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "color_confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }
+      }
+    }
+  },
+  "examples": [
+    {
+      "element_id": "c7d8e9f0-1a2b-4c3d-8e4f-5a6b7c8d9e0f",
+      "kind": "point",
+      "frame": "project_world",
+      "bounds": { "min": [0.0, 0.0, 0.0], "max": [10.0, 5.0, 3.0] },
+      "lod": 2,
+      "parent": null,
+      "provenance": {
+        "producer": "adapter.colmap.dense",
+        "git_commit": "abc1234",
+        "input_artifact_hashes": ["1111111111111111111111111111111111111111111111111111111111111111"],
+        "configuration_hash": "2222222222222222222222222222222222222222222222222222222222222222"
+      },
+      "payload": {
+        "artifact_ref": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "content_hash": "3333333333333333333333333333333333333333333333333333333333333333",
+        "mime": "application/octet-stream"
+      },
+      "uncertainty": { "confidence": 0.9, "source_count": 12, "residual": 0.23 }
+    }
+  ]
+}

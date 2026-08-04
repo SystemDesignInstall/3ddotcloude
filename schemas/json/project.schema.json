@@ -1,0 +1,73 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://spatial-platform.dev/schemas/json/project.schema.json",
+  "title": "Spatial Project Manifest (project.json)",
+  "description": "The minimal stable manifest of a .spx project directory (ADR-008).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["uuid", "name", "schema_version", "created_by", "created_at", "default_crs", "root_frame"],
+  "properties": {
+    "uuid": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Immutable project UUID."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Manifest schema version, migrates independently."
+    },
+    "created_by": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["app", "version", "git_commit"],
+      "properties": {
+        "app": { "type": "string" },
+        "version": { "type": "string" },
+        "git_commit": { "type": "string" }
+      }
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Creation timestamp (ISO-8601 UTC)."
+    },
+    "default_crs": {
+      "type": ["string", "null"],
+      "description": "Default coordinate reference system (PROJ identifier or 'local')."
+    },
+    "root_frame": {
+      "type": ["string", "null"],
+      "description": "Name of the root coordinate frame."
+    },
+    "flags": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "read_only": { "type": "boolean", "default": false },
+        "encrypted": { "type": "boolean", "default": false }
+      }
+    },
+    "properties": {
+      "type": "object",
+      "description": "Free-form project-defined metadata."
+    }
+  },
+  "examples": [
+    {
+      "uuid": "3f2a1b7c-9d4e-4f8a-b2c1-5d6e7f8a9b0c",
+      "name": "Factory North Wing",
+      "schema_version": 1,
+      "created_by": { "app": "spatial", "version": "0.1.0", "git_commit": "abc1234" },
+      "created_at": "2026-08-04T10:00:00Z",
+      "default_crs": "EPSG:25833",
+      "root_frame": "project_world",
+      "flags": { "read_only": false },
+      "properties": {}
+    }
+  ]
+}
