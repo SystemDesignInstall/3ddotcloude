@@ -1,0 +1,50 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 28, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "default",
+      "displayName": "Spatial Platform (Debug)",
+      "description": "Debug build, tests enabled, warnings-as-errors. ADR-022: preset is the only supported way to configure.",
+      "generator": "Visual Studio 17 2022",
+      "architecture": { "value": "x64", "strategy": "external" },
+      "toolset": { "value": "v143", "strategy": "external" },
+      "toolchainFile": "${sourceDir}/build/conan-debug/conan_toolchain.cmake",
+      "binaryDir": "${sourceDir}/build/default",
+      "cacheVariables": {
+        "SPATIAL_ENABLE_TESTS": "ON",
+        "SPATIAL_WARNINGS_AS_ERRORS": "ON"
+      }
+    },
+    {
+      "name": "release",
+      "displayName": "Spatial Platform (Release)",
+      "description": "Release build, tests enabled, assertions off.",
+      "generator": "Visual Studio 17 2022",
+      "architecture": { "value": "x64", "strategy": "external" },
+      "toolset": { "value": "v143", "strategy": "external" },
+      "toolchainFile": "${sourceDir}/build/conan/conan_toolchain.cmake",
+      "binaryDir": "${sourceDir}/build/release",
+      "cacheVariables": {
+        "SPATIAL_ENABLE_TESTS": "ON",
+        "SPATIAL_WARNINGS_AS_ERRORS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "default", "configurePreset": "default", "configuration": "Debug" },
+    { "name": "release", "configurePreset": "release", "configuration": "Release" }
+  ],
+  "testPresets": [
+    {
+      "name": "default",
+      "configurePreset": "default",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "release",
+      "configurePreset": "release",
+      "output": { "outputOnFailure": true }
+    }
+  ]
+}
