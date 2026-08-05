@@ -6,7 +6,7 @@ This repository is the **single source of truth** for architecture governance of
 - `rfc/` — RFCs. Proposals for any change to the Constitution-protected surfaces.
 - `proposals/` — Early, unnumbered ideas. May be promoted to RFC.
 - `experimental/` — Experimental specifications. Tested outside the kernel; promoted to a ratified spec or abandoned.
-- `CONSTITUTION.md` — The supreme governing document. Protected surfaces, the 15 Architecture Principles, and change control.
+- `CONSTITUTION.md` — The supreme governing document. Protected surfaces, the 16 Architecture Principles, and change control.
 
 ## RFC Lifecycle
 

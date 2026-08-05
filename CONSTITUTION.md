@@ -27,6 +27,7 @@ These are the evaluation criteria for all changes. Each principle is a hard rule
 13. **Every geometry element has an explicit coordinate frame.** An element whose frame is unknown is a defect.
 14. **Quality metadata is first-class.** Uncertainty, covariance, confidence, and residuals are data, carried with the geometry, not derived on demand.
 15. **Every algorithm is replaceable.** Replacing COLMAP with OpenMVG, VGGT, or a future engine must not require changes to Core, Scene, or Artifact Store.
+16. **Every algorithm is ephemeral; every observation is permanent.** Images, observations, and Scenes persist as immutable, versioned, provenance-rich data for the lifetime of the platform. Reconstruction engines (COLMAP, VGGT, KISS-ICP, MASt3R, FAST-LIO2, future models) are temporary interpretations of those observations and are always replaceable without altering the data model.
 
 ---
 
@@ -74,7 +75,7 @@ Additionally, schema contracts under `schemas/**` (protobuf, JSON Schema, SQL DD
 
 Any PR touching protected paths requires Architecture Review, separate from Code Review:
 
-1. Reviewer checks compliance with this Constitution and the 15 principles.
+1. Reviewer checks compliance with this Constitution and the 16 principles.
 2. The change must cite its RFC (or be explicitly non-contractual and additive).
 3. Domain-type and debt checks (`check-domain-types`, `check-arch-debt`) must pass.
 4. Unresolved objections block the PR until a follow-up RFC is opened.
