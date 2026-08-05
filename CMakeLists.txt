@@ -44,6 +44,7 @@ find_package(SQLite3 CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 
 add_subdirectory(core)
+add_subdirectory(engine)
 
 if(SPATIAL_ENABLE_TESTS)
   enable_testing()

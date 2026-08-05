@@ -31,3 +31,25 @@ message ErrorInfo {
   string        cause_code       = 6; // chained cause, empty if none
   ErrorDomain   domain           = 7;
 }
+
+// Stable scheduler (domain 8) error codes (RFC-0003 §5.14).
+enum SchedulerErrorCode {
+  SCHEDULER_ERROR_UNSPECIFIED = 0;
+  SCHED_DAG_CYCLE = 1;
+  SCHED_DAG_TYPE_MISMATCH = 2;
+  SCHED_DAG_RESOURCE_INFEASIBLE = 3;
+  SCHED_TASK_UNKNOWN = 4;
+  SCHED_PERSISTENCE = 5;
+  SCHED_CACHE_MISS = 6;
+  SCHED_CANCELLED = 7;
+}
+
+// Stable worker (domain 9) error codes (RFC-0003 §5.14).
+enum WorkerErrorCode {
+  WORKER_ERROR_UNSPECIFIED = 0;
+  WORKER_PROTOCOL = 1;
+  WORKER_HEARTBEAT_TIMEOUT = 2;
+  WORKER_CRASHED = 3;
+  WORKER_TERMINATED = 4;
+  WORKER_BUSY = 5;
+}

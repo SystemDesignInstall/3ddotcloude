@@ -57,6 +57,12 @@ class MetadataDb {
   bool read_only() const noexcept { return read_only_; }
   bool IsOpen() const noexcept { return db_ != nullptr; }
 
+  // Raw connection handle. The engine's scheduler state store
+  // (engine/scheduler/scheduler_state_store.cpp) owns its own tables
+  // (migration 0003) through this handle; MetadataDb remains the single
+  // writer of the SQLite database (ADR-020) and outlives the store.
+  sqlite3* db() const noexcept { return db_; }
+
   // Applies all registered migrations that have not yet been applied,
   // each inside its own transaction (ADR-009). Returns count applied.
   std::size_t ApplyMigrations();

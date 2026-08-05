@@ -34,6 +34,20 @@ ErrorDomain DomainOf(ErrorCode code) noexcept {
     case ErrorCode::kCoordFrameMultipleRoots:
     case ErrorCode::kCoordFrameExists:
       return ErrorDomain::kCoordinate;
+    case ErrorCode::kSchedDagCycle:
+    case ErrorCode::kSchedDagTypeMismatch:
+    case ErrorCode::kSchedDagResourceInfeasible:
+    case ErrorCode::kSchedTaskUnknown:
+    case ErrorCode::kSchedPersistence:
+    case ErrorCode::kSchedCacheMiss:
+    case ErrorCode::kSchedCancelled:
+      return ErrorDomain::kScheduler;
+    case ErrorCode::kWorkerProtocol:
+    case ErrorCode::kWorkerHeartbeatTimeout:
+    case ErrorCode::kWorkerCrashed:
+    case ErrorCode::kWorkerTerminated:
+    case ErrorCode::kWorkerBusy:
+      return ErrorDomain::kWorker;
     case ErrorCode::kValidationSchema:
     case ErrorCode::kValidationDomain:
       return ErrorDomain::kValidation;
@@ -117,6 +131,30 @@ const char* ErrorCodeName(ErrorCode code) noexcept {
       return "COORD_FRAME_MULTIPLE_ROOTS";
     case ErrorCode::kCoordFrameExists:
       return "COORD_FRAME_EXISTS";
+    case ErrorCode::kSchedDagCycle:
+      return "SCHED_DAG_CYCLE";
+    case ErrorCode::kSchedDagTypeMismatch:
+      return "SCHED_DAG_TYPE_MISMATCH";
+    case ErrorCode::kSchedDagResourceInfeasible:
+      return "SCHED_DAG_RESOURCE_INFEASIBLE";
+    case ErrorCode::kSchedTaskUnknown:
+      return "SCHED_TASK_UNKNOWN";
+    case ErrorCode::kSchedPersistence:
+      return "SCHED_PERSISTENCE";
+    case ErrorCode::kSchedCacheMiss:
+      return "SCHED_CACHE_MISS";
+    case ErrorCode::kSchedCancelled:
+      return "SCHED_CANCELLED";
+    case ErrorCode::kWorkerProtocol:
+      return "WORKER_PROTOCOL";
+    case ErrorCode::kWorkerHeartbeatTimeout:
+      return "WORKER_HEARTBEAT_TIMEOUT";
+    case ErrorCode::kWorkerCrashed:
+      return "WORKER_CRASHED";
+    case ErrorCode::kWorkerTerminated:
+      return "WORKER_TERMINATED";
+    case ErrorCode::kWorkerBusy:
+      return "WORKER_BUSY";
     case ErrorCode::kValidationSchema:
       return "VALIDATION_SCHEMA";
     case ErrorCode::kValidationDomain:

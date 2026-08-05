@@ -1,0 +1,14 @@
+#pragma once
+
+// Configure-time build identity embedded into the engine. The git commit is
+// part of the ADR-020 task-cache key; the protocol version is the frozen
+// worker-protocol version (RFC-0001). Generated from engine_build_info.h.in;
+// do not edit by hand.
+
+namespace spatial::engine {
+
+inline constexpr const char* kEngineVersion = "@SPATIAL_ENGINE_VERSION@";
+inline constexpr const char* kEngineGitCommit = "@SPATIAL_ENGINE_GIT_COMMIT@";
+inline constexpr const char* kWorkerProtocolVersion = "1";
+
+}  // namespace spatial::engine

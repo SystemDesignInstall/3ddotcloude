@@ -54,6 +54,20 @@ enum class ErrorCode : int32_t {
   kCoordFrameDisconnected = 4004,
   kCoordFrameMultipleRoots = 4005,
   kCoordFrameExists = 4006,
+  // SCHED_* (domain 8)
+  kSchedDagCycle = 8001,
+  kSchedDagTypeMismatch = 8002,
+  kSchedDagResourceInfeasible = 8003,
+  kSchedTaskUnknown = 8004,
+  kSchedPersistence = 8005,
+  kSchedCacheMiss = 8006,
+  kSchedCancelled = 8007,
+  // WORKER_* (domain 9)
+  kWorkerProtocol = 9001,
+  kWorkerHeartbeatTimeout = 9002,
+  kWorkerCrashed = 9003,
+  kWorkerTerminated = 9004,
+  kWorkerBusy = 9005,
   // PROJECT_* (domain 1)
   kProjectInvalid = 1001,
   kProjectNotFound = 1002,

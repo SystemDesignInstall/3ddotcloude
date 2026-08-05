@@ -8,12 +8,13 @@
 # CMake preset wiring are part of the P1 build job.
 #
 # P1 (Project Core + Artifact Store) links only sqlite3, nlohmann_json,
-# gtest, eigen. protobuf returns in P3 for the worker IPC protocol
-# (ADR-012) and must stay registered in THIRD_PARTY.yml meanwhile.
+# gtest, eigen. protobuf joins in the engine milestone (RFC-0003) for the
+# worker IPC protocol (ADR-012) and stays registered in THIRD_PARTY.yml.
 eigen/[>=3.4.0 <3.5.0]
 sqlite3/[>=3.47.0 <3.51.0]
 nlohmann_json/[>=3.11.0 <3.13.0]
 gtest/[>=1.15.0 <2.0.0]
+protobuf/[>=5.29.0 <6.0.0]
 
 [generators]
 CMakeDeps

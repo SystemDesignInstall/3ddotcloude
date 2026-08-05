@@ -146,6 +146,8 @@ std::size_t MetadataDb::ApplyMigrations() {
   const auto applied = AppliedMigrationIds();
   const bool has_0001 =
       std::find(applied.begin(), applied.end(), "1") != applied.end();
+  const bool has_0003 =
+      std::find(applied.begin(), applied.end(), "3") != applied.end();
   std::size_t count = 0;
 
   // Migration 0001 (initial schema, ratified; identical to HEAD schema.sql).
@@ -160,6 +162,22 @@ std::size_t MetadataDb::ApplyMigrations() {
       Exec("COMMIT;", "commit migration 0001");
     } catch (...) {
       Exec("ROLLBACK;", "rollback migration 0001");
+      throw;
+    }
+    ++count;
+  }
+
+  // Migration 0003 (RFC-0003 engine scheduler state). 0002 is claimed by
+  // RFC-0002 (scene data model) and does not exist yet; numbering skips it.
+  if (!has_0003) {
+    Exec("BEGIN IMMEDIATE TRANSACTION;", "begin migration 0003");
+    try {
+      Exec(generated::kMigration0003Sql, "apply migration 0003");
+      Exec("INSERT INTO schema_meta (version) VALUES (3);",
+           "record schema version 3");
+      Exec("COMMIT;", "commit migration 0003");
+    } catch (...) {
+      Exec("ROLLBACK;", "rollback migration 0003");
       throw;
     }
     ++count;
