@@ -27,6 +27,13 @@ ErrorDomain DomainOf(ErrorCode code) noexcept {
     case ErrorCode::kArtifactGcConflict:
     case ErrorCode::kArtifactUnreferenced:
       return ErrorDomain::kArtifact;
+    case ErrorCode::kCoordFrameMismatch:
+    case ErrorCode::kCoordFrameNotFound:
+    case ErrorCode::kCoordFrameCycle:
+    case ErrorCode::kCoordFrameDisconnected:
+    case ErrorCode::kCoordFrameMultipleRoots:
+    case ErrorCode::kCoordFrameExists:
+      return ErrorDomain::kCoordinate;
     case ErrorCode::kValidationSchema:
     case ErrorCode::kValidationDomain:
       return ErrorDomain::kValidation;
@@ -98,6 +105,18 @@ const char* ErrorCodeName(ErrorCode code) noexcept {
       return "ARTIFACT_GC_CONFLICT";
     case ErrorCode::kArtifactUnreferenced:
       return "ARTIFACT_UNREFERENCED";
+    case ErrorCode::kCoordFrameMismatch:
+      return "COORD_FRAME_MISMATCH";
+    case ErrorCode::kCoordFrameNotFound:
+      return "COORD_FRAME_NOT_FOUND";
+    case ErrorCode::kCoordFrameCycle:
+      return "COORD_FRAME_CYCLE";
+    case ErrorCode::kCoordFrameDisconnected:
+      return "COORD_FRAME_DISCONNECTED";
+    case ErrorCode::kCoordFrameMultipleRoots:
+      return "COORD_FRAME_MULTIPLE_ROOTS";
+    case ErrorCode::kCoordFrameExists:
+      return "COORD_FRAME_EXISTS";
     case ErrorCode::kValidationSchema:
       return "VALIDATION_SCHEMA";
     case ErrorCode::kValidationDomain:

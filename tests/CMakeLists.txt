@@ -9,6 +9,10 @@ set(SPATIAL_UNIT_TESTS
   unit/test_metadata_db.cpp
   unit/test_artifact_store.cpp
   unit/test_project.cpp
+  unit/test_coordinates.cpp
+  unit/test_geometry.cpp
+  unit/test_frame_graph.cpp
+  unit/test_sensor_time.cpp
 )
 
 add_executable(spatial_unit_tests ${SPATIAL_UNIT_TESTS})

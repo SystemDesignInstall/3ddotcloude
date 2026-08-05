@@ -26,6 +26,8 @@ add_library(spatial_core STATIC
   storage/metadata_db.cpp
   artifacts/artifact_manifest.cpp
   artifacts/artifact_store.cpp
+  coordinates/frame_graph.cpp
+  coordinates/frame_graph_validator.cpp
   project/project.cpp
 )
 

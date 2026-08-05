@@ -47,6 +47,13 @@ enum class ErrorCode : int32_t {
   kArtifactManifest = 7003,
   kArtifactGcConflict = 7004,
   kArtifactUnreferenced = 7005,
+  // COORD_* (domain 4)
+  kCoordFrameMismatch = 4001,
+  kCoordFrameNotFound = 4002,
+  kCoordFrameCycle = 4003,
+  kCoordFrameDisconnected = 4004,
+  kCoordFrameMultipleRoots = 4005,
+  kCoordFrameExists = 4006,
   // PROJECT_* (domain 1)
   kProjectInvalid = 1001,
   kProjectNotFound = 1002,
