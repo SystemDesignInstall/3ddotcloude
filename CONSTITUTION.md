@@ -45,6 +45,7 @@ The following surfaces are frozen. No agent, team, or engineer may change them w
 | UUID | Canonical identifier format and assignment rules | `core/**` (type `Uuid`), `schemas/**` |
 | Plugin API | Plugin, PluginManager, Capability, Adapter interfaces | `core/plugin/**`, `adapters/interfaces/**` |
 | Capability API | The capability taxonomy and negotiation | `core/plugin/**`, `schemas/**` |
+| Engine Execution | DAG scheduler, worker protocol, task cache, persisted run state, execution records | `engine/**` |
 
 Additionally, schema contracts under `schemas/**` (protobuf, JSON Schema, SQL DDL) are protected because they are cross-language interfaces.
 
