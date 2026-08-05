@@ -26,7 +26,7 @@ RFC_RE = re.compile(r"^RFC-\d{4}-?[a-z0-9-]*\.md$")
 REQUIRED_SECTIONS = ("Context", "Decision", "Alternatives", "Consequences")
 STATUS_RE = re.compile(r"-\s*\*\*Status:\*\*")
 INDEX_ROW_RE = re.compile(r"^\|\s*(ADR-\d{3})\s*\|")
-EXPECTED_IDS = {f"ADR-{i:03d}" for i in range(1, 38)}
+EXPECTED_IDS = {f"ADR-{i:03d}" for i in range(1, 39)}
 TEMPLATES = ("ADR-TEMPLATE.md", "RFC-TEMPLATE.md")
 
 

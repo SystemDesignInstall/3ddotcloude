@@ -33,6 +33,7 @@ PROTECTED_PREFIXES = (
     "core/plugin/",
     "adapters/interfaces/",
     "schemas/",
+    "engine/",
 )
 
 RFC_RE = re.compile(r"RFC-\d{4}")

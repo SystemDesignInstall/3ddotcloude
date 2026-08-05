@@ -1,12 +1,14 @@
 # Task Model Specification
 
 - **Status:** draft (P0)
-- **References:** ADR-020, ADR-012, ADR-011
-- **Protected surface:** `core/scheduler/**`, `workers/**`
+- **References:** ADR-020, ADR-012, ADR-011, RFC-0003
+- **Protected surface:** `engine/task/**`, `engine/scheduler/**`, `engine/workers/**`
 
-This specification defines the **Task**, the unit of work dispatched by the scheduler to workers. Workers are separate processes communicating over Protobuf IPC; the Task model is the contract between the scheduler and a worker. It is normative for `core/scheduler/**` and the worker protocol.
+This specification defines the **Task**, the unit of work dispatched by the scheduler to workers. Workers are separate processes communicating over Protobuf IPC; the Task model is the contract between the scheduler and a worker. It is normative for `engine/task/**`, `engine/scheduler/**`, and the worker protocol (RFC-0003 ratifies the engine surface).
 
 ## 1. Task definition
+
+The Task model has two artifacts (RFC-0003 §5.2): a `TaskDefinition` (the reusable description of an operation) and a `TaskInstance` (one concrete run). The `TaskInstance` is described by this table; the `TaskDefinition` declares its `type`, `inputs`, `outputs`, `parameters` schema, and `requirements`.
 
 | Field | Type | Notes |
 |---|---|---|
@@ -64,4 +66,4 @@ Tasks travel to workers over Protobuf IPC (ADR-012). The message set:
 
 ## 6. M0 scope
 
-M0 implements (ADR-031): the full Task model, DAG construction + validation, state machine, retry and cancellation policy handling, persistence in `project.db`, cache keying, and the complete Worker Protocol — all exercised with **fake/mock workers** that execute against the same IPC contract. Real workers (COLMAP, OpenMVS, etc.) are deferred; they plug into the same protocol.
+M0 implements (ADR-031, RFC-0003 P1): the full Task model, DAG construction + validation, state machine, retry and cancellation policy handling, persistence in `project.db`, cache keying, and the complete Worker Protocol — all exercised with **fake/mock workers** (`InProcessExecutor`) that execute against the same IPC contract. Real workers (COLMAP, OpenMVS, etc.) are deferred; they plug into the same protocol.
