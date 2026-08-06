@@ -1,0 +1,18 @@
+#pragma once
+
+// Runtime paths baked at configure time for the worker subsystem. The demo
+// Python worker and its generated protobuf module live in the build tree, so
+// ProcessExecutor and the integration tests must know where they are without
+// guessing. Generated from worker_paths.h.in; do not edit by hand.
+
+namespace spatial::engine {
+
+// Absolute path to the demo worker script (engine/workers/python/).
+inline constexpr const char* kDemoWorkerScript = "@SPATIAL_DEMO_WORKER_SCRIPT@";
+
+// Absolute path to the directory holding the generated worker_pb2.py module
+// (added to PYTHONPATH when spawning the worker).
+inline constexpr const char* kWorkerGeneratedProtoDir =
+    "@SPATIAL_GENERATED_PROTO_DIR@";
+
+}  // namespace spatial::engine

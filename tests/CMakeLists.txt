@@ -18,7 +18,17 @@ set(SPATIAL_UNIT_TESTS
   unit/test_scheduler_state_store.cpp
   unit/test_task_cache.cpp
   unit/test_scheduler.cpp
+  unit/test_protocol_framing.cpp
+  unit/test_in_process_executor.cpp
+  unit/test_process_executor.cpp
 )
+
+# A tiny frame-echo helper the framing tests drive as a child process; it
+# reads framed protobuf messages from stdin and writes them back (worker-
+# protocol §1 framing, exercised over real pipes).
+add_executable(spatial_frame_echo frame_echo_main.cpp)
+target_link_libraries(spatial_frame_echo PRIVATE spatial_engine)
+target_include_directories(spatial_frame_echo PRIVATE ${CMAKE_SOURCE_DIR})
 
 add_executable(spatial_unit_tests ${SPATIAL_UNIT_TESTS})
 target_link_libraries(spatial_unit_tests PRIVATE
@@ -27,7 +37,15 @@ target_link_libraries(spatial_unit_tests PRIVATE
   GTest::gtest
   GTest::gtest_main
 )
+# The framing tests spawn spatial_frame_echo; make it a real build dependency
+# so both Debug and Release configurations produce it.
+add_dependencies(spatial_unit_tests spatial_frame_echo)
 target_include_directories(spatial_unit_tests PRIVATE ${CMAKE_SOURCE_DIR})
+
+# Runtime paths for the demo-worker integration tests (worker_paths.h).
+target_compile_definitions(spatial_unit_tests PRIVATE
+  SPATIAL_FRAME_ECHO_EXECUTABLE="$<TARGET_FILE:spatial_frame_echo>"
+)
 
 include(GoogleTest)
 gtest_discover_tests(spatial_unit_tests)
