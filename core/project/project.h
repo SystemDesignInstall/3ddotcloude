@@ -65,8 +65,8 @@ class Project {
   bool read_only() const noexcept { return read_only_; }
   bool IsOpen() const noexcept { return open_; }
 
-  MetadataDb& db() { return db_; }
-  const MetadataDb& db() const { return db_; }
+  MetadataDb& db() { return *db_; }
+  const MetadataDb& db() const { return *db_; }
   ArtifactStore& artifacts() { return *artifacts_; }
   const ArtifactStore& artifacts() const { return *artifacts_; }
 
@@ -100,7 +100,10 @@ class Project {
   bool read_only_ = false;
   bool open_ = false;
   std::unique_ptr<FileLock> lock_;
-  MetadataDb db_;
+  // Heap-owned so that its address is stable across Project moves: stores
+  // (ArtifactStore, SchedulerStateStore, ExecutionManifestStore) bind a
+  // MetadataDb& to this object for their lifetime (ADR-008).
+  std::unique_ptr<MetadataDb> db_;
   std::unique_ptr<ArtifactStore> artifacts_;
 };
 

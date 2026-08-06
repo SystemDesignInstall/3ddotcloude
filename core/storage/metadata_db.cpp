@@ -148,6 +148,8 @@ std::size_t MetadataDb::ApplyMigrations() {
       std::find(applied.begin(), applied.end(), "1") != applied.end();
   const bool has_0003 =
       std::find(applied.begin(), applied.end(), "3") != applied.end();
+  const bool has_0004 =
+      std::find(applied.begin(), applied.end(), "4") != applied.end();
   std::size_t count = 0;
 
   // Migration 0001 (initial schema, ratified; identical to HEAD schema.sql).
@@ -178,6 +180,23 @@ std::size_t MetadataDb::ApplyMigrations() {
       Exec("COMMIT;", "commit migration 0003");
     } catch (...) {
       Exec("ROLLBACK;", "rollback migration 0003");
+      throw;
+    }
+    ++count;
+  }
+
+  // Migration 0004 (RFC-0003 P1.4, ExecutionManifest: pipeline-level
+  // execution document). Owned by engine/pipeline; the reserved
+  // quality_report_id column is consumed by RFC-0004 (Accuracy).
+  if (!has_0004) {
+    Exec("BEGIN IMMEDIATE TRANSACTION;", "begin migration 0004");
+    try {
+      Exec(generated::kMigration0004Sql, "apply migration 0004");
+      Exec("INSERT INTO schema_meta (version) VALUES (4);",
+           "record schema version 4");
+      Exec("COMMIT;", "commit migration 0004");
+    } catch (...) {
+      Exec("ROLLBACK;", "rollback migration 0004");
       throw;
     }
     ++count;

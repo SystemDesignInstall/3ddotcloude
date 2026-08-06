@@ -21,6 +21,9 @@ set(SPATIAL_UNIT_TESTS
   unit/test_protocol_framing.cpp
   unit/test_in_process_executor.cpp
   unit/test_process_executor.cpp
+  unit/test_engine_e2e.cpp
+  unit/test_pipeline.cpp
+  unit/test_mock_pipeline_e2e.cpp
 )
 
 # A tiny frame-echo helper the framing tests drive as a child process; it

@@ -45,6 +45,7 @@ find_package(nlohmann_json CONFIG REQUIRED)
 
 add_subdirectory(core)
 add_subdirectory(engine)
+add_subdirectory(cli)
 
 if(SPATIAL_ENABLE_TESTS)
   enable_testing()

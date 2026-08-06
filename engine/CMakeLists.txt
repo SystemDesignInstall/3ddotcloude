@@ -74,6 +74,7 @@ configure_file(workers/worker_paths.h.in
                "${CMAKE_CURRENT_BINARY_DIR}/worker_paths.h" @ONLY)
 
 add_library(spatial_engine STATIC
+  engine.cpp
   resources/resource_spec.cpp
   task/task_types.cpp
   task/task_graph.cpp
@@ -83,9 +84,14 @@ add_library(spatial_engine STATIC
   scheduler/scheduler_state_store.cpp
   scheduler/scheduler.cpp
   cache/task_cache.cpp
+  pipeline/pipeline_registry.cpp
+  pipeline/pipeline_compiler.cpp
+  pipeline/execution_manifest.cpp
+  pipeline/mock_photogrammetry.cpp
   workers/protocol_framing.cpp
   workers/in_process_executor.cpp
   workers/process_executor.cpp
+  workers/mock_pipeline_runner.cpp
   ${SPATIAL_PROTO_GENERATED}
 )
 

@@ -90,9 +90,8 @@ void Scheduler::Execute(TaskGraph& graph) {
     for (const auto& id : ReadyTasks(graph)) {
       if (TryCacheHit(graph, id)) {
         progressed = true;
+        continue;
       }
-    }
-    for (const auto& id : ReadyTasks(graph)) {
       DispatchAndAwait(graph, id);
       progressed = true;
     }
@@ -174,11 +173,41 @@ bool Scheduler::TryCacheHit(TaskGraph& graph, Uuid task_id) {
   // pending -> running -> succeeded (the task is satisfied without dispatch).
   Mark(graph, task_id, TaskStatus::kRunning, graph.job_id());
   auto& mutable_task = graph.MutableTask(task_id);
+  const auto declared = mutable_task.outputs;
   mutable_task.outputs = {*output};
   Mark(graph, task_id, TaskStatus::kSucceeded, graph.job_id());
-  RecordRun(mutable_task, TaskStatus::kSucceeded, mutable_task.outputs,
-            std::nullopt, std::nullopt, TimestampNsNow() - 1);
+  // A cache hit is a replay, not an execution: no task_runs row is recorded
+  // (RFC-0003 §5.10, ExecutionRecord is per-worker-run provenance). The
+  // absence of a run row is how pipeline consumers detect a cache hit.
+  ThreadOutputsToDependents(graph, task_id, declared, mutable_task.outputs);
   return true;
+}
+
+void Scheduler::ThreadOutputsToDependents(
+    TaskGraph& graph, Uuid task_id, const std::vector<ArtifactRef>& declared,
+    const std::vector<ArtifactRef>& produced) {
+  if (produced.empty()) {
+    return;
+  }
+  for (const auto& dep_id : graph.DependentsOf(task_id)) {
+    auto& dep = graph.MutableTask(dep_id);
+    // Replace each declared (placeholder) ref with the real produced ref.
+    const std::size_t n = std::min(declared.size(), produced.size());
+    for (std::size_t i = 0; i < n; ++i) {
+      for (auto& ref : dep.inputs) {
+        if (ref == declared[i]) {
+          ref = produced[i];
+        }
+      }
+    }
+    // Append any produced refs that had no declared placeholder.
+    for (const auto& ref : produced) {
+      if (std::find(dep.inputs.begin(), dep.inputs.end(), ref) ==
+          dep.inputs.end()) {
+        dep.inputs.push_back(ref);
+      }
+    }
+  }
 }
 
 void Scheduler::DispatchAndAwait(TaskGraph& graph, Uuid task_id) {
@@ -227,13 +256,15 @@ void Scheduler::DispatchAndAwait(TaskGraph& graph, Uuid task_id) {
           continue;
         case WorkerEventType::kCompleted: {
           auto& t = graph.MutableTask(task_id);
+          const auto declared = t.outputs;
           t.outputs = std::move(produced);
           Mark(graph, task_id, TaskStatus::kSucceeded, job_id);
           if (!t.outputs.empty()) {
             cache_.StoreOutput(t, t.outputs.front());
           }
-          RecordRun(t, TaskStatus::kSucceeded, t.outputs,
-                    std::nullopt, executor_.id(), started_ns);
+          RecordRun(t, TaskStatus::kSucceeded, t.outputs, std::nullopt,
+                    executor_.id(), started_ns);
+          ThreadOutputsToDependents(graph, task_id, declared, t.outputs);
           return;
         }
         case WorkerEventType::kFailed: {

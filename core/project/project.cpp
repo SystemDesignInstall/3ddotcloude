@@ -63,11 +63,11 @@ Project Project::Create(const std::filesystem::path& root,
   p.info_ = info;
   p.read_only_ = false;
 
-  p.db_ = MetadataDb::Create(p.db_path_);
-  p.artifacts_ = std::make_unique<ArtifactStore>(p.artifacts_root_, p.db_);
+  p.db_ = std::make_unique<MetadataDb>(MetadataDb::Create(p.db_path_));
+  p.artifacts_ = std::make_unique<ArtifactStore>(p.artifacts_root_, *p.db_);
   p.WriteProjectJson();
 
-  p.db_.InsertProject(info.uuid, info.name, info.schema_version,
+  p.db_->InsertProject(info.uuid, info.name, info.schema_version,
                       json{{"app", info.created_by.app},
                            {"version", info.created_by.version},
                            {"git_commit", info.created_by.git_commit}}
@@ -178,9 +178,10 @@ Project Project::Open(const std::filesystem::path& root, bool read_only) {
     p.lock_ = std::make_unique<FileLock>(root / kLockFile);
   }
 
-  p.db_ = p.read_only_ ? MetadataDb::OpenReadOnly(p.db_path_)
-                       : MetadataDb::Open(p.db_path_);
-  p.artifacts_ = std::make_unique<ArtifactStore>(p.artifacts_root_, p.db_);
+  p.db_ = std::make_unique<MetadataDb>(
+      p.read_only_ ? MetadataDb::OpenReadOnly(p.db_path_)
+                   : MetadataDb::Open(p.db_path_));
+  p.artifacts_ = std::make_unique<ArtifactStore>(p.artifacts_root_, *p.db_);
   p.open_ = true;
   return p;
 }
@@ -216,7 +217,7 @@ void Project::VerifyIntegrity() const {
 }
 
 void Project::Close() {
-  db_.Close();
+  db_.reset();
   lock_.reset();
   artifacts_.reset();
   open_ = false;

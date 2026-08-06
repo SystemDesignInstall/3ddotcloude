@@ -50,6 +50,14 @@ class Scheduler {
  private:
   void Execute(TaskGraph& graph);
   void PropagateFailures(TaskGraph& graph, bool& progressed);
+  // RFC-0003 §5.9: after a task succeeds, its produced output refs replace
+  // the declared (placeholder) output refs in each dependent's inputs, so the
+  // downstream ADR-020 cache key and ExecutionRecord.inputs reflect real
+  // content hashes. `declared` are the refs the dependent consumed before the
+  // producer executed. Dependents are persisted on their next state mark.
+  void ThreadOutputsToDependents(TaskGraph& graph, Uuid task_id,
+                                 const std::vector<ArtifactRef>& declared,
+                                 const std::vector<ArtifactRef>& produced);
   std::vector<Uuid> ReadyTasks(const TaskGraph& graph) const;
   bool AllTerminal(const TaskGraph& graph) const;
   bool TryCacheHit(TaskGraph& graph, Uuid task_id);

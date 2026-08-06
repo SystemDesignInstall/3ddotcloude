@@ -380,6 +380,43 @@ CREATE TABLE log_records (
 );
 
 -- ---------------------------------------------------------------------------
+-- ExecutionManifest (RFC-0003 P1.4, migration 0004)
+-- ---------------------------------------------------------------------------
+-- Pipeline-level execution document: the golden source for Resume / Audit /
+-- Reproducibility and the future AccuracyReport (RFC-0004). Owned by
+-- engine/pipeline; manifest_id doubles as the scheduler graph job_id.
+
+CREATE TABLE execution_manifests (
+    manifest_id          BLOB PRIMARY KEY,
+    pipeline_id          TEXT NOT NULL,
+    pipeline_version     TEXT NOT NULL,
+    pipeline_hash        TEXT NOT NULL,
+    config_hash          TEXT NOT NULL,
+    git_commit           TEXT NOT NULL,
+    status               TEXT NOT NULL DEFAULT 'running',
+    external_inputs_json TEXT NOT NULL DEFAULT '[]',
+    quality_report_id    BLOB,
+    created_at_ns        INTEGER NOT NULL,
+    finished_at_ns       INTEGER
+);
+
+CREATE TABLE execution_manifest_stages (
+    manifest_id      BLOB NOT NULL REFERENCES execution_manifests (manifest_id),
+    sequence         INTEGER NOT NULL,
+    stage_id         TEXT NOT NULL,
+    capability       TEXT NOT NULL,
+    implementation   TEXT NOT NULL,
+    task_hash        TEXT NOT NULL,
+    status           TEXT NOT NULL DEFAULT 'pending',
+    cache_hit        INTEGER NOT NULL DEFAULT 0,
+    task_id          BLOB,
+    output_refs_json TEXT NOT NULL DEFAULT '[]',
+    started_at_ns    INTEGER,
+    finished_at_ns   INTEGER,
+    PRIMARY KEY (manifest_id, sequence)
+);
+
+-- ---------------------------------------------------------------------------
 -- Indices
 -- ---------------------------------------------------------------------------
 

@@ -160,8 +160,7 @@ std::string TaskToJson(const TaskInstance& task) {
 TaskInstance TaskFromJson(const std::string& json_str) {
   const json j = json::parse(json_str, nullptr, /*allow_exceptions=*/true);
   TaskInstance task;
-  task.id = ParseUuid(j.at("id").get<std::string>());
-  const json& def = j.at("definition");
+  task.id = ParseUuid(j.at("id").get<std::string>());  const json& def = j.at("definition");
   task.definition.type = def.at("type").get<std::string>();
   const json& in = def.at("inputs");
   task.definition.inputs.artifact_kinds = ToStringVector(in.at("artifact_kinds"));
@@ -186,6 +185,44 @@ TaskInstance TaskFromJson(const std::string& json_str) {
   task.metadata.created_at_ns = meta.value("created_at_ns", std::int64_t{0});
   task.metadata.updated_at_ns = meta.value("updated_at_ns", std::int64_t{0});
   return task;
+}
+
+std::string TaskGraphToJson(const TaskGraph& graph,
+                            const std::vector<ArtifactRef>& external_inputs) {
+  json tasks = json::array();
+  for (const auto& id : graph.TaskIds()) {
+    tasks.push_back(
+        {{"task", json::parse(TaskToJson(graph.GetTask(id)))},
+         {"dependencies",
+          [&] {
+            json deps = json::array();
+            for (const auto& dep : graph.DependenciesOf(id)) {
+              deps.push_back(core::FormatUuid(dep));
+            }
+            return deps;
+          }()}});
+  }
+  json j = {{"job_id", core::FormatUuid(graph.job_id())},
+            {"external_inputs", external_inputs},
+            {"tasks", tasks}};
+  return j.dump();
+}
+
+TaskGraph TaskGraphFromJson(const std::string& json_str,
+                            std::vector<ArtifactRef>& external_inputs) {
+  const json j = json::parse(json_str, nullptr, /*allow_exceptions=*/true);
+  const std::string job_id = j.value("job_id", "");
+  TaskGraph graph(ParseUuid(job_id));
+  external_inputs = ToStringVector(j.value("external_inputs", json::array()));
+  for (const auto& entry : j.at("tasks")) {
+    const Uuid id = ParseUuid(entry.at("task").at("id").get<std::string>());
+    TaskInstance task = TaskFromJson(entry.at("task").dump());
+    graph.AddTask(std::move(task));
+    for (const auto& dep : entry.at("dependencies")) {
+      graph.AddDependency(id, ParseUuid(dep.get<std::string>()));
+    }
+  }
+  return graph;
 }
 
 }  // namespace spatial::engine

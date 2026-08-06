@@ -19,6 +19,10 @@ string(REGEX REPLACE "INSERT INTO schema_meta \\(version\\) VALUES \\(1\\);" "" 
 # transaction) and has no schema_meta handling.
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/../schemas/database/migrations/0003_scheduler.sql" SPATIAL_MIGRATION_0003)
 string(REPLACE "PRAGMA foreign_keys = ON;" "" SPATIAL_MIGRATION_0003 "${SPATIAL_MIGRATION_0003}")
+# 0004_execution_manifest.sql (RFC-0003 P1.4) is likewise written without
+# BEGIN/COMMIT; the runner records schema version 4 in schema_meta.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/../schemas/database/migrations/0004_execution_manifest.sql" SPATIAL_MIGRATION_0004)
+string(REPLACE "PRAGMA foreign_keys = ON;" "" SPATIAL_MIGRATION_0004 "${SPATIAL_MIGRATION_0004}")
 configure_file("${CMAKE_CURRENT_SOURCE_DIR}/storage/migrations_generated.h.in"
                "${CMAKE_CURRENT_BINARY_DIR}/storage/migrations_generated.h" @ONLY)
 
