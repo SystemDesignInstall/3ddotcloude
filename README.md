@@ -70,3 +70,12 @@ proposal → draft → proposed → accepted → ratified → superseded
 | ADR-036 | Digital Twin and temporal epochs |
 | ADR-037 | Public API stability policy |
 | ADR-038 | Processing Engine boundary definition |
+
+## RFC Index
+
+| ID | Title |
+|---|---|
+| RFC-0001 | Initial schema contracts |
+| RFC-0002 | Permanent spatial data model |
+| RFC-0003 | Processing engine & execution architecture |
+| RFC-0005 | Accuracy & quality assurance |
