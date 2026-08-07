@@ -1,9 +1,9 @@
 #pragma once
 
 // The P1.4 demo pipeline (RFC-0003 P1.4): Images -> Mock Feature Extraction ->
-// Mock Reconstruction -> Mock Validation (noop). The validation stage exists
-// as the reproducibility seam: today it is a noop, tomorrow it hosts the
-// Accuracy/AI gates (RFC-0004). The demo implementation lives in
+// Mock Reconstruction -> Mock Validation (RFC-0005 QA stage). The validation
+// stage runs the deterministic quality engine and produces a quality_report
+// artifact. The demo implementation lives in
 // engine/workers/mock_pipeline_runner; this helper only declares the
 // definition and registers it in a registry.
 

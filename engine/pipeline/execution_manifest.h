@@ -2,7 +2,7 @@
 
 // ExecutionManifest - the pipeline-level execution document (RFC-0003 §5.1,
 // migration 0004). It is the golden source for Resume / Audit /
-// Reproducibility and the future AccuracyReport (RFC-0004). Owned by
+// Reproducibility and the QualityReport link (RFC-0005). Owned by
 // engine/pipeline and persisted through the single MetadataDb connection; the
 // scheduler stays agnostic and never writes manifest rows.
 
@@ -41,7 +41,7 @@ struct ExecutionManifest {
   std::string git_commit;
   std::string status;                 // running|succeeded|failed|cancelled
   std::vector<ArtifactRef> external_inputs;
-  std::optional<Uuid> quality_report_id;  // reserved for RFC-0004 (Accuracy)
+  std::optional<Uuid> quality_report_id;  // RFC-0005: validate-stage artifact
   std::int64_t created_at_ns = 0;
   std::int64_t finished_at_ns = 0;
   std::vector<ExecutionManifestStage> stages;
@@ -70,6 +70,10 @@ class ExecutionManifestStore {
 
   // Marks the whole pipeline terminal.
   void Finish(const Uuid& manifest_id, TaskStatus pipeline_status);
+
+  // Links the quality report artifact produced by the validate stage
+  // (RFC-0005): quality_report_id = artifact_uuid.
+  void SetQualityReportId(const Uuid& manifest_id, const Uuid& artifact_uuid);
 
   std::optional<ExecutionManifest> Load(const Uuid& manifest_id) const;
   std::vector<Uuid> ListIds() const;

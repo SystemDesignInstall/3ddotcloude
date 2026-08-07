@@ -71,7 +71,7 @@ ExecutionManifest Engine::RunPipeline(
                                  static_cast<int>(i));
   }
 
-  scheduler_->Run(*plan.graph, plan.external_inputs);
+  scheduler_->Run(*plan.graph, plan.external_inputs, plan.pipeline_hash);
 
   // Mirror the terminal per-stage state into the manifest. A stage served
   // from the task cache has no task_runs row (the scheduler records runs for
@@ -86,6 +86,22 @@ ExecutionManifest Engine::RunPipeline(
                                  task.metadata.updated_at_ns);
   }
   manifest_store_->Finish(plan.job_id, AggregateStatus(plan, *plan.graph));
+
+  // RFC-0005: link the quality report artifact produced by the terminal
+  // validate stage. quality_report_id = artifact_uuid (migration 0004), so
+  // `spatial report` and audit consumers can resolve report -> payload.
+  if (!plan.stages.empty() &&
+      plan.stages.back().capability == "validation") {
+    const auto& validate = plan.stages.back();
+    const auto& task = plan.graph->GetTask(validate.task_id);
+    if (!task.outputs.empty()) {
+      const auto row =
+          project_.db().FindArtifactByHash(task.outputs.front());
+      if (row) {
+        manifest_store_->SetQualityReportId(plan.job_id, row->artifact_id);
+      }
+    }
+  }
 
   auto manifest = manifest_store_->Load(plan.job_id);
   if (!manifest) {

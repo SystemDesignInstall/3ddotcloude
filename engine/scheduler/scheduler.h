@@ -30,9 +30,12 @@ class Scheduler {
 
   // Validates the graph (acyclicity, type-match, resource feasibility),
   // persists it, then executes it to completion. Throws SchedulerError on
-  // validation failure.
+  // validation failure. `pipeline_hash` is the RFC-0003 AC-8 run identity
+  // passed through to dispatched tasks (empty for ad hoc DAGs / resume).
   void Run(TaskGraph& graph);
   void Run(TaskGraph& graph, const std::vector<ArtifactRef>& external_inputs);
+  void Run(TaskGraph& graph, const std::vector<ArtifactRef>& external_inputs,
+           std::string pipeline_hash);
 
   // Cooperative cancellation of a running task; the terminal cancellation is
   // persisted as a first-class state.
@@ -75,6 +78,7 @@ class Scheduler {
   WorkerExecutor& executor_;
   TaskGraph* active_graph_ = nullptr;
   std::unique_ptr<TaskGraph> owned_graph_;
+  std::string run_pipeline_hash_;  // RFC-0005 run identity for this execution
 };
 
 }  // namespace spatial::engine

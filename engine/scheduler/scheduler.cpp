@@ -26,11 +26,18 @@ Scheduler::Scheduler(SchedulerStateStore& state, TaskCache& cache,
     : state_(state), cache_(cache), executor_(executor) {}
 
 void Scheduler::Run(TaskGraph& graph) {
-  Run(graph, {});
+  Run(graph, {}, "");
 }
 
 void Scheduler::Run(TaskGraph& graph,
                     const std::vector<ArtifactRef>& external_inputs) {
+  Run(graph, external_inputs, "");
+}
+
+void Scheduler::Run(TaskGraph& graph,
+                    const std::vector<ArtifactRef>& external_inputs,
+                    std::string pipeline_hash) {
+  run_pipeline_hash_ = std::move(pipeline_hash);
   graph.Validate({executor_.profile()}, external_inputs);
   state_.SaveGraph(graph);
   Execute(graph);
@@ -225,6 +232,7 @@ void Scheduler::DispatchAndAwait(TaskGraph& graph, Uuid task_id) {
     request.input_refs = task.inputs;
     request.expected_output_refs = task.outputs;
     request.config_json = task.config_json;
+    request.pipeline_hash = run_pipeline_hash_;
     request.workspace = "temp/" + FormatUuid(job_id) + "/" + FormatUuid(task_id);
     executor_.Submit(request);
 

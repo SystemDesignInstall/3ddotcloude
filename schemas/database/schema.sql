@@ -383,7 +383,7 @@ CREATE TABLE log_records (
 -- ExecutionManifest (RFC-0003 P1.4, migration 0004)
 -- ---------------------------------------------------------------------------
 -- Pipeline-level execution document: the golden source for Resume / Audit /
--- Reproducibility and the future AccuracyReport (RFC-0004). Owned by
+-- Reproducibility and the QualityReport link (RFC-0005). Owned by
 -- engine/pipeline; manifest_id doubles as the scheduler graph job_id.
 
 CREATE TABLE execution_manifests (
@@ -395,7 +395,7 @@ CREATE TABLE execution_manifests (
     git_commit           TEXT NOT NULL,
     status               TEXT NOT NULL DEFAULT 'running',
     external_inputs_json TEXT NOT NULL DEFAULT '[]',
-    quality_report_id    BLOB,
+    quality_report_id    BLOB,   -- RFC-0005: validate-stage artifact
     created_at_ns        INTEGER NOT NULL,
     finished_at_ns       INTEGER
 );

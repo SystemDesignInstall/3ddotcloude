@@ -3,7 +3,7 @@
 -- the transaction; BEGIN/COMMIT are stripped at build time.
 --
 -- The manifest is the golden source for Resume / Audit / Reproducibility and
--- the future AccuracyReport (RFC-0004). It is owned by engine/pipeline; the
+-- the QualityReport link (RFC-0005). It is owned by engine/pipeline; the
 -- scheduler stays agnostic (it persists tasks/task_runs only, §5.12).
 
 -- One row per pipeline run. manifest_id doubles as the scheduler graph
@@ -18,7 +18,7 @@ CREATE TABLE execution_manifests (
   status               TEXT NOT NULL DEFAULT 'running',
                          -- running|succeeded|failed|cancelled
   external_inputs_json TEXT NOT NULL DEFAULT '[]',
-  quality_report_id    BLOB,                    -- reserved for RFC-0004 (Accuracy)
+  quality_report_id    BLOB,                    -- RFC-0005: validate-stage artifact
   created_at_ns        INTEGER NOT NULL,
   finished_at_ns       INTEGER
 );

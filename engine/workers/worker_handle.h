@@ -23,6 +23,8 @@ struct TaskRequest {
   std::vector<ArtifactRef> input_refs;         // CAS content hashes
   std::vector<ArtifactRef> expected_output_refs;
   std::string config_json;                     // effective configuration
+  std::string pipeline_hash;                   // run identity (RFC-0005; may
+                                               // be empty for ad hoc DAGs)
   std::string workspace;                       // deterministic temp/<job>/<task>
 };
 

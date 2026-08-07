@@ -22,6 +22,7 @@
 #include "core/utils/uuid.h"
 #include "engine/engine.h"
 #include "engine/pipeline/mock_photogrammetry.h"
+#include "engine/pipeline/quality/quality_report.h"
 #include "engine/task/task_serialization.h"
 
 namespace {
@@ -43,7 +44,8 @@ constexpr const char* kUsage =
     "  spatial run <pipeline-id> [--config <json>] [--input <file> ...]"
     " [--project <dir>]\n"
     "  spatial run --dag <dag.json> [--project <dir>]\n"
-    "  spatial status <run-id> [--project <dir>]\n";
+    "  spatial status <run-id> [--project <dir>]\n"
+    "  spatial report <run-id> [--project <dir>]\n";
 
 void PrintError(const ProjectError& e) {
   std::cerr << "error: " << e.message() << "\n";
@@ -152,6 +154,52 @@ int RunDagCommand(const std::string& dag_path, Engine& engine) {
   return 0;
 }
 
+// Renders the RFC-0005 quality report of a run: a human summary (verdict,
+// score, metrics) followed by the canonical JSON document.
+int ReportCommand(const Uuid& run_id, Engine& engine) {
+  const auto manifest = engine.LoadManifest(run_id);
+  if (!manifest) {
+    std::cerr << "no such run: " << spatial::core::FormatUuid(run_id) << "\n";
+    return 1;
+  }
+  if (!manifest->quality_report_id) {
+    std::cerr << "no quality report for run "
+              << spatial::core::FormatUuid(run_id) << "\n";
+    return 1;
+  }
+  const auto artifact =
+      engine.project().artifacts().ReadManifest(*manifest->quality_report_id);
+  if (!artifact) {
+    std::cerr << "quality report artifact is missing (uuid "
+              << spatial::core::FormatUuid(*manifest->quality_report_id)
+              << ")\n";
+    return 1;
+  }
+  const auto payload = engine.project().artifacts().Get(artifact->content_hash);
+  if (!payload) {
+    std::cerr << "quality report payload is missing\n";
+    return 1;
+  }
+  const std::string text(payload->begin(), payload->end());
+  const auto report = spatial::engine::QualityReportFromJson(text);
+  std::cout << "verdict: " << spatial::engine::QualityVerdictName(report.verdict)
+            << "  score: " << report.quality_score << "/100\n"
+            << "engine:  " << report.engine_name << " " << report.engine_version
+            << " (" << report.engine_git_commit << ")\n"
+            << "stage:   " << report.stage_id << "\n"
+            << "metrics:\n"
+            << "  reprojection  rmse " << report.reprojection.rmse_px << " px,"
+            << " mean " << report.reprojection.mean_error_px << " px\n"
+            << "  coverage      completeness "
+            << report.coverage.completeness_pct << "%,"
+            << " baseline " << report.coverage.baseline_ratio << "\n"
+            << "  geometry      points " << report.geometry.point_count << ","
+            << " confidence " << report.geometry.mean_confidence << "\n"
+            << "document:\n"
+            << text << "\n";
+  return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -221,6 +269,17 @@ int main(int argc, char** argv) {
                   << spatial::engine::TaskStatusToString(task.state) << "\n";
       }
       return 0;
+    }
+
+    if (args[0] == "report") {
+      if (args.size() < 2) {
+        std::cerr << kUsage;
+        return 2;
+      }
+      std::vector<std::string> rest(args.begin() + 1, args.end());
+      Engine engine = OpenProjectAndEngine(rest);
+      const Uuid id = ParseUuid(rest[0]);
+      return ReportCommand(id, engine);
     }
 
     std::cerr << kUsage;

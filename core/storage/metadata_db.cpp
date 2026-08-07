@@ -186,8 +186,8 @@ std::size_t MetadataDb::ApplyMigrations() {
   }
 
   // Migration 0004 (RFC-0003 P1.4, ExecutionManifest: pipeline-level
-  // execution document). Owned by engine/pipeline; the reserved
-  // quality_report_id column is consumed by RFC-0004 (Accuracy).
+  // execution document). Owned by engine/pipeline; the quality_report_id
+  // column is linked by the RFC-0005 validate stage.
   if (!has_0004) {
     Exec("BEGIN IMMEDIATE TRANSACTION;", "begin migration 0004");
     try {

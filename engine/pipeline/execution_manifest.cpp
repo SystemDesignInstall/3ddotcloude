@@ -194,6 +194,29 @@ void ExecutionManifestStore::Finish(const Uuid& manifest_id,
   sqlite3_finalize(stmt);
 }
 
+void ExecutionManifestStore::SetQualityReportId(const Uuid& manifest_id,
+                                                const Uuid& artifact_uuid) {
+  sqlite3* db = db_.db();
+  if (db == nullptr) {
+    throw SchedulerError(ErrorCode::kSchedPersistence,
+                         "metadata database is not open");
+  }
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "UPDATE execution_manifests SET quality_report_id = ?"
+      " WHERE manifest_id = ?";
+  if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    ThrowSql("cannot prepare link quality report", db);
+  }
+  BindUuid(stmt, 1, artifact_uuid);
+  BindUuid(stmt, 2, manifest_id);
+  if (sqlite3_step(stmt) != SQLITE_DONE) {
+    sqlite3_finalize(stmt);
+    ThrowSql("cannot link quality report", db);
+  }
+  sqlite3_finalize(stmt);
+}
+
 std::optional<ExecutionManifest> ExecutionManifestStore::Load(
     const Uuid& manifest_id) const {
   sqlite3* db = db_.db();
