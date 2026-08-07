@@ -22,6 +22,7 @@
 #include "engine/engine.h"
 #include "engine/pipeline/mock_photogrammetry.h"
 #include "engine/pipeline/pipeline_compiler.h"
+#include "engine/pipeline/quality/quality_report.h"
 
 namespace spatial::engine {
 namespace {
@@ -102,6 +103,22 @@ TEST_F(MockPipelineE2eTest, RunPipelineSucceedsAndPersistsManifest) {
   EXPECT_EQ(reloaded->pipeline_hash, manifest.pipeline_hash);
   EXPECT_EQ(reloaded->stages.size(), manifest.stages.size());
   EXPECT_EQ(reloaded->status, "succeeded");
+
+  // RFC-0005: the terminal validate stage produced a quality report linked
+  // from the manifest, resolvable to a payload carrying the run identity.
+  ASSERT_TRUE(manifest.quality_report_id.has_value());
+  EXPECT_EQ(reloaded->quality_report_id, manifest.quality_report_id);
+  const auto report_manifest =
+      engine.project().artifacts().ReadManifest(*manifest.quality_report_id);
+  ASSERT_TRUE(report_manifest.has_value());
+  EXPECT_EQ(report_manifest->type, "quality_report");
+  const auto report_payload =
+      engine.project().artifacts().Get(report_manifest->content_hash);
+  ASSERT_TRUE(report_payload.has_value());
+  const std::string report_json(report_payload->begin(), report_payload->end());
+  const auto report = QualityReportFromJson(report_json);
+  EXPECT_EQ(report.pipeline_hash, manifest.pipeline_hash);
+  EXPECT_EQ(report.stage_id, "validate");
 }
 
 TEST_F(MockPipelineE2eTest, SecondRunIsACacheHitAcrossAllStages) {
@@ -117,6 +134,11 @@ TEST_F(MockPipelineE2eTest, SecondRunIsACacheHitAcrossAllStages) {
   for (std::size_t i = 0; i < first.stages.size(); ++i) {
     EXPECT_EQ(first.stages[i].output_refs, second.stages[i].output_refs);
   }
+
+  // The cache replay reproduces the identical quality report artifact
+  // (AC-8, RFC-0005): same hash -> same artifact_uuid.
+  ASSERT_TRUE(first.quality_report_id.has_value());
+  EXPECT_EQ(first.quality_report_id, second.quality_report_id);
 
   // Every stage was served from cache on the second run...
   for (const auto& stage : second.stages) {

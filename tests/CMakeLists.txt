@@ -24,6 +24,7 @@ set(SPATIAL_UNIT_TESTS
   unit/test_engine_e2e.cpp
   unit/test_pipeline.cpp
   unit/test_mock_pipeline_e2e.cpp
+  unit/test_quality_report.cpp
 )
 
 # A tiny frame-echo helper the framing tests drive as a child process; it
@@ -48,6 +49,7 @@ target_include_directories(spatial_unit_tests PRIVATE ${CMAKE_SOURCE_DIR})
 # Runtime paths for the demo-worker integration tests (worker_paths.h).
 target_compile_definitions(spatial_unit_tests PRIVATE
   SPATIAL_FRAME_ECHO_EXECUTABLE="$<TARGET_FILE:spatial_frame_echo>"
+  SPATIAL_QUALITY_SCHEMA_JSON="${CMAKE_SOURCE_DIR}/schemas/json/quality-report.schema.json"
 )
 
 include(GoogleTest)
