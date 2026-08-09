@@ -62,5 +62,53 @@ TEST(Uuid, NilDetection) {
   EXPECT_FALSE(IsNil(GenerateUuid()));
 }
 
+TEST(UuidV5, Deterministic) {
+  const Uuid ns = ParseUuid("6ba7b810-9dad-11d1-80b4-00c04fd430c8");  // DNS
+  const Uuid a = GenerateUuidV5(ns, "www.example.com");
+  const Uuid b = GenerateUuidV5(ns, "www.example.com");
+  EXPECT_EQ(a, b);
+}
+
+TEST(UuidV5, VersionAndVariant) {
+  const Uuid ns = ParseUuid("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+  const auto uuid = GenerateUuidV5(ns, "www.example.com");
+  EXPECT_EQ(uuid[6] >> 4, 5);
+  EXPECT_EQ(uuid[8] >> 6, 2);
+}
+
+TEST(UuidV5, NameSensitive) {
+  const Uuid ns = ParseUuid("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+  EXPECT_NE(GenerateUuidV5(ns, "a"), GenerateUuidV5(ns, "b"));
+}
+
+TEST(UuidV5, NamespaceSensitive) {
+  const Uuid ns_dns = ParseUuid("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+  const Uuid ns_url = ParseUuid("6ba7b811-9dad-11d1-80b4-00c04fd430c8");
+  EXPECT_NE(GenerateUuidV5(ns_dns, "www.example.com"),
+            GenerateUuidV5(ns_url, "www.example.com"));
+}
+
+TEST(UuidV5, Rfc4122Vectors) {
+  // RFC 4122 §4.3 reference vectors (DNS/URL namespaces).
+  const Uuid ns_dns = ParseUuid("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+  const Uuid ns_url = ParseUuid("6ba7b811-9dad-11d1-80b4-00c04fd430c8");
+  EXPECT_EQ(FormatUuid(GenerateUuidV5(ns_dns, "www.example.com")),
+            "2ed6657d-e927-568b-95e1-2665a8aea6a2");
+  EXPECT_EQ(FormatUuid(GenerateUuidV5(ns_url, "www.example.com")),
+            "b63cdfa4-3df9-568e-97ae-006c5b8fd652");
+  EXPECT_EQ(FormatUuid(GenerateUuidV5(ns_url, "example.com")),
+            "a5cf6e8e-4cfa-5f31-a804-6de6d1245e26");
+}
+
+TEST(UuidV5, CanonicalNameRoundTrip) {
+  // The P2.1 canonical name (image-import.md §6) round-trips through ParseUuid.
+  const Uuid ns = ParseUuid("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+  const std::string name =
+      "frame|camera0|1699999999123456789|"
+      "3b78ce563f89a0ed9414f5aa28ad0d96d6795f9c63";
+  const std::string s = FormatUuid(GenerateUuidV5(ns, name));
+  EXPECT_EQ(ParseUuid(s), GenerateUuidV5(ns, name));
+}
+
 }  // namespace
 }  // namespace spatial::core
