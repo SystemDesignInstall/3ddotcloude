@@ -26,6 +26,7 @@ set(SPATIAL_UNIT_TESTS
   unit/test_pipeline.cpp
   unit/test_mock_pipeline_e2e.cpp
   unit/test_quality_report.cpp
+  unit/test_image_format.cpp
 )
 
 # A tiny frame-echo helper the framing tests drive as a child process; it
@@ -39,6 +40,7 @@ add_executable(spatial_unit_tests ${SPATIAL_UNIT_TESTS})
 target_link_libraries(spatial_unit_tests PRIVATE
   spatial_core
   spatial_engine
+  spatial_importers
   GTest::gtest
   GTest::gtest_main
 )
