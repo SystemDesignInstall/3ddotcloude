@@ -83,6 +83,24 @@ struct ObservationPayloadRow {
   std::string pixel_format;
 };
 
+// Persistent provenance of a rejected import input (RFC-0006 §14, migration
+// 0005). A rejected file never creates an artifact/frame/observation; the
+// rejection record keeps the run auditable: original path, detected MIME,
+// importer identity, stable IMPORT_* error code, and the timestamp.
+struct ImportRejectionRow {
+  Uuid rejection_id;
+  Uuid project_id;
+  Uuid session_id;  // the batch session; always set (batch never spans)
+  std::int64_t sequence_index = 0;
+  std::string source_path;
+  std::string mime_type;
+  std::string importer;
+  std::string importer_version;
+  std::string error_code;
+  std::string diagnostic;
+  std::int64_t rejected_at_ns = 0;
+};
+
 struct SceneRow {
   Uuid scene_id;
   std::int64_t schema_version = 1;
@@ -207,6 +225,13 @@ class MetadataDb {
   void InsertFrame(const FrameRow& row);
   void InsertObservation(const ObservationRow& row);
   void InsertObservationPayload(const ObservationPayloadRow& row);
+
+  // Persistent rejection records (RFC-0006 §14, migration 0005). Inserted by
+  // the importer for every per-file failure; a rejected input never writes an
+  // artifact or canonical record.
+  void InsertImportRejection(const ImportRejectionRow& row);
+  std::vector<ImportRejectionRow> FindImportRejectionsBySession(
+      const Uuid& session_id) const;
 
   // Idempotent re-import check (image-import.md §13 case 1). Frames and
   // observations are immutable append-only records (PPS-0001 §5.3); a second

@@ -58,6 +58,7 @@ target_compile_definitions(spatial_unit_tests PRIVATE
   SPATIAL_FRAME_ECHO_EXECUTABLE="$<TARGET_FILE:spatial_frame_echo>"
   SPATIAL_CLI_EXECUTABLE="$<TARGET_FILE:spatial>"
   SPATIAL_QUALITY_SCHEMA_JSON="${CMAKE_SOURCE_DIR}/schemas/json/quality-report.schema.json"
+  SPATIAL_IMAGE_SCHEMA_JSON="${CMAKE_SOURCE_DIR}/schemas/json/image.schema.json"
 )
 
 include(GoogleTest)

@@ -23,6 +23,10 @@ string(REPLACE "PRAGMA foreign_keys = ON;" "" SPATIAL_MIGRATION_0003 "${SPATIAL_
 # BEGIN/COMMIT; the runner records schema version 4 in schema_meta.
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/../schemas/database/migrations/0004_execution_manifest.sql" SPATIAL_MIGRATION_0004)
 string(REPLACE "PRAGMA foreign_keys = ON;" "" SPATIAL_MIGRATION_0004 "${SPATIAL_MIGRATION_0004}")
+# 0005_import_rejections.sql (RFC-0006 §14, P2.1 review debt #8) is written
+# without BEGIN/COMMIT; the runner records schema version 5 in schema_meta.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/../schemas/database/migrations/0005_import_rejections.sql" SPATIAL_MIGRATION_0005)
+string(REPLACE "PRAGMA foreign_keys = ON;" "" SPATIAL_MIGRATION_0005 "${SPATIAL_MIGRATION_0005}")
 configure_file("${CMAKE_CURRENT_SOURCE_DIR}/storage/migrations_generated.h.in"
                "${CMAKE_CURRENT_BINARY_DIR}/storage/migrations_generated.h" @ONLY)
 

@@ -380,6 +380,28 @@ CREATE TABLE log_records (
 );
 
 -- ---------------------------------------------------------------------------
+-- Import rejections (RFC-0006 §14, migration 0005)
+-- ---------------------------------------------------------------------------
+-- Persistent provenance for rejected inputs: a rejected file never creates an
+-- artifact, frame, or observation; its rejection is recorded here so the
+-- import run stays auditable and reproducible (original path, detected MIME,
+-- importer identity, stable IMPORT_* error code, timestamp).
+
+CREATE TABLE import_rejections (
+    rejection_id      BLOB PRIMARY KEY,
+    project_id        BLOB NOT NULL REFERENCES projects(project_id),
+    session_id        BLOB REFERENCES capture_sessions(session_id),
+    sequence_index    INTEGER,
+    source_path       TEXT NOT NULL,
+    mime_type         TEXT,
+    importer          TEXT NOT NULL,
+    importer_version  TEXT NOT NULL,
+    error_code        TEXT NOT NULL,
+    diagnostic        TEXT,
+    rejected_at_ns    INTEGER NOT NULL
+);
+
+-- ---------------------------------------------------------------------------
 -- ExecutionManifest (RFC-0003 P1.4, migration 0004)
 -- ---------------------------------------------------------------------------
 -- Pipeline-level execution document: the golden source for Resume / Audit /
@@ -425,3 +447,5 @@ CREATE INDEX idx_frames_scene_ts      ON frames(scene_id, timestamp_ns);
 CREATE INDEX idx_geometry_scene_kind  ON geometry_elements(scene_id, kind);
 CREATE INDEX idx_tasks_job            ON tasks(job_id);
 CREATE INDEX idx_artifacts_hash       ON artifacts(content_hash);
+CREATE INDEX idx_import_rejections_session ON import_rejections (session_id, rejected_at_ns);
+CREATE INDEX idx_import_rejections_source  ON import_rejections (source_path);

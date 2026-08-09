@@ -102,6 +102,14 @@ class ImageImporter {
                                               const Uuid& scene_id,
                                               const Uuid& session_id,
                                               ImageImportFailure* out_failure);
+  // Persists the rejection of an input (RFC-0006 §14, migration 0005) with
+  // its provenance (path, detected mime, importer id/version, stable
+  // IMPORT_* code, timestamp). Called once per per-file failure; a rejected
+  // file never writes an artifact or canonical record.
+  void RecordRejection(const Uuid& session_id, const std::string& uri,
+                       const std::string& mime, ErrorCode code,
+                       const std::string& diagnostic,
+                       std::int64_t sequence_index) const;
   std::string ProducerJson() const;
   ArtifactManifest MakeManifest(const ImageHeaderInfo& header,
                                 std::size_t file_size) const;

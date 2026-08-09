@@ -25,6 +25,7 @@ using core::ObservationPayloadRow;
 using core::ObservationRow;
 using core::ProjectError;
 using core::Sha256Hex;
+using core::StableErrorCode;
 
 namespace fs = core::fs;
 
@@ -53,6 +54,26 @@ std::string ImageImporter::ProducerJson() const {
                         {"version", kImageImportVersion},
                         {"git_commit", kImageImportGitCommit}}
       .dump();
+}
+
+void ImageImporter::RecordRejection(const Uuid& session_id,
+                                    const std::string& uri,
+                                    const std::string& mime, ErrorCode code,
+                                    const std::string& diagnostic,
+                                    std::int64_t sequence_index) const {
+  core::ImportRejectionRow row;
+  row.rejection_id = GenerateUuid();
+  row.project_id = project_id_;
+  row.session_id = session_id;
+  row.sequence_index = sequence_index;
+  row.source_path = uri;
+  row.mime_type = mime;
+  row.importer = "image-import";
+  row.importer_version = kImageImportVersion;
+  row.error_code = StableErrorCode(code);
+  row.diagnostic = diagnostic;
+  row.rejected_at_ns = fs::TimestampNsNow();
+  db_.InsertImportRejection(row);
 }
 
 ArtifactManifest ImageImporter::MakeManifest(const ImageHeaderInfo& header,
@@ -164,6 +185,8 @@ std::optional<ImageImportEntry> ImageImporter::ProcessFile(
     bytes = fs::ReadFile(file.path);
   } catch (const ProjectError& e) {
     *failure = {uri, ErrorCode::kImportUnreadable, e.message()};
+    RecordRejection(session_id, uri, "", ErrorCode::kImportUnreadable,
+                    e.message(), sequence_index);
     return std::nullopt;
   }
 
@@ -175,6 +198,8 @@ std::optional<ImageImportEntry> ImageImporter::ProcessFile(
   if (format == ImageFormat::kUnknown || !allowed) {
     *failure = {uri, ErrorCode::kImportUnsupportedFormat,
                 "format not in the import allowlist"};
+    RecordRejection(session_id, uri, "", ErrorCode::kImportUnsupportedFormat,
+                    "format not in the import allowlist", sequence_index);
     return std::nullopt;
   }
 
@@ -184,8 +209,12 @@ std::optional<ImageImportEntry> ImageImporter::ProcessFile(
       header->pixel_format.empty()) {
     *failure = {uri, ErrorCode::kImportCorrupt,
                 "header is truncated or has no image geometry"};
+    RecordRejection(session_id, uri, "", ErrorCode::kImportCorrupt,
+                    "header is truncated or has no image geometry",
+                    sequence_index);
     return std::nullopt;
   }
+  const std::string mime = header->mime_type;
 
   // Sensor and time resolution (image-import.md §5): both are required; an
   // unresolvable sensor is a validation error, an uncalibrated sensor is only
@@ -194,11 +223,18 @@ std::optional<ImageImportEntry> ImageImporter::ProcessFile(
   if (!sensor) {
     *failure = {uri, ErrorCode::kImportSensorUnresolved,
                 "no registered sensor: " + FormatUuid(file.sensor_id)};
+    RecordRejection(session_id, uri, mime, ErrorCode::kImportSensorUnresolved,
+                    "no registered sensor: " + FormatUuid(file.sensor_id),
+                    sequence_index);
     return std::nullopt;
   }
   if (file.timestamp_ns == 0) {
     *failure = {uri, ErrorCode::kImportTimestampUnresolvable,
                 "capture time cannot resolve to the platform time domain"};
+    RecordRejection(session_id, uri, mime,
+                    ErrorCode::kImportTimestampUnresolvable,
+                    "capture time cannot resolve to the platform time domain",
+                    sequence_index);
     return std::nullopt;
   }
 

@@ -1,10 +1,14 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <regex>
 #include <string>
 #include <vector>
 
@@ -308,6 +312,15 @@ TEST_F(ImageImporterTest, SensorUnresolvedFails) {
   ASSERT_EQ(result.failures.size(), 1u);
   EXPECT_EQ(result.failures[0].code, ErrorCode::kImportSensorUnresolved);
   EXPECT_EQ(store_->PayloadCount(), 0u);
+
+  // The detected MIME survives into the persistent rejection record even
+  // though the batch produced no artifact (image-import.md §14).
+  const auto rejections =
+      db_->FindImportRejectionsBySession(result.session_id);
+  ASSERT_EQ(rejections.size(), 1u);
+  EXPECT_EQ(rejections[0].error_code, "IMPORT_SENSOR_UNRESOLVED");
+  EXPECT_EQ(rejections[0].mime_type, "image/jpeg");
+  EXPECT_EQ(rejections[0].importer, "image-import");
 }
 
 TEST_F(ImageImporterTest, EmptyBatchThrows) {
@@ -439,6 +452,153 @@ TEST_F(ImageImporterTest, ProvenanceIsRecorded) {
   EXPECT_EQ(source_json["id"], "image-import");
   EXPECT_FALSE(properties_json["configuration_hash"].get<std::string>().empty());
   sqlite3_finalize(stmt);
+}
+
+namespace {
+
+// Self-contained JSON-Schema conformance check for the subset of keywords used
+// by image.schema.json (RFC-0006 §8): required, properties, type, const,
+// enum, pattern, minimum, and array items. `format` (uuid / date-time) is
+// intentionally not enforced beyond the string `type` — structure, values and
+// patterns are. P2.1 review debt #7 (image-import.md §16.8) requires the
+// *produced* manifest to validate against the ratified schema, not just the
+// schema file to be well-formed.
+void CheckNode(const nlohmann::json& schema, const nlohmann::json& doc,
+               const std::string& path, std::vector<std::string>* violations) {
+  if (schema.contains("type")) {
+    const std::string t = schema["type"];
+    const bool ok = (t == "string" && doc.is_string()) ||
+                    (t == "integer" && doc.is_number_integer()) ||
+                    (t == "object" && doc.is_object()) ||
+                    (t == "array" && doc.is_array());
+    if (!ok) {
+      violations->push_back(path + ": expected " + t + ", got " +
+                            doc.type_name());
+    }
+  }
+  if (schema.is_object() && schema.contains("required")) {
+    for (const auto& key : schema["required"]) {
+      if (!doc.is_object() || !doc.contains(key)) {
+        violations->push_back(path + ": missing required '" +
+                              key.get<std::string>() + "'");
+      }
+    }
+  }
+  if (schema.is_object() && schema.contains("properties")) {
+    for (auto it = schema["properties"].begin();
+         it != schema["properties"].end(); ++it) {
+      const std::string key = it.key();
+      const std::string child = path + "/" + key;
+      if (doc.is_object() && doc.contains(key)) {
+        CheckNode(it.value(), doc[key], child, violations);
+      }
+    }
+  }
+  if (schema.contains("const") && doc != schema["const"]) {
+    violations->push_back(path + ": const mismatch");
+  }
+  if (schema.contains("enum")) {
+    if (std::find(schema["enum"].begin(), schema["enum"].end(), doc) ==
+        schema["enum"].end()) {
+      violations->push_back(path + ": not in enum");
+    }
+  }
+  if (schema.contains("pattern") && doc.is_string()) {
+    const std::regex re(schema["pattern"].get<std::string>());
+    if (!std::regex_match(doc.get<std::string>(), re)) {
+      violations->push_back(path + ": pattern mismatch");
+    }
+  }
+  if (schema.contains("minimum") && doc.is_number_integer()) {
+    if (doc.get<std::int64_t>() < schema["minimum"].get<std::int64_t>()) {
+      violations->push_back(path + ": below minimum");
+    }
+  }
+  if (schema.contains("items") && doc.is_array()) {
+    const auto& items = schema["items"];
+    for (std::size_t i = 0; i < doc.size(); ++i) {
+      CheckNode(items, doc[i], path + "/" + std::to_string(i), violations);
+    }
+  }
+}
+
+}  // namespace
+
+TEST_F(ImageImporterTest, ProducedManifestValidatesAgainstImageSchema) {
+  const Uuid sensor_id = GenerateUuid();
+  InsertTestSensor(*db_, sensor_id);
+  InsertTestCalibration(*db_, sensor_id);
+  const auto path = WriteImage("cam.jpg", kJpeg);
+  ImageImporter importer(*store_, *db_, kProjectId, config_);
+  const auto result = importer.Import(
+      {Source(path, "file:///cam.jpg", sensor_id, 1)});
+  ASSERT_EQ(result.imported.size(), 1u);
+  EXPECT_FALSE(IsNil(result.imported[0].artifact_uuid));
+
+  // Validate exactly what the producer wrote to disk (image-import.md §16.8):
+  // artifacts/<uuid>/manifest.json must conform to image.schema.json.
+  const auto manifest_path = root_ / "artifacts" /
+                             FormatUuid(result.imported[0].artifact_uuid) /
+                             "manifest.json";
+  std::ifstream in(manifest_path);
+  ASSERT_TRUE(in.good()) << manifest_path;
+  const std::string text((std::istreambuf_iterator<char>(in)),
+                         std::istreambuf_iterator<char>());
+  const auto doc = nlohmann::json::parse(text);
+
+  std::ifstream sin(SPATIAL_IMAGE_SCHEMA_JSON);
+  ASSERT_TRUE(sin.good()) << "cannot open image.schema.json";
+  const std::string schema_text((std::istreambuf_iterator<char>(sin)),
+                                std::istreambuf_iterator<char>());
+  const auto schema = nlohmann::json::parse(schema_text);
+
+  std::vector<std::string> violations;
+  CheckNode(schema, doc, "$", &violations);
+  ASSERT_TRUE(violations.empty()) << [&violations] {
+    std::string joined;
+    for (const auto& v : violations) joined += "\n  " + v;
+    return joined;
+  }();
+}
+
+TEST_F(ImageImporterTest, RejectedInputsLeavePersistentProvenance) {
+  const Uuid sensor_id = GenerateUuid();
+  InsertTestSensor(*db_, sensor_id);
+  InsertTestCalibration(*db_, sensor_id);
+  const auto bad = WriteImage("bad.bin", kGarbage);
+  const auto missing = root_ / "missing.jpg";
+  const auto good = WriteImage("good.jpg", kJpeg);
+  ImageImporter importer(*store_, *db_, kProjectId, config_);
+
+  const auto result = importer.Import(
+      {Source(bad, "file:///bad.bin", sensor_id, 1),
+       Source(missing, "file:///missing.jpg", sensor_id, 2),
+       Source(good, "file:///good.jpg", sensor_id, 3)});
+  ASSERT_EQ(result.imported.size(), 1u);
+  ASSERT_EQ(result.failures.size(), 2u);
+
+  // A rejected input never creates an artifact, frame, or observation.
+  EXPECT_EQ(store_->PayloadCount(), 1u);
+  EXPECT_EQ(db_->FindArtifactsByType("image").size(), 1u);
+
+  // Persistent provenance for every rejection (image-import.md §14): path,
+  // stable IMPORT_* code, importer identity, timestamp, batch-session link.
+  const auto rejections = db_->FindImportRejectionsBySession(result.session_id);
+  ASSERT_EQ(rejections.size(), 2u);
+
+  EXPECT_EQ(rejections[0].source_path, "file:///bad.bin");
+  EXPECT_EQ(rejections[0].error_code, "IMPORT_UNSUPPORTED_FORMAT");
+  EXPECT_EQ(rejections[0].importer, "image-import");
+  EXPECT_FALSE(rejections[0].importer_version.empty());
+  EXPECT_TRUE(rejections[0].mime_type.empty());  // magic bytes unrecognized
+  EXPECT_GT(rejections[0].rejected_at_ns, 0);
+  EXPECT_EQ(rejections[0].session_id, result.session_id);
+  EXPECT_EQ(rejections[0].project_id, kProjectId);
+
+  EXPECT_EQ(rejections[1].source_path, "file:///missing.jpg");
+  EXPECT_EQ(rejections[1].error_code, "IMPORT_UNREADABLE");
+  EXPECT_GT(rejections[1].rejected_at_ns, 0);
+  EXPECT_LT(rejections[0].sequence_index, rejections[1].sequence_index);
 }
 
 }  // namespace

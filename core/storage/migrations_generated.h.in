@@ -1,8 +1,9 @@
 #pragma once
 
 // Generated at configure time by CMake from
-// schemas/database/migrations/0001_init.sql, 0003_scheduler.sql and
-// 0004_execution_manifest.sql (single source of truth). DO NOT EDIT BY HAND.
+// schemas/database/migrations/0001_init.sql, 0003_scheduler.sql,
+// 0004_execution_manifest.sql and 0005_import_rejections.sql (single source
+// of truth). DO NOT EDIT BY HAND.
 
 namespace spatial::generated {
 
@@ -14,5 +15,8 @@ inline constexpr const char* kMigration0003Sql =
 
 inline constexpr const char* kMigration0004Sql =
     R"SPATIALMIGRATION(@SPATIAL_MIGRATION_0004@)SPATIALMIGRATION";
+
+inline constexpr const char* kMigration0005Sql =
+    R"SPATIALMIGRATION(@SPATIAL_MIGRATION_0005@)SPATIALMIGRATION";
 
 }  // namespace spatial::generated

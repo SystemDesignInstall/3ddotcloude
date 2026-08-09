@@ -150,6 +150,8 @@ std::size_t MetadataDb::ApplyMigrations() {
       std::find(applied.begin(), applied.end(), "3") != applied.end();
   const bool has_0004 =
       std::find(applied.begin(), applied.end(), "4") != applied.end();
+  const bool has_0005 =
+      std::find(applied.begin(), applied.end(), "5") != applied.end();
   std::size_t count = 0;
 
   // Migration 0001 (initial schema, ratified; identical to HEAD schema.sql).
@@ -197,6 +199,22 @@ std::size_t MetadataDb::ApplyMigrations() {
       Exec("COMMIT;", "commit migration 0004");
     } catch (...) {
       Exec("ROLLBACK;", "rollback migration 0004");
+      throw;
+    }
+    ++count;
+  }
+
+  // Migration 0005 (RFC-0006 §14, P2.1 review debt #8): persistent
+  // provenance for rejected import inputs.
+  if (!has_0005) {
+    Exec("BEGIN IMMEDIATE TRANSACTION;", "begin migration 0005");
+    try {
+      Exec(generated::kMigration0005Sql, "apply migration 0005");
+      Exec("INSERT INTO schema_meta (version) VALUES (5);",
+           "record schema version 5");
+      Exec("COMMIT;", "commit migration 0005");
+    } catch (...) {
+      Exec("ROLLBACK;", "rollback migration 0005");
       throw;
     }
     ++count;
@@ -873,6 +891,91 @@ bool MetadataDb::ObservationExists(const Uuid& observation_id) {
   const bool exists = sqlite3_step(stmt) == SQLITE_ROW;
   sqlite3_finalize(stmt);
   return exists;
+}
+
+void MetadataDb::InsertImportRejection(const ImportRejectionRow& row) {
+  if (read_only_) {
+    throw StorageError(ErrorCode::kStorageReadOnly,
+                       "cannot write to a read-only project", {}, false,
+                       "Open the project for writing to modify it.");
+  }
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "INSERT INTO import_rejections (rejection_id, project_id, session_id,"
+      " sequence_index, source_path, mime_type, importer, importer_version,"
+      " error_code, diagnostic, rejected_at_ns)"
+      " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare insert import rejection");
+  }
+  sqlite3_bind_blob(stmt, 1, row.rejection_id.data(),
+                    static_cast<int>(row.rejection_id.size()), SQLITE_TRANSIENT);
+  sqlite3_bind_blob(stmt, 2, row.project_id.data(),
+                    static_cast<int>(row.project_id.size()), SQLITE_TRANSIENT);
+  BindUuidOrNull(stmt, 3, row.session_id);
+  sqlite3_bind_int64(stmt, 4, row.sequence_index);
+  sqlite3_bind_text(stmt, 5, row.source_path.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 6, row.mime_type.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 7, row.importer.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 8, row.importer_version.c_str(), -1,
+                    SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 9, row.error_code.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 10, row.diagnostic.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_int64(stmt, 11, row.rejected_at_ns);
+  if (sqlite3_step(stmt) != SQLITE_DONE) {
+    const std::string msg = sqlite3_errmsg(db_);
+    sqlite3_finalize(stmt);
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot insert import rejection row: " + msg);
+  }
+  sqlite3_finalize(stmt);
+}
+
+std::vector<ImportRejectionRow> MetadataDb::FindImportRejectionsBySession(
+    const Uuid& session_id) const {
+  std::vector<ImportRejectionRow> out;
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "SELECT rejection_id, project_id, session_id, sequence_index,"
+      " source_path, mime_type, importer, importer_version, error_code,"
+      " diagnostic, rejected_at_ns FROM import_rejections"
+      " WHERE session_id = ? ORDER BY sequence_index, rejected_at_ns";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare find import rejections");
+  }
+  sqlite3_bind_blob(stmt, 1, session_id.data(),
+                    static_cast<int>(session_id.size()), SQLITE_TRANSIENT);
+  while (sqlite3_step(stmt) == SQLITE_ROW) {
+    ImportRejectionRow row;
+    if (const auto u = ColumnUuid(stmt, 0)) row.rejection_id = *u;
+    if (const auto u = ColumnUuid(stmt, 1)) row.project_id = *u;
+    if (const auto u = ColumnUuid(stmt, 2)) row.session_id = *u;
+    row.sequence_index = sqlite3_column_int64(stmt, 3);
+    if (const auto* t = sqlite3_column_text(stmt, 4)) {
+      row.source_path = reinterpret_cast<const char*>(t);
+    }
+    if (const auto* t = sqlite3_column_text(stmt, 5)) {
+      row.mime_type = reinterpret_cast<const char*>(t);
+    }
+    if (const auto* t = sqlite3_column_text(stmt, 6)) {
+      row.importer = reinterpret_cast<const char*>(t);
+    }
+    if (const auto* t = sqlite3_column_text(stmt, 7)) {
+      row.importer_version = reinterpret_cast<const char*>(t);
+    }
+    if (const auto* t = sqlite3_column_text(stmt, 8)) {
+      row.error_code = reinterpret_cast<const char*>(t);
+    }
+    if (const auto* t = sqlite3_column_text(stmt, 9)) {
+      row.diagnostic = reinterpret_cast<const char*>(t);
+    }
+    row.rejected_at_ns = sqlite3_column_int64(stmt, 10);
+    out.push_back(row);
+  }
+  sqlite3_finalize(stmt);
+  return out;
 }
 
 }  // namespace spatial::core
