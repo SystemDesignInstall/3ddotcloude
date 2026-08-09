@@ -2,12 +2,14 @@
 
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <ctime>
 #include <filesystem>
 #include <string>
 #include <vector>
 
 #include <sqlite3.h>
+#include <nlohmann/json.hpp>
 
 #include "core/artifacts/artifact_store.h"
 #include "core/errors/project_error.h"
@@ -353,6 +355,90 @@ TEST_F(ImageImporterTest, UncalibratedSensorIsWarningNotFailure) {
       {Source(path, "file:///cam2.jpg", sensor_id, 2)});
   ASSERT_EQ(second.imported.size(), 1u);
   EXPECT_FALSE(second.imported[0].uncalibrated);
+}
+
+TEST_F(ImageImporterTest, PayloadIsByteExact) {
+  const Uuid sensor_id = GenerateUuid();
+  InsertTestSensor(*db_, sensor_id);
+  const auto path = WriteImage("cam.jpg", kJpeg);
+  ImageImporter importer(*store_, *db_, kProjectId, config_);
+  const auto result = importer.Import(
+      {Source(path, "file:///cam.jpg", sensor_id, 1)});
+  ASSERT_EQ(result.imported.size(), 1u);
+
+  // Byte-for-byte fidelity (image-import.md §16.2): the CAS payload must
+  // equal the original bytes exactly, no transcode, no header strip.
+  const auto payload = store_->Get(result.imported[0].content_hash);
+  ASSERT_TRUE(payload.has_value());
+  EXPECT_EQ(*payload, kJpeg);
+}
+
+TEST_F(ImageImporterTest, RecordsJoinTheBatchSession) {
+  const Uuid sensor_id = GenerateUuid();
+  InsertTestSensor(*db_, sensor_id);
+  const auto path = WriteImage("cam.jpg", kJpeg);
+  ImageImporter importer(*store_, *db_, kProjectId, config_);
+  const auto result = importer.Import(
+      {Source(path, "file:///cam.jpg", sensor_id, 1)});
+  ASSERT_EQ(result.imported.size(), 1u);
+  EXPECT_FALSE(IsNil(result.session_id));
+
+  // Every canonical record references the batch session (PPS-0001 §5.2).
+  for (const Uuid& id : {result.imported[0].frame_id,
+                         result.imported[0].observation_id}) {
+    sqlite3_stmt* stmt = nullptr;
+    ASSERT_EQ(sqlite3_prepare_v2(
+                  db_->db(),
+                  "SELECT session_id FROM frames WHERE frame_id = ? "
+                  "UNION ALL SELECT session_id FROM observations "
+                  "WHERE observation_id = ?",
+                  -1, &stmt, nullptr),
+              SQLITE_OK);
+    sqlite3_bind_blob(stmt, 1, id.data(), static_cast<int>(id.size()),
+                      SQLITE_TRANSIENT);
+    sqlite3_bind_blob(stmt, 2, id.data(), static_cast<int>(id.size()),
+                      SQLITE_TRANSIENT);
+    ASSERT_EQ(sqlite3_step(stmt), SQLITE_ROW);
+    const auto* blob = static_cast<const unsigned char*>(
+        sqlite3_column_blob(stmt, 0));
+    ASSERT_NE(blob, nullptr);
+    EXPECT_EQ(std::memcmp(blob, result.session_id.data(),
+                          result.session_id.size()),
+              0);
+    sqlite3_finalize(stmt);
+  }
+}
+
+TEST_F(ImageImporterTest, ProvenanceIsRecorded) {
+  const Uuid sensor_id = GenerateUuid();
+  InsertTestSensor(*db_, sensor_id);
+  const auto path = WriteImage("cam.jpg", kJpeg);
+  ImageImporter importer(*store_, *db_, kProjectId, config_);
+  const auto result = importer.Import(
+      {Source(path, "file:///cam.jpg", sensor_id, 1)});
+  ASSERT_EQ(result.imported.size(), 1u);
+
+  sqlite3_stmt* stmt = nullptr;
+  ASSERT_EQ(sqlite3_prepare_v2(
+                db_->db(),
+                "SELECT source_json, properties_json FROM observations "
+                "WHERE observation_id = ?",
+                -1, &stmt, nullptr),
+            SQLITE_OK);
+  sqlite3_bind_blob(stmt, 1, result.imported[0].observation_id.data(),
+                    static_cast<int>(result.imported[0].observation_id.size()),
+                    SQLITE_TRANSIENT);
+  ASSERT_EQ(sqlite3_step(stmt), SQLITE_ROW);
+  const auto source = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+  const auto properties =
+      reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+  ASSERT_NE(source, nullptr);
+  ASSERT_NE(properties, nullptr);
+  const auto source_json = nlohmann::json::parse(source);
+  const auto properties_json = nlohmann::json::parse(properties);
+  EXPECT_EQ(source_json["id"], "image-import");
+  EXPECT_FALSE(properties_json["configuration_hash"].get<std::string>().empty());
+  sqlite3_finalize(stmt);
 }
 
 }  // namespace
