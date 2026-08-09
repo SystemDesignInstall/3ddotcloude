@@ -80,3 +80,4 @@ proposal → draft → proposed → accepted → ratified → superseded
 | RFC-0002 | Permanent spatial data model |
 | RFC-0003 | Processing engine & execution architecture |
 | RFC-0005 | Accuracy & quality assurance |
+| RFC-0006 | Image import capability |
