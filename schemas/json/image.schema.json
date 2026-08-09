@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spatial-platform.dev/schemas/json/image.schema.json",
+  "title": "ImageArtifact metadata (P2.1)",
+  "description": "Metadata manifest for an imported image artifact (RFC-0006, image-import.md §8). Immutable, content-addressed. The exact original bytes are the payload; this schema describes the metadata. additionalProperties is implicit-true: the format is forward-compatible and additive-only under the RFC-0005 Schema Evolution Policy.",
+  "type": "object",
+  "required": [
+    "artifact_uuid", "content_hash", "type", "schema_version", "producer",
+    "configuration_hash", "creation_timestamp", "coordinate_frame", "unit",
+    "file_size", "mime_type", "validation_status", "width", "height", "pixel_format"
+  ],
+  "properties": {
+    "artifact_uuid": { "type": "string", "format": "uuid", "description": "Random UUIDv4 artifact instance id." },
+    "content_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "SHA-256 of the payload bytes; content address." },
+    "type": { "const": "image" },
+    "schema_version": { "const": 1 },
+    "producer": {
+      "type": "object",
+      "required": ["id", "version", "git_commit"],
+      "properties": {
+        "id": { "type": "string", "description": "Producer/component id, e.g. importer.images." },
+        "version": { "type": "string" },
+        "git_commit": { "type": "string" }
+      }
+    },
+    "input_artifact_hashes": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+      "description": "Content hashes of input artifacts; import has no upstream artifacts, so this is typically empty."
+    },
+    "configuration_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "SHA-256 of the canonical importer configuration." },
+    "creation_timestamp": { "type": "string", "format": "date-time", "description": "ISO 8601 UTC." },
+    "coordinate_frame": { "type": "string", "description": "\"image\" (raw image space) for imported images." },
+    "unit": { "type": "string", "description": "\"meter\" by default; not applicable to raw pixels." },
+    "file_size": { "type": "integer", "minimum": 0 },
+    "mime_type": { "type": "string" },
+    "validation_status": { "enum": ["valid", "degraded", "unverified"] },
+    "width": { "type": "integer", "minimum": 1, "description": "Image width in pixels, from header." },
+    "height": { "type": "integer", "minimum": 1, "description": "Image height in pixels, from header." },
+    "pixel_format": { "type": "string", "description": "Canonical pixel format, e.g. rgb8, gray8, bayer_bggr8, float32." },
+    "exif": { "type": "object", "description": "Optional EXIF-derived metadata captured as available (image-import.md §5)." },
+    "band": { "type": "string" }
+  }
+}
