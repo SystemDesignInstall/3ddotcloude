@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <set>
 #include <sstream>
+#include <system_error>
 
 #include <nlohmann/json.hpp>
 
@@ -90,6 +91,57 @@ ArtifactWriteResult ArtifactStore::Put(
   }
 
   return ArtifactWriteResult{hash, artifact_uuid, false};
+}
+
+ArtifactWriteResult ArtifactStore::PutInstance(
+    const std::string& existing_content_hash, const ArtifactManifest& manifest) {
+  const auto payload_path = PayloadPath(existing_content_hash);
+  if (!fs::Exists(payload_path)) {
+    throw ArtifactError(ErrorCode::kArtifactMissing,
+                        "shared payload not in store: " + existing_content_hash,
+                        {{"content_hash", existing_content_hash}}, false,
+                        "Import the original file first so its payload exists.");
+  }
+
+  auto manifest_copy = manifest;
+  manifest_copy.content_hash = existing_content_hash;
+  std::error_code ec;
+  const auto size = std::filesystem::file_size(payload_path, ec);
+  if (!ec) manifest_copy.file_size = static_cast<std::int64_t>(size);
+  if (manifest_copy.creation_timestamp.empty()) {
+    manifest_copy.creation_timestamp = fs::Iso8601UtcNow();
+  }
+  const Uuid artifact_uuid =
+      manifest.artifact_uuid != Uuid{} ? manifest.artifact_uuid : GenerateUuid();
+  manifest_copy.artifact_uuid = artifact_uuid;
+
+  fs::CreateDirectories(ManifestDir(artifact_uuid));
+  fs::AtomicWrite(ManifestPath(artifact_uuid), ToJsonString(manifest_copy));
+
+  ArtifactIndexRow row;
+  row.artifact_id = artifact_uuid;
+  row.content_hash = existing_content_hash;
+  row.type = manifest_copy.type;
+  row.schema_version = manifest_copy.schema_version;
+  row.producer_json = nlohmann::json{{"id", manifest_copy.producer.id},
+                                     {"version", manifest_copy.producer.version},
+                                     {"git_commit",
+                                      manifest_copy.producer.git_commit}}
+                          .dump();
+  row.config_hash = manifest_copy.configuration_hash;
+  row.created_at_ns = fs::TimestampNsNow();
+  row.coordinate_frame = manifest_copy.coordinate_frame;
+  row.unit = manifest_copy.unit;
+  row.file_size = manifest_copy.file_size;
+  row.mime_type = manifest_copy.mime_type;
+  row.validation_status = manifest_copy.validation_status;
+  db_.UpsertArtifact(row);
+
+  for (const auto& input : manifest_copy.input_artifact_hashes) {
+    db_.RecordDependency(input, existing_content_hash, "input");
+  }
+
+  return ArtifactWriteResult{existing_content_hash, artifact_uuid, true};
 }
 
 std::optional<std::vector<std::uint8_t>> ArtifactStore::Get(

@@ -37,6 +37,15 @@ class ArtifactStore {
   ArtifactWriteResult Put(const std::vector<std::uint8_t>& payload,
                           const ArtifactManifest& manifest);
 
+  // Dedup case 2 (RFC-0006 §6.5, image-import.md §13): content-identical but
+  // context-different import. The payload identified by `existing_content_hash`
+  // must already be stored; writes a NEW artifact instance (independent
+  // artifact_uuid, own manifest and provenance) referencing the shared CAS
+  // payload. The pre-existing instance is never mutated. Returns
+  // deduplicated=true. Throws ArtifactError when the shared payload is absent.
+  ArtifactWriteResult PutInstance(const std::string& existing_content_hash,
+                                  const ArtifactManifest& manifest);
+
   // Reads and verifies a payload. Re-verifies SHA-256(content) == hash
   // before returning; on mismatch the payload is quarantined and
   // ArtifactError is thrown. Returns nullopt when the hash is unknown.

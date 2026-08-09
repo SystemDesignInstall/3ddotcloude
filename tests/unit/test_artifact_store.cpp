@@ -146,5 +146,49 @@ TEST_F(ArtifactStoreTest, MalformedManifestThrows) {
   EXPECT_THROW(store_->ReadManifest(uuid), ArtifactError);
 }
 
+TEST_F(ArtifactStoreTest, PutInstanceNewInstanceSharedPayload) {
+  // Case 2 (image-import.md §13): same bytes, different context.
+  const std::vector<std::uint8_t> payload = {'p', 'i', 'x', 'e', 'l'};
+  const std::string hash = Sha256Hex(payload);
+  const auto first = store_->Put(payload, MakeManifest("image"));
+
+  auto second_manifest = MakeManifest("image");
+  second_manifest.producer.id = "image-import";
+  const auto second = store_->PutInstance(hash, second_manifest);
+
+  EXPECT_EQ(second.content_hash, hash);
+  EXPECT_TRUE(second.deduplicated);
+  // New instance, own uuid, shared payload.
+  EXPECT_NE(second.artifact_uuid, first.artifact_uuid);
+  EXPECT_EQ(store_->PayloadCount(), 1u);
+  ASSERT_TRUE(store_->HasManifest(first.artifact_uuid));
+  ASSERT_TRUE(store_->HasManifest(second.artifact_uuid));
+  const auto m1 = store_->ReadManifest(first.artifact_uuid);
+  const auto m2 = store_->ReadManifest(second.artifact_uuid);
+  ASSERT_TRUE(m1.has_value());
+  ASSERT_TRUE(m2.has_value());
+  // Both instances carry the shared content hash and independent provenance.
+  EXPECT_EQ(m1->content_hash, hash);
+  EXPECT_EQ(m2->content_hash, hash);
+  EXPECT_EQ(m1->artifact_uuid, first.artifact_uuid);
+  EXPECT_EQ(m2->artifact_uuid, second.artifact_uuid);
+  EXPECT_NE(m1->producer.id, m2->producer.id);
+  EXPECT_EQ(m2->file_size, static_cast<std::int64_t>(payload.size()));
+
+  // The 0001 schema indexes content_hash UNIQUE, so the index row tracks the
+  // latest instance per hash; the pre-existing instance is never mutated and
+  // remains addressable by uuid through its manifest.
+  const auto row = db_.FindArtifactByHash(hash);
+  ASSERT_TRUE(row.has_value());
+  EXPECT_EQ(row->artifact_id, second.artifact_uuid);
+  EXPECT_TRUE(store_->IsReferenced(hash));
+}
+
+TEST_F(ArtifactStoreTest, PutInstanceMissingPayloadThrows) {
+  ArtifactManifest m = MakeManifest("image");
+  EXPECT_THROW(store_->PutInstance("aa" + std::string(62, 'b'), m),
+               ArtifactError);
+}
+
 }  // namespace
 }  // namespace spatial::core
