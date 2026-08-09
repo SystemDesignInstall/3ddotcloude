@@ -2,7 +2,7 @@
 
 This repository is the **single source of truth** for architecture governance of the Spatial Platform. It follows the Rust RFC model.
 
-- `adr/` — Architecture Decision Records (`ADR-001` … `ADR-037`). Decisions are numbered and final.
+- `adr/` — Architecture Decision Records (`ADR-001` … `ADR-039`). Decisions are numbered and final.
 - `rfc/` — RFCs. Proposals for any change to the Constitution-protected surfaces.
 - `proposals/` — Early, unnumbered ideas. May be promoted to RFC.
 - `experimental/` — Experimental specifications. Tested outside the kernel; promoted to a ratified spec or abandoned.
@@ -70,6 +70,7 @@ proposal → draft → proposed → accepted → ratified → superseded
 | ADR-036 | Digital Twin and temporal epochs |
 | ADR-037 | Public API stability policy |
 | ADR-038 | Processing Engine boundary definition |
+| ADR-039 | PPS-0001 introduction |
 
 ## RFC Index
 
