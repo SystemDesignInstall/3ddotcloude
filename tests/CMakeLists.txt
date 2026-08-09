@@ -13,6 +13,7 @@ set(SPATIAL_UNIT_TESTS
   unit/test_geometry.cpp
   unit/test_frame_graph.cpp
   unit/test_sensor_time.cpp
+  unit/test_scene.cpp
   unit/test_task_types.cpp
   unit/test_task_graph.cpp
   unit/test_scheduler_state_store.cpp
