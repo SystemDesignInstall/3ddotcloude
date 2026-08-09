@@ -28,6 +28,7 @@ set(SPATIAL_UNIT_TESTS
   unit/test_quality_report.cpp
   unit/test_image_format.cpp
   unit/test_image_importer.cpp
+  unit/test_cli_import.cpp
 )
 
 # A tiny frame-echo helper the framing tests drive as a child process; it
@@ -48,11 +49,14 @@ target_link_libraries(spatial_unit_tests PRIVATE
 # The framing tests spawn spatial_frame_echo; make it a real build dependency
 # so both Debug and Release configurations produce it.
 add_dependencies(spatial_unit_tests spatial_frame_echo)
+# The CLI import tests spawn the spatial binary itself.
+add_dependencies(spatial_unit_tests spatial)
 target_include_directories(spatial_unit_tests PRIVATE ${CMAKE_SOURCE_DIR})
 
 # Runtime paths for the demo-worker integration tests (worker_paths.h).
 target_compile_definitions(spatial_unit_tests PRIVATE
   SPATIAL_FRAME_ECHO_EXECUTABLE="$<TARGET_FILE:spatial_frame_echo>"
+  SPATIAL_CLI_EXECUTABLE="$<TARGET_FILE:spatial>"
   SPATIAL_QUALITY_SCHEMA_JSON="${CMAKE_SOURCE_DIR}/schemas/json/quality-report.schema.json"
 )
 

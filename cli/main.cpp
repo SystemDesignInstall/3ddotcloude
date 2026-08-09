@@ -24,6 +24,9 @@
 #include "engine/pipeline/mock_photogrammetry.h"
 #include "engine/pipeline/quality/quality_report.h"
 #include "engine/task/task_serialization.h"
+#include "importers/images/image_importer.h"
+
+#include <nlohmann/json.hpp>
 
 namespace {
 
@@ -37,6 +40,9 @@ using spatial::core::Uuid;
 using spatial::core::fs::Iso8601UtcNow;
 using spatial::engine::ArtifactRef;
 using spatial::engine::Engine;
+using spatial::importers::ImageImporter;
+using spatial::importers::ImageImporterConfig;
+using spatial::importers::ImageSourceFile;
 
 constexpr const char* kUsage =
     "usage:\n"
@@ -45,7 +51,9 @@ constexpr const char* kUsage =
     " [--project <dir>]\n"
     "  spatial run --dag <dag.json> [--project <dir>]\n"
     "  spatial status <run-id> [--project <dir>]\n"
-    "  spatial report <run-id> [--project <dir>]\n";
+    "  spatial report <run-id> [--project <dir>]\n"
+    "  spatial import <file> ... [--sensor <uuid>] [--time <ns>]"
+    " [--session <uuid>] [--batch <name>] [--project <dir>]\n";
 
 void PrintError(const ProjectError& e) {
   std::cerr << "error: " << e.message() << "\n";
@@ -88,6 +96,17 @@ std::vector<std::string> CollectValues(const std::vector<std::string>& args,
                        "missing value for " + args[i]);
   }
   return values;
+}
+
+// Consumes exactly one flag value. Unlike CollectValues this never swallows a
+// following positional argument, so it is used where positionals may follow a
+// single-value flag (spatial import).
+std::string SingleValue(const std::vector<std::string>& args, std::size_t& i) {
+  if (i + 1 >= args.size() || args[i + 1].rfind("--", 0) == 0) {
+    throw ProjectError(spatial::core::ErrorCode::kValidationDomain,
+                       "missing value for " + args[i]);
+  }
+  return args[++i];
 }
 
 // Splits `--project <dir>` out of the argument list (default: ".") and opens
@@ -200,6 +219,86 @@ int ReportCommand(const Uuid& run_id, Engine& engine) {
   return 0;
 }
 
+// `spatial import` (RFC-0006 P2.1): ingests image files into the project's
+// permanent Scene. Positional arguments are files; capture context comes from
+// flags applied batch-wide (a single sensor/time per batch). Per-file failures
+// are collected and never abort the batch (ADR-014); the result JSON is
+// printed to stdout and a non-zero exit is returned iff any file failed.
+int ImportCommand(const std::vector<std::string>& args, Engine& engine) {
+  std::vector<ImageSourceFile> files;
+  Uuid sensor_id{};
+  std::int64_t timestamp_ns = 0;
+  std::optional<Uuid> session;
+  std::string batch_name = "import";
+
+  for (std::size_t i = 0; i < args.size(); ++i) {
+    if (args[i].rfind("--", 0) != 0) {
+      ImageSourceFile file;
+      file.path = args[i];
+      file.source_uri = args[i];
+      files.push_back(std::move(file));
+    } else if (args[i] == "--sensor") {
+      sensor_id = ParseUuid(SingleValue(args, i));
+    } else if (args[i] == "--time") {
+      const std::string value = SingleValue(args, i);
+      try {
+        timestamp_ns = std::stoll(value);
+      } catch (const std::exception&) {
+        throw ProjectError(spatial::core::ErrorCode::kValidationDomain,
+                           "--time expects a decimal nanoseconds value: " +
+                               value);
+      }
+    } else if (args[i] == "--session") {
+      session = ParseUuid(SingleValue(args, i));
+    } else if (args[i] == "--batch") {
+      batch_name = SingleValue(args, i);
+    } else {
+      throw ProjectError(spatial::core::ErrorCode::kValidationDomain,
+                         "unknown argument: " + args[i]);
+    }
+  }
+
+  for (auto& file : files) {
+    file.sensor_id = sensor_id;
+    file.timestamp_ns = timestamp_ns;
+  }
+
+  ImageImporterConfig config;
+  config.batch_name = batch_name;
+  ImageImporter importer(engine.project().artifacts(), engine.project().db(),
+                         engine.project().info().uuid, config);
+
+  const auto result = importer.Import(files, session);
+
+  nlohmann::json j;
+  j["session_id"] = spatial::core::FormatUuid(result.session_id);
+  j["imported"] = nlohmann::json::array();
+  for (const auto& e : result.imported) {
+    j["imported"].push_back(
+        {{"frame_id", spatial::core::FormatUuid(e.frame_id)},
+         {"observation_id", spatial::core::FormatUuid(e.observation_id)},
+         {"artifact_uuid", spatial::core::FormatUuid(e.artifact_uuid)},
+         {"content_hash", e.content_hash},
+         {"mime_type", e.mime_type},
+         {"width", e.width},
+         {"height", e.height},
+         {"pixel_format", e.pixel_format},
+         {"reimported", e.reimported},
+         {"new_instance", e.new_instance},
+         {"uncalibrated", e.uncalibrated}});
+  }
+  j["failures"] = nlohmann::json::array();
+  for (const auto& f : result.failures) {
+    j["failures"].push_back(
+        {{"source_uri", f.source_uri},
+         {"code", spatial::core::StableErrorCode(f.code)},
+         {"diagnostic", f.diagnostic}});
+  }
+  std::cout << j.dump(2) << "\n";
+
+  return result.failures.empty() ? 0 : 1;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -280,6 +379,16 @@ int main(int argc, char** argv) {
       Engine engine = OpenProjectAndEngine(rest);
       const Uuid id = ParseUuid(rest[0]);
       return ReportCommand(id, engine);
+    }
+
+    if (args[0] == "import") {
+      if (args.size() < 2) {
+        std::cerr << kUsage;
+        return 2;
+      }
+      std::vector<std::string> rest(args.begin() + 1, args.end());
+      Engine engine = OpenProjectAndEngine(rest);
+      return ImportCommand(rest, engine);
     }
 
     std::cerr << kUsage;
