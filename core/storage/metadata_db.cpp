@@ -418,4 +418,433 @@ void MetadataDb::RecordDependency(const std::string& input_hash,
   sqlite3_finalize(stmt);
 }
 
+namespace {
+
+// Binds a nil UUID as SQL NULL, otherwise as a 16-byte BLOB (the SQLite
+// convention for UUID columns, schema.sql). Nil == "absent reference".
+void BindUuidOrNull(sqlite3_stmt* stmt, int index, const Uuid& uuid) {
+  if (IsNil(uuid)) {
+    sqlite3_bind_null(stmt, index);
+  } else {
+    sqlite3_bind_blob(stmt, index, uuid.data(), static_cast<int>(uuid.size()),
+                      SQLITE_TRANSIENT);
+  }
+}
+
+// Reads a 16-byte UUID column; returns nullopt for NULL or malformed size.
+std::optional<Uuid> ColumnUuid(sqlite3_stmt* stmt, int col) {
+  const auto* blob = sqlite3_column_blob(stmt, col);
+  const int size = sqlite3_column_bytes(stmt, col);
+  if (blob && size == 16) {
+    Uuid out{};
+    std::copy_n(static_cast<const std::uint8_t*>(blob), 16, out.begin());
+    return out;
+  }
+  return std::nullopt;
+}
+
+}  // namespace
+
+std::optional<Uuid> MetadataDb::FindSession(const Uuid& session_id) {
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql = "SELECT session_id FROM capture_sessions WHERE session_id = ?";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare find session");
+  }
+  sqlite3_bind_blob(stmt, 1, session_id.data(),
+                    static_cast<int>(session_id.size()), SQLITE_TRANSIENT);
+  std::optional<Uuid> out;
+  if (sqlite3_step(stmt) == SQLITE_ROW) {
+    out = ColumnUuid(stmt, 0);
+  }
+  sqlite3_finalize(stmt);
+  return out;
+}
+
+void MetadataDb::InsertCaptureSession(const CaptureSessionRow& row) {
+  if (read_only_) {
+    throw StorageError(ErrorCode::kStorageReadOnly,
+                       "cannot write to a read-only project", {}, false,
+                       "Open the project for writing to modify it.");
+  }
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "INSERT INTO capture_sessions (session_id, project_id, name,"
+      " started_at_ns, ended_at_ns, source_uri, status, provenance_json)"
+      " VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare insert capture session");
+  }
+  sqlite3_bind_blob(stmt, 1, row.session_id.data(),
+                    static_cast<int>(row.session_id.size()), SQLITE_TRANSIENT);
+  sqlite3_bind_blob(stmt, 2, row.project_id.data(),
+                    static_cast<int>(row.project_id.size()), SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 3, row.name.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_int64(stmt, 4, row.started_at_ns);
+  sqlite3_bind_int64(stmt, 5, row.ended_at_ns);
+  sqlite3_bind_text(stmt, 6, row.source_uri.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 7, row.status.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 8, row.provenance_json.c_str(), -1, SQLITE_TRANSIENT);
+  if (sqlite3_step(stmt) != SQLITE_DONE) {
+    const std::string msg = sqlite3_errmsg(db_);
+    sqlite3_finalize(stmt);
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot insert capture session row: " + msg);
+  }
+  sqlite3_finalize(stmt);
+}
+
+std::optional<SensorRow> MetadataDb::FindSensor(const Uuid& sensor_id) {
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "SELECT s.sensor_id, s.project_id, s.type, s.manufacturer, s.model,"
+      " s.serial_number, s.time_domain, s.calibration_id, s.rig_id,"
+      " s.source_json, s.status,"
+      " EXISTS (SELECT 1 FROM calibrations c WHERE c.sensor_id = s.sensor_id)"
+      " FROM sensors s WHERE s.sensor_id = ?";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare find sensor");
+  }
+  sqlite3_bind_blob(stmt, 1, sensor_id.data(),
+                    static_cast<int>(sensor_id.size()), SQLITE_TRANSIENT);
+  std::optional<SensorRow> out;
+  if (sqlite3_step(stmt) == SQLITE_ROW) {
+    SensorRow row;
+    if (const auto u = ColumnUuid(stmt, 0)) row.sensor_id = *u;
+    if (const auto u = ColumnUuid(stmt, 1)) row.project_id = *u;
+    if (const auto* t = sqlite3_column_text(stmt, 2)) {
+      row.type = reinterpret_cast<const char*>(t);
+    }
+    if (const auto* t = sqlite3_column_text(stmt, 3)) {
+      row.manufacturer = reinterpret_cast<const char*>(t);
+    }
+    if (const auto* t = sqlite3_column_text(stmt, 4)) {
+      row.model = reinterpret_cast<const char*>(t);
+    }
+    if (const auto* t = sqlite3_column_text(stmt, 5)) {
+      row.serial_number = reinterpret_cast<const char*>(t);
+    }
+    if (const auto* t = sqlite3_column_text(stmt, 6)) {
+      row.time_domain = reinterpret_cast<const char*>(t);
+    }
+    if (const auto u = ColumnUuid(stmt, 7)) row.calibration_id = *u;
+    if (const auto u = ColumnUuid(stmt, 8)) row.rig_id = *u;
+    if (const auto* t = sqlite3_column_text(stmt, 9)) {
+      row.source_json = reinterpret_cast<const char*>(t);
+    }
+    if (const auto* t = sqlite3_column_text(stmt, 10)) {
+      row.status = reinterpret_cast<const char*>(t);
+    }
+    // calibrations.backlink column predates a canonical calibration_id link on
+    // sensors; the EXISTS is authoritative for calibration presence.
+    row.has_calibration = sqlite3_column_int(stmt, 11) != 0;
+    out = row;
+  }
+  sqlite3_finalize(stmt);
+  return out;
+}
+
+SceneRow MetadataDb::FindOrCreateScene(const Uuid& project_id,
+                                       const std::string& name,
+                                       const std::string& created_by_json,
+                                       std::int64_t created_at_ns) {
+  if (read_only_) {
+    throw StorageError(ErrorCode::kStorageReadOnly,
+                       "cannot write to a read-only project", {}, false,
+                       "Open the project for writing to modify it.");
+  }
+  sqlite3_stmt* stmt = nullptr;
+  const char* find_sql =
+      "SELECT scene_id, current_version_id, name, origin_frame, crs, status,"
+      " properties_json FROM scenes WHERE project_id = ? AND status = 'open'"
+      " LIMIT 1";
+  if (sqlite3_prepare_v2(db_, find_sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare find scene");
+  }
+  sqlite3_bind_blob(stmt, 1, project_id.data(),
+                    static_cast<int>(project_id.size()), SQLITE_TRANSIENT);
+  SceneRow found;
+  bool exists = false;
+  if (sqlite3_step(stmt) == SQLITE_ROW) {
+    exists = true;
+    if (const auto u = ColumnUuid(stmt, 0)) found.scene_id = *u;
+    if (const auto u = ColumnUuid(stmt, 1)) found.version_id = *u;
+    if (const auto* t = sqlite3_column_text(stmt, 2)) {
+      found.name = reinterpret_cast<const char*>(t);
+    }
+    if (const auto* t = sqlite3_column_text(stmt, 3)) {
+      found.origin_frame = reinterpret_cast<const char*>(t);
+    }
+    if (const auto* t = sqlite3_column_text(stmt, 4)) {
+      found.crs = reinterpret_cast<const char*>(t);
+    }
+    if (const auto* t = sqlite3_column_text(stmt, 5)) {
+      found.status = reinterpret_cast<const char*>(t);
+    }
+    if (const auto* t = sqlite3_column_text(stmt, 6)) {
+      found.properties_json = reinterpret_cast<const char*>(t);
+    }
+    found.project_id = project_id;
+  }
+  sqlite3_finalize(stmt);
+  if (exists) return found;
+
+  Exec("BEGIN IMMEDIATE TRANSACTION;", "begin create scene");
+  try {
+    const Uuid scene_id = GenerateUuid();
+    const Uuid version_id = GenerateUuid();
+    stmt = nullptr;
+    const char* insert_sql =
+        "INSERT INTO scenes (scene_id, project_id, schema_version, name,"
+        " current_version_id, origin_frame, crs, status, properties_json)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
+    if (sqlite3_prepare_v2(db_, insert_sql, -1, &stmt, nullptr) != SQLITE_OK) {
+      throw SchemaError(ErrorCode::kSchemaInvalid,
+                        "cannot prepare insert scene");
+    }
+    sqlite3_bind_blob(stmt, 1, scene_id.data(), 16, SQLITE_TRANSIENT);
+    sqlite3_bind_blob(stmt, 2, project_id.data(), 16, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(stmt, 3, 1);
+    sqlite3_bind_text(stmt, 4, name.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_blob(stmt, 5, version_id.data(), 16, SQLITE_TRANSIENT);
+    sqlite3_bind_null(stmt, 6);
+    sqlite3_bind_null(stmt, 7);
+    sqlite3_bind_text(stmt, 8, "open", -1, SQLITE_TRANSIENT);
+    sqlite3_bind_null(stmt, 9);
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+      const std::string msg = sqlite3_errmsg(db_);
+      sqlite3_finalize(stmt);
+      throw SchemaError(ErrorCode::kSchemaInvalid,
+                        "cannot insert scene row: " + msg);
+    }
+    sqlite3_finalize(stmt);
+
+    stmt = nullptr;
+    const char* version_sql =
+        "INSERT INTO scene_versions (version_id, scene_id, parent_version_id,"
+        " stage, created_by_json, created_at_ns, status)"
+        " VALUES (?, ?, ?, 'created', ?, ?, 'active')";
+    if (sqlite3_prepare_v2(db_, version_sql, -1, &stmt, nullptr) != SQLITE_OK) {
+      throw SchemaError(ErrorCode::kSchemaInvalid,
+                        "cannot prepare insert scene version");
+    }
+    sqlite3_bind_blob(stmt, 1, version_id.data(), 16, SQLITE_TRANSIENT);
+    sqlite3_bind_blob(stmt, 2, scene_id.data(), 16, SQLITE_TRANSIENT);
+    sqlite3_bind_null(stmt, 3);
+    sqlite3_bind_text(stmt, 4, created_by_json.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(stmt, 5, created_at_ns);
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+      const std::string msg = sqlite3_errmsg(db_);
+      sqlite3_finalize(stmt);
+      throw SchemaError(ErrorCode::kSchemaInvalid,
+                        "cannot insert scene version row: " + msg);
+    }
+    sqlite3_finalize(stmt);
+    Exec("COMMIT;", "commit create scene");
+    found.scene_id = scene_id;
+    found.version_id = version_id;
+    found.project_id = project_id;
+    found.name = name;
+    found.schema_version = 1;
+    found.stage = "created";
+    found.created_by_json = created_by_json;
+    found.created_at_ns = created_at_ns;
+    found.status = "open";
+  } catch (...) {
+    Exec("ROLLBACK;", "rollback create scene");
+    throw;
+  }
+  return found;
+}
+
+SceneVersionRow MetadataDb::CreateSceneVersion(const Uuid& scene_id,
+                                               const std::string& stage,
+                                               const std::string& created_by_json,
+                                               std::int64_t created_at_ns) {
+  if (read_only_) {
+    throw StorageError(ErrorCode::kStorageReadOnly,
+                       "cannot write to a read-only project", {}, false,
+                       "Open the project for writing to modify it.");
+  }
+  Exec("BEGIN IMMEDIATE TRANSACTION;", "begin create scene version");
+  SceneVersionRow out;
+  try {
+    sqlite3_stmt* stmt = nullptr;
+    const char* parent_sql =
+        "SELECT current_version_id FROM scenes WHERE scene_id = ?";
+    if (sqlite3_prepare_v2(db_, parent_sql, -1, &stmt, nullptr) != SQLITE_OK) {
+      throw SchemaError(ErrorCode::kSchemaInvalid,
+                        "cannot prepare read current scene version");
+    }
+    sqlite3_bind_blob(stmt, 1, scene_id.data(), 16, SQLITE_TRANSIENT);
+    Uuid parent{};
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+      if (const auto u = ColumnUuid(stmt, 0)) parent = *u;
+    }
+    sqlite3_finalize(stmt);
+    if (IsNil(parent)) {
+      throw SchemaError(ErrorCode::kSchemaInvalid,
+                        "scene has no current version: " + FormatUuid(scene_id));
+    }
+
+    const Uuid version_id = GenerateUuid();
+    stmt = nullptr;
+    const char* version_sql =
+        "INSERT INTO scene_versions (version_id, scene_id, parent_version_id,"
+        " stage, created_by_json, created_at_ns, status)"
+        " VALUES (?, ?, ?, ?, ?, ?, 'active')";
+    if (sqlite3_prepare_v2(db_, version_sql, -1, &stmt, nullptr) != SQLITE_OK) {
+      throw SchemaError(ErrorCode::kSchemaInvalid,
+                        "cannot prepare insert scene version");
+    }
+    sqlite3_bind_blob(stmt, 1, version_id.data(), 16, SQLITE_TRANSIENT);
+    sqlite3_bind_blob(stmt, 2, scene_id.data(), 16, SQLITE_TRANSIENT);
+    sqlite3_bind_blob(stmt, 3, parent.data(), 16, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 4, stage.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 5, created_by_json.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(stmt, 6, created_at_ns);
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+      const std::string msg = sqlite3_errmsg(db_);
+      sqlite3_finalize(stmt);
+      throw SchemaError(ErrorCode::kSchemaInvalid,
+                        "cannot insert scene version row: " + msg);
+    }
+    sqlite3_finalize(stmt);
+
+    stmt = nullptr;
+    const char* update_sql =
+        "UPDATE scenes SET current_version_id = ? WHERE scene_id = ?";
+    if (sqlite3_prepare_v2(db_, update_sql, -1, &stmt, nullptr) != SQLITE_OK) {
+      throw SchemaError(ErrorCode::kSchemaInvalid,
+                        "cannot prepare advance scene version");
+    }
+    sqlite3_bind_blob(stmt, 1, version_id.data(), 16, SQLITE_TRANSIENT);
+    sqlite3_bind_blob(stmt, 2, scene_id.data(), 16, SQLITE_TRANSIENT);
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+      const std::string msg = sqlite3_errmsg(db_);
+      sqlite3_finalize(stmt);
+      throw SchemaError(ErrorCode::kSchemaInvalid,
+                        "cannot advance scene version: " + msg);
+    }
+    sqlite3_finalize(stmt);
+    Exec("COMMIT;", "commit create scene version");
+
+    out.version_id = version_id;
+    out.scene_id = scene_id;
+    out.parent_version_id = parent;
+    out.stage = stage;
+    out.created_by_json = created_by_json;
+    out.created_at_ns = created_at_ns;
+    out.status = "active";
+  } catch (...) {
+    Exec("ROLLBACK;", "rollback create scene version");
+    throw;
+  }
+  return out;
+}
+
+void MetadataDb::InsertFrame(const FrameRow& row) {
+  if (read_only_) {
+    throw StorageError(ErrorCode::kStorageReadOnly,
+                       "cannot write to a read-only project", {}, false,
+                       "Open the project for writing to modify it.");
+  }
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "INSERT INTO frames (frame_id, scene_id, session_id, timestamp_ns,"
+      " sequence_index, sensor_id, pose_ref, properties_json)"
+      " VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare insert frame");
+  }
+  sqlite3_bind_blob(stmt, 1, row.frame_id.data(),
+                    static_cast<int>(row.frame_id.size()), SQLITE_TRANSIENT);
+  sqlite3_bind_blob(stmt, 2, row.scene_id.data(),
+                    static_cast<int>(row.scene_id.size()), SQLITE_TRANSIENT);
+  BindUuidOrNull(stmt, 3, row.session_id);
+  sqlite3_bind_int64(stmt, 4, row.timestamp_ns);
+  sqlite3_bind_int64(stmt, 5, row.sequence_index);
+  BindUuidOrNull(stmt, 6, row.sensor_id);
+  BindUuidOrNull(stmt, 7, row.pose_ref);
+  sqlite3_bind_text(stmt, 8, row.properties_json.c_str(), -1, SQLITE_TRANSIENT);
+  if (sqlite3_step(stmt) != SQLITE_DONE) {
+    const std::string msg = sqlite3_errmsg(db_);
+    sqlite3_finalize(stmt);
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot insert frame row: " + msg);
+  }
+  sqlite3_finalize(stmt);
+}
+
+void MetadataDb::InsertObservation(const ObservationRow& row) {
+  if (read_only_) {
+    throw StorageError(ErrorCode::kStorageReadOnly,
+                       "cannot write to a read-only project", {}, false,
+                       "Open the project for writing to modify it.");
+  }
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "INSERT INTO observations (observation_id, scene_id, sensor_id, frame_id,"
+      " session_id, timestamp_ns, type, artifact_ref, source_json,"
+      " properties_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare insert observation");
+  }
+  sqlite3_bind_blob(stmt, 1, row.observation_id.data(),
+                    static_cast<int>(row.observation_id.size()), SQLITE_TRANSIENT);
+  sqlite3_bind_blob(stmt, 2, row.scene_id.data(),
+                    static_cast<int>(row.scene_id.size()), SQLITE_TRANSIENT);
+  sqlite3_bind_blob(stmt, 3, row.sensor_id.data(),
+                    static_cast<int>(row.sensor_id.size()), SQLITE_TRANSIENT);
+  BindUuidOrNull(stmt, 4, row.frame_id);
+  BindUuidOrNull(stmt, 5, row.session_id);
+  sqlite3_bind_int64(stmt, 6, row.timestamp_ns);
+  sqlite3_bind_text(stmt, 7, row.type.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 8, row.artifact_ref.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 9, row.source_json.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 10, row.properties_json.c_str(), -1, SQLITE_TRANSIENT);
+  if (sqlite3_step(stmt) != SQLITE_DONE) {
+    const std::string msg = sqlite3_errmsg(db_);
+    sqlite3_finalize(stmt);
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot insert observation row: " + msg);
+  }
+  sqlite3_finalize(stmt);
+}
+
+void MetadataDb::InsertObservationPayload(
+    const ObservationPayloadRow& row) {
+  if (read_only_) {
+    throw StorageError(ErrorCode::kStorageReadOnly,
+                       "cannot write to a read-only project", {}, false,
+                       "Open the project for writing to modify it.");
+  }
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "INSERT INTO observation_payloads (observation_id, width, height,"
+      " pixel_format) VALUES (?, ?, ?, ?)";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare insert observation payload");
+  }
+  sqlite3_bind_blob(stmt, 1, row.observation_id.data(),
+                    static_cast<int>(row.observation_id.size()), SQLITE_TRANSIENT);
+  sqlite3_bind_int64(stmt, 2, row.width);
+  sqlite3_bind_int64(stmt, 3, row.height);
+  sqlite3_bind_text(stmt, 4, row.pixel_format.c_str(), -1, SQLITE_TRANSIENT);
+  if (sqlite3_step(stmt) != SQLITE_DONE) {
+    const std::string msg = sqlite3_errmsg(db_);
+    sqlite3_finalize(stmt);
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot insert observation payload row: " + msg);
+  }
+  sqlite3_finalize(stmt);
+}
+
 }  // namespace spatial::core
