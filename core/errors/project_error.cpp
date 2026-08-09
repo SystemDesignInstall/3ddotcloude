@@ -51,6 +51,14 @@ ErrorDomain DomainOf(ErrorCode code) noexcept {
     case ErrorCode::kValidationSchema:
     case ErrorCode::kValidationDomain:
       return ErrorDomain::kValidation;
+    case ErrorCode::kImportUnreadable:
+    case ErrorCode::kImportCorrupt:
+    case ErrorCode::kImportUnsupportedFormat:
+    case ErrorCode::kImportMissingExif:
+    case ErrorCode::kImportSensorUnresolved:
+    case ErrorCode::kImportTimestampUnresolvable:
+    case ErrorCode::kImportValidationError:
+      return ErrorDomain::kImport;
     default:
       return ErrorDomain::kProject;
   }
@@ -159,6 +167,20 @@ const char* ErrorCodeName(ErrorCode code) noexcept {
       return "VALIDATION_SCHEMA";
     case ErrorCode::kValidationDomain:
       return "VALIDATION_DOMAIN";
+    case ErrorCode::kImportUnreadable:
+      return "IMPORT_UNREADABLE";
+    case ErrorCode::kImportCorrupt:
+      return "IMPORT_CORRUPT";
+    case ErrorCode::kImportUnsupportedFormat:
+      return "IMPORT_UNSUPPORTED_FORMAT";
+    case ErrorCode::kImportMissingExif:
+      return "IMPORT_MISSING_EXIF";
+    case ErrorCode::kImportSensorUnresolved:
+      return "IMPORT_SENSOR_UNRESOLVED";
+    case ErrorCode::kImportTimestampUnresolvable:
+      return "IMPORT_TIMESTAMP_UNRESOLVABLE";
+    case ErrorCode::kImportValidationError:
+      return "IMPORT_VALIDATION_ERROR";
     default:
       return "INTERNAL";
   }

@@ -1,0 +1,13 @@
+#pragma once
+
+// Configure-time build identity embedded into the image importer. Version and
+// git commit feed the artifact producer block (image-import.md §8, §11) and
+// the provenance of frames/observations. Generated from
+// image_import_build_info.h.in; do not edit by hand.
+
+namespace spatial::importers {
+
+inline constexpr const char* kImageImportVersion = "@SPATIAL_IMPORT_VERSION@";
+inline constexpr const char* kImageImportGitCommit = "@SPATIAL_IMPORT_GIT_COMMIT@";
+
+}  // namespace spatial::importers

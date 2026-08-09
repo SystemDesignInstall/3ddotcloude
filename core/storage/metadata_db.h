@@ -208,6 +208,12 @@ class MetadataDb {
   void InsertObservation(const ObservationRow& row);
   void InsertObservationPayload(const ObservationPayloadRow& row);
 
+  // Idempotent re-import check (image-import.md §13 case 1). Frames and
+  // observations are immutable append-only records (PPS-0001 §5.3); a second
+  // insert violates the PK, so the importer queries existence before writing.
+  bool FrameExists(const Uuid& frame_id);
+  bool ObservationExists(const Uuid& observation_id);
+
   // Closes the connection.
   void Close();
 

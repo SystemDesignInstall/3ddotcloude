@@ -27,6 +27,7 @@ set(SPATIAL_UNIT_TESTS
   unit/test_mock_pipeline_e2e.cpp
   unit/test_quality_report.cpp
   unit/test_image_format.cpp
+  unit/test_image_importer.cpp
 )
 
 # A tiny frame-echo helper the framing tests drive as a child process; it

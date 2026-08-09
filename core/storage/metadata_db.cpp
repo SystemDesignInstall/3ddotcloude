@@ -847,4 +847,32 @@ void MetadataDb::InsertObservationPayload(
   sqlite3_finalize(stmt);
 }
 
+bool MetadataDb::FrameExists(const Uuid& frame_id) {
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql = "SELECT 1 FROM frames WHERE frame_id = ?";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare find frame");
+  }
+  sqlite3_bind_blob(stmt, 1, frame_id.data(),
+                    static_cast<int>(frame_id.size()), SQLITE_TRANSIENT);
+  const bool exists = sqlite3_step(stmt) == SQLITE_ROW;
+  sqlite3_finalize(stmt);
+  return exists;
+}
+
+bool MetadataDb::ObservationExists(const Uuid& observation_id) {
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql = "SELECT 1 FROM observations WHERE observation_id = ?";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare find observation");
+  }
+  sqlite3_bind_blob(stmt, 1, observation_id.data(),
+                    static_cast<int>(observation_id.size()), SQLITE_TRANSIENT);
+  const bool exists = sqlite3_step(stmt) == SQLITE_ROW;
+  sqlite3_finalize(stmt);
+  return exists;
+}
+
 }  // namespace spatial::core

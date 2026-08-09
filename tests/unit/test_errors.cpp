@@ -48,5 +48,23 @@ TEST(Errors, StableCodeString) {
   EXPECT_EQ(StableErrorCode(ErrorCode::kValidationSchema), "VALIDATION_SCHEMA");
 }
 
+TEST(Errors, ImportDomainCodes) {
+  ImportError e(ErrorCode::kImportSensorUnresolved, "sensor unresolved");
+  EXPECT_EQ(e.code(), ErrorCode::kImportSensorUnresolved);
+  EXPECT_EQ(e.domain(), ErrorDomain::kImport);
+  EXPECT_EQ(std::string(e.what()), "IMPORT: sensor unresolved");
+  EXPECT_EQ(StableErrorCode(ErrorCode::kImportUnreadable), "IMPORT_UNREADABLE");
+  EXPECT_EQ(StableErrorCode(ErrorCode::kImportCorrupt), "IMPORT_CORRUPT");
+  EXPECT_EQ(StableErrorCode(ErrorCode::kImportUnsupportedFormat),
+            "IMPORT_UNSUPPORTED_FORMAT");
+  EXPECT_EQ(StableErrorCode(ErrorCode::kImportMissingExif), "IMPORT_MISSING_EXIF");
+  EXPECT_EQ(StableErrorCode(ErrorCode::kImportSensorUnresolved),
+            "IMPORT_SENSOR_UNRESOLVED");
+  EXPECT_EQ(StableErrorCode(ErrorCode::kImportTimestampUnresolvable),
+            "IMPORT_TIMESTAMP_UNRESOLVABLE");
+  EXPECT_EQ(StableErrorCode(ErrorCode::kImportValidationError),
+            "IMPORT_VALIDATION_ERROR");
+}
+
 }  // namespace
 }  // namespace spatial::core

@@ -75,6 +75,15 @@ enum class ErrorCode : int32_t {
   // VALIDATION_* (domain 11)
   kValidationSchema = 11001,
   kValidationDomain = 11002,
+  // IMPORT_* (domain 6) — RFC-0006 §6.6, image-import.md §12. Per-file import
+  // failures; a failed file never partially writes.
+  kImportUnreadable = 6001,
+  kImportCorrupt = 6002,
+  kImportUnsupportedFormat = 6003,
+  kImportMissingExif = 6004,
+  kImportSensorUnresolved = 6005,
+  kImportTimestampUnresolvable = 6006,
+  kImportValidationError = 6007,
   // INTERNAL
   kInternal = 0,
 };

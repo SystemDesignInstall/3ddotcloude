@@ -35,6 +35,13 @@ struct ArtifactManifest {
   std::string mime_type;
   std::string validation_status = "valid";
 
+  // Image geometry (image.schema.json extension, RFC-0006 §8). Zero when the
+  // artifact is not an image. Written by the importer from header-only
+  // parsing (image-import.md §8); never decoded.
+  std::int64_t width = 0;
+  std::int64_t height = 0;
+  std::string pixel_format;
+
   // Reads and parses a manifest file. Throws ArtifactError on malformed
   // content (unreadable, missing required fields, or id mismatch).
   static ArtifactManifest Read(const std::filesystem::path& manifest_path);

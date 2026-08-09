@@ -3,10 +3,12 @@
 
 add_library(spatial_importers STATIC
   image_format.cpp
+  image_importer_main.cpp
 )
 
 target_include_directories(spatial_importers PUBLIC
   ${CMAKE_SOURCE_DIR}
+  ${CMAKE_CURRENT_BINARY_DIR}
 )
 
 target_link_libraries(spatial_importers PUBLIC

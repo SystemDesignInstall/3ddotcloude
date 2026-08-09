@@ -40,6 +40,9 @@ std::string ToJsonString(const ArtifactManifest& m) {
   j["file_size"] = m.file_size;
   j["mime_type"] = m.mime_type;
   j["validation_status"] = m.validation_status;
+  j["width"] = m.width;
+  j["height"] = m.height;
+  j["pixel_format"] = m.pixel_format;
   return j.dump(2);
 }
 
@@ -84,6 +87,15 @@ ArtifactManifest FromJsonString(const std::string& s) {
   if (j.contains("mime_type")) m.mime_type = j["mime_type"].get<std::string>();
   if (j.contains("validation_status")) {
     m.validation_status = j["validation_status"].get<std::string>();
+  }
+  if (j.contains("width") && j["width"].is_number_integer()) {
+    m.width = j["width"].get<std::int64_t>();
+  }
+  if (j.contains("height") && j["height"].is_number_integer()) {
+    m.height = j["height"].get<std::int64_t>();
+  }
+  if (j.contains("pixel_format") && j["pixel_format"].is_string()) {
+    m.pixel_format = j["pixel_format"].get<std::string>();
   }
   return m;
 }
