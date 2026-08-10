@@ -22,6 +22,12 @@ constexpr const char* kSchemaMeta =
 
 }  // namespace
 
+namespace {
+// Forward declarations: the artifact-row reader is defined with the other row
+// readers below but used by the artifact-index accessors above them.
+ArtifactIndexRow ReadArtifactRow(sqlite3_stmt* stmt);
+}  // namespace
+
 MetadataDb::MetadataDb(sqlite3* db, bool read_only)
     : db_(db), read_only_(read_only) {}
 

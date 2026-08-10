@@ -79,7 +79,8 @@ class SceneQuery {
   // Immutable, append-only scene version chain (ADR-033). Read-boundary
   // extension (b), read-boundary-review.md.
   std::optional<SceneVersion> SceneVersion(const Uuid& version_id) const;
-  std::vector<SceneVersion> SceneVersions(const Uuid& scene_id) const;
+  std::vector<::spatial::core::SceneVersion> SceneVersions(
+      const Uuid& scene_id) const;
 
  private:
   const MetadataDb& db_;
