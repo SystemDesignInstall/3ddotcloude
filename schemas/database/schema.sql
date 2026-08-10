@@ -90,8 +90,17 @@ CREATE TABLE calibrations (
     intrinsics_json     TEXT,
     distortion_json     TEXT,
     extrinsics_json     TEXT,
-    uncertainty_json    TEXT
+    uncertainty_json    TEXT,
+    valid_from_ns       INTEGER,
+    valid_to_ns         INTEGER
 );
+
+-- Calibration resolution is half-open [valid_from_ns, valid_to_ns);
+-- valid_to_ns IS NULL means open-ended. sensors.calibration_id is a
+-- maintained "latest" pointer only and must not drive resolution
+-- (migration 0006, RFC-0002 §3.1).
+CREATE INDEX idx_calibrations_sensor_validity
+    ON calibrations (sensor_id, valid_from_ns, valid_to_ns);
 
 -- ---------------------------------------------------------------------------
 -- Coordinate frames / scene / versions

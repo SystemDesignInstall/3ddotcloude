@@ -9,26 +9,27 @@ Spatial Platform is a scene-centric, reproducible 3D reconstruction platform (Re
 
 ## 2. Repositories
 
-- `spatial-rfcs` — governance: CONSTITUTION.md, ADRs (ADR-001..038), RFCs (RFC-0001..0003).
+- `spatial-rfcs` — governance: CONSTITUTION.md, ADRs (ADR-001..039), RFCs (RFC-0001..0005).
 - `spatial-platform` — implementation: C++20 kernel (`core/`), execution engine (`engine/`), adapters, CLI, Python SDK, schemas, tests.
 
 ## 3. Governance model
 
 - CONSTITUTION.md §2 freezes protected surfaces; changes require a ratified RFC cited in the commit/PR body (`check_constitution.py`).
 - 16 Architecture Principles; Architecture Debt = 0 in `core/**`, `engine/**`, `schemas/**`.
-- RFC chain: RFC-0001 (Schema Contracts) → RFC-0002 (Permanent Spatial Data Model) → RFC-0003 (Processing Engine) → RFC-0004 (future: Plugin & Worker Ecosystem).
+- RFC chain: RFC-0001 (Schema Contracts) → RFC-0002 (Permanent Spatial Data Model) → RFC-0003 (Processing Engine) → RFC-0005 (Accuracy & Quality Assurance) → RFC-0004 (future: Plugin & Worker Ecosystem).
 
 ## 4. Milestone naming
 
 - ADR-031 defines **M0** as the smallest shippable slice (kernel, storage, scheduler, worker protocol, CLI, mocks).
-- `docs/agent-tasks/README.md` (ratified P0) defines domain lanes P0→P4; the Core Platform lane owns `engine/**`, `core/project|storage|artifacts|errors`, `cli`. P1 = scheduler + workers + CLI.
-- Implementation stages of RFC-0002 use P2a..P2d. The engine milestone is the **P1** Core Platform lane (P1.1–P1.4).
+- `docs/agent-tasks/README.md` (ratified P0) defines domain lanes P0→P4; the Core Platform lane owns `engine/**`, `core/project|storage|artifacts|errors`, `cli`. Lane labels are team-lane build phases and are **independent** of the product milestones below.
+- The **P1** Core Platform lane (P1.1–P1.5: execution core, scheduler, workers, mock pipeline, CLI, quality engine) is complete. The current product milestone is **P2 — Photogrammetry Core** (P2.1–P2.5, see §15, PPS-0001). RFC-0002 implementation stages used the historical P2a..P2d labels.
 
 ## 5. Ratified foundations
 
 - RFC-0001: initial schema contracts (worker.proto, errors.proto, scene.proto, JSON schemas, SQLite DDL).
 - RFC-0002: permanent spatial data model — SceneVersion/ChangeLog, CaptureSession, Device/SensorRig/Sensor, Observation Graph + relations, Geometry identity/provenance, capability versioning, time model.
 - RFC-0003: Processing Engine & Execution Architecture — Task model, TaskGraph DAG, six-state lifecycle, retry/cancel, cache (ADR-020), worker protocol, ExecutionRecord, Pipeline/Workflow surfaces.
+- RFC-0005: Accuracy & Quality Assurance — Quality Engine as first-class (ADR-030), `quality-report.schema.json`, TaskRequest `pipeline_hash`, CLI `spatial report`.
 - ADR-038: Processing Engine boundary — owns runtime execution, never algorithms/storage/GPU/UI.
 
 ## 6. Implemented to date
@@ -36,6 +37,7 @@ Spatial Platform is a scene-centric, reproducible 3D reconstruction platform (Re
 - P1 (core): project core + artifact store (CAS SHA-256, SQLite WAL, gtest 40/40) — commit `c36b1f4`.
 - P2a (RFC-0002): coordinates/geometry/sensor-time foundation — commit `cd12a28` (72/72 tests).
 - P1 engine (RFC-0003): engine core + workers + mock pipeline + CLI — see current focus (§15).
+- P1.5 (RFC-0005): Quality Engine — schema + spec + quality report + TaskRequest `pipeline_hash` + CLI `spatial report` — commits `bcbd033`, `513bc99` (139/139 Debug + Release).
 
 ## 7. Key technical invariants
 
@@ -55,31 +57,19 @@ Sections 9–14 are reserved for domain details: scene model, sensor model, geom
 ## 15. Current Development Focus
 
 ```
-Milestone:     P1 — Processing Engine (Core Platform lane; RFC-0003, ADR-038)
-
-Goal:          Transform the Spatial Platform from a persistent storage system
-               into an executable spatial computing platform.
-
-Primary RFC:   RFC-0003 Processing Engine & Execution Architecture
-
-First deliverable — end-to-end execution:
-
-Artifact
-    ↓
-Pipeline (model) → Workflow (model) → Task DAG
-    ↓
-Scheduler
-    ↓
-Worker (ProcessExecutor / InProcessExecutor)
-    ↓
-Artifact
+Milestone:     P2 — Photogrammetry Core (RFC-0002, ADR-004; PPS-0001)
+Goal:          Turn the frozen data model into the platform's first real
+               photogrammetry capability: images in, sparse scene out,
+               with full provenance and quality.
+Specification: PPS-0001 — docs/PPS-0001-platform-principles.md
 ```
 
-Stage map (RFC-0003 Implementation Plan):
+Stage map (PPS-0001 implementation plan):
 
-- **P1.1** Execution Core — `engine/task`, `engine/resources`, `engine/execution`, migration `0003_scheduler.sql`, SCHED_*/WORKER_* codes.
-- **P1.2** Scheduler Runtime — `engine/scheduler`, `engine/cache`.
-- **P1.3** Workers — `engine/workers` (IPC + demo Python worker), integration tests.
-- **P1.4** First Pipeline — mock photogrammetry pipeline, CLI `spatial run`/status.
+- **P2.1** Image Import — `ImageArtifact` (metadata/EXIF/thumbnail/hash), `importers/images`, `ImageObservation` records.
+- **P2.2** Camera Model — canonical taxonomy in `calibration.schema.json` (`fov`, `brown_conrady` alias), `core/calibration`, `core/sensors`.
+- **P2.3** Feature Extraction — `FeatureArtifact`, capability `FeatureExtraction`, COLMAP-first adapter behind `adapters/interfaces/**`.
+- **P2.4** Feature Matching — `MatchArtifact`, capability `FeatureMatching`.
+- **P2.5** Bundle Adjustment — `SparseModel` artifact, capabilities `SparseReconstruction` + `BundleAdjustment`, COLMAP default (ADR-004).
 
-Out of P1: algorithms, production local executor, GPU management, distributed workers, recipe/workflow execution, AI workers (post-M0 per ADR-031).
+Out of P2: Dense/Mesh/Texture/Gaussian, adaptive engine, distributed workers, AI priors (post-M0 per ADR-031; deferred artifact types reserved in PPS-0001 §11).

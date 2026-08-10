@@ -1,6 +1,7 @@
 #include "core/storage/metadata_db.h"
 
 #include <algorithm>
+#include <limits>
 #include <sstream>
 #include <utility>
 
@@ -152,6 +153,8 @@ std::size_t MetadataDb::ApplyMigrations() {
       std::find(applied.begin(), applied.end(), "4") != applied.end();
   const bool has_0005 =
       std::find(applied.begin(), applied.end(), "5") != applied.end();
+  const bool has_0006 =
+      std::find(applied.begin(), applied.end(), "6") != applied.end();
   std::size_t count = 0;
 
   // Migration 0001 (initial schema, ratified; identical to HEAD schema.sql).
@@ -215,6 +218,23 @@ std::size_t MetadataDb::ApplyMigrations() {
       Exec("COMMIT;", "commit migration 0005");
     } catch (...) {
       Exec("ROLLBACK;", "rollback migration 0005");
+      throw;
+    }
+    ++count;
+  }
+
+  // Migration 0006 (RFC-0002 §3.1 + RFC-0006 §9, P2.2): calibration
+  // validity intervals on the calibrations table (half-open
+  // [valid_from_ns, valid_to_ns), valid_to_ns IS NULL = open-ended).
+  if (!has_0006) {
+    Exec("BEGIN IMMEDIATE TRANSACTION;", "begin migration 0006");
+    try {
+      Exec(generated::kMigration0006Sql, "apply migration 0006");
+      Exec("INSERT INTO schema_meta (version) VALUES (6);",
+           "record schema version 6");
+      Exec("COMMIT;", "commit migration 0006");
+    } catch (...) {
+      Exec("ROLLBACK;", "rollback migration 0006");
       throw;
     }
     ++count;
@@ -461,6 +481,65 @@ std::optional<Uuid> ColumnUuid(sqlite3_stmt* stmt, int col) {
   return std::nullopt;
 }
 
+// Reads a nullable INTEGER column; returns nullopt for SQL NULL.
+std::optional<std::int64_t> ColumnInt64OrNull(sqlite3_stmt* stmt, int col) {
+  if (sqlite3_column_type(stmt, col) == SQLITE_NULL) return std::nullopt;
+  return sqlite3_column_int64(stmt, col);
+}
+
+// Reads a frames row (SELECT column order: frame_id, scene_id, session_id,
+// timestamp_ns, sequence_index, sensor_id, pose_ref, properties_json).
+FrameRow ReadFrameRow(sqlite3_stmt* stmt) {
+  FrameRow row;
+  if (const auto u = ColumnUuid(stmt, 0)) row.frame_id = *u;
+  if (const auto u = ColumnUuid(stmt, 1)) row.scene_id = *u;
+  if (const auto u = ColumnUuid(stmt, 2)) row.session_id = *u;
+  row.timestamp_ns = sqlite3_column_int64(stmt, 3);
+  row.sequence_index = sqlite3_column_int64(stmt, 4);
+  if (const auto u = ColumnUuid(stmt, 5)) row.sensor_id = *u;
+  if (const auto u = ColumnUuid(stmt, 6)) row.pose_ref = *u;
+  if (const auto* t = sqlite3_column_text(stmt, 7)) {
+    row.properties_json = reinterpret_cast<const char*>(t);
+  }
+  return row;
+}
+
+// Reads an observations row (SELECT column order: observation_id, scene_id,
+// sensor_id, frame_id, session_id, timestamp_ns, type, artifact_ref,
+// source_json, properties_json, width, height, pixel_format; the last three
+// come from the LEFT JOINed observation_payloads).
+ObservationRow ReadObservationRow(sqlite3_stmt* stmt) {
+  ObservationRow row;
+  if (const auto u = ColumnUuid(stmt, 0)) row.observation_id = *u;
+  if (const auto u = ColumnUuid(stmt, 1)) row.scene_id = *u;
+  if (const auto u = ColumnUuid(stmt, 2)) row.sensor_id = *u;
+  if (const auto u = ColumnUuid(stmt, 3)) row.frame_id = *u;
+  if (const auto u = ColumnUuid(stmt, 4)) row.session_id = *u;
+  row.timestamp_ns = sqlite3_column_int64(stmt, 5);
+  if (const auto* t = sqlite3_column_text(stmt, 6)) {
+    row.type = reinterpret_cast<const char*>(t);
+  }
+  if (const auto* t = sqlite3_column_text(stmt, 7)) {
+    row.artifact_ref = reinterpret_cast<const char*>(t);
+  }
+  if (const auto* t = sqlite3_column_text(stmt, 8)) {
+    row.source_json = reinterpret_cast<const char*>(t);
+  }
+  if (const auto* t = sqlite3_column_text(stmt, 9)) {
+    row.properties_json = reinterpret_cast<const char*>(t);
+  }
+  if (sqlite3_column_type(stmt, 10) != SQLITE_NULL) {
+    row.width = sqlite3_column_int64(stmt, 10);
+  }
+  if (sqlite3_column_type(stmt, 11) != SQLITE_NULL) {
+    row.height = sqlite3_column_int64(stmt, 11);
+  }
+  if (const auto* t = sqlite3_column_text(stmt, 12)) {
+    row.pixel_format = reinterpret_cast<const char*>(t);
+  }
+  return row;
+}
+
 }  // namespace
 
 std::optional<Uuid> MetadataDb::FindSession(const Uuid& session_id) {
@@ -514,7 +593,7 @@ void MetadataDb::InsertCaptureSession(const CaptureSessionRow& row) {
   sqlite3_finalize(stmt);
 }
 
-std::optional<SensorRow> MetadataDb::FindSensor(const Uuid& sensor_id) {
+std::optional<SensorRow> MetadataDb::FindSensor(const Uuid& sensor_id) const {
   sqlite3_stmt* stmt = nullptr;
   const char* sql =
       "SELECT s.sensor_id, s.project_id, s.type, s.manufacturer, s.model,"
@@ -561,6 +640,582 @@ std::optional<SensorRow> MetadataDb::FindSensor(const Uuid& sensor_id) {
     row.has_calibration = sqlite3_column_int(stmt, 11) != 0;
     out = row;
   }
+  sqlite3_finalize(stmt);
+  return out;
+}
+
+void MetadataDb::RegisterSensor(const SensorRow& row) {
+  if (read_only_) {
+    throw StorageError(ErrorCode::kStorageReadOnly,
+                       "cannot write to a read-only project", {}, false,
+                       "Open the project for writing to modify it.");
+  }
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "INSERT INTO sensors (sensor_id, project_id, type, manufacturer, model,"
+      " serial_number, time_domain, calibration_id, rig_id, source_json,"
+      " status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare register sensor");
+  }
+  sqlite3_bind_blob(stmt, 1, row.sensor_id.data(),
+                    static_cast<int>(row.sensor_id.size()), SQLITE_TRANSIENT);
+  sqlite3_bind_blob(stmt, 2, row.project_id.data(),
+                    static_cast<int>(row.project_id.size()), SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 3, row.type.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 4, row.manufacturer.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 5, row.model.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 6, row.serial_number.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 7, row.time_domain.c_str(), -1, SQLITE_TRANSIENT);
+  BindUuidOrNull(stmt, 8, row.calibration_id);
+  BindUuidOrNull(stmt, 9, row.rig_id);
+  sqlite3_bind_text(stmt, 10, row.source_json.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 11, row.status.c_str(), -1, SQLITE_TRANSIENT);
+  const int rc = sqlite3_step(stmt);
+  if (rc == SQLITE_CONSTRAINT) {
+    const std::string msg = sqlite3_errmsg(db_);
+    sqlite3_finalize(stmt);
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "sensor already registered: " + FormatUuid(row.sensor_id) +
+                          ": " + msg);
+  }
+  if (rc != SQLITE_DONE) {
+    const std::string msg = sqlite3_errmsg(db_);
+    sqlite3_finalize(stmt);
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot insert sensor row: " + msg);
+  }
+  sqlite3_finalize(stmt);
+}
+
+void MetadataDb::UpdateSensorMetadata(const Uuid& sensor_id,
+                                      const SensorMetadataUpdate& metadata) {
+  if (read_only_) {
+    throw StorageError(ErrorCode::kStorageReadOnly,
+                       "cannot write to a read-only project", {}, false,
+                       "Open the project for writing to modify it.");
+  }
+  sqlite3_stmt* exists = nullptr;
+  const char* exists_sql = "SELECT 1 FROM sensors WHERE sensor_id = ?";
+  if (sqlite3_prepare_v2(db_, exists_sql, -1, &exists, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare find sensor for update");
+  }
+  sqlite3_bind_blob(exists, 1, sensor_id.data(),
+                    static_cast<int>(sensor_id.size()), SQLITE_TRANSIENT);
+  const bool present = sqlite3_step(exists) == SQLITE_ROW;
+  sqlite3_finalize(exists);
+  if (!present) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "no such sensor: " + FormatUuid(sensor_id));
+  }
+
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "UPDATE sensors SET manufacturer = ?, model = ?, serial_number = ?,"
+      " status = ? WHERE sensor_id = ?";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare update sensor metadata");
+  }
+  const auto bind_text_or_null = [stmt](int index, const std::string& value) {
+    if (value.empty()) {
+      sqlite3_bind_null(stmt, index);
+    } else {
+      sqlite3_bind_text(stmt, index, value.c_str(), -1, SQLITE_TRANSIENT);
+    }
+  };
+  bind_text_or_null(1, metadata.manufacturer);
+  bind_text_or_null(2, metadata.model);
+  bind_text_or_null(3, metadata.serial_number);
+  bind_text_or_null(4, metadata.status);
+  sqlite3_bind_blob(stmt, 5, sensor_id.data(),
+                    static_cast<int>(sensor_id.size()), SQLITE_TRANSIENT);
+  if (sqlite3_step(stmt) != SQLITE_DONE) {
+    const std::string msg = sqlite3_errmsg(db_);
+    sqlite3_finalize(stmt);
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot update sensor metadata: " + msg);
+  }
+  sqlite3_finalize(stmt);
+}
+
+void MetadataDb::AddCalibration(const CalibrationRow& row) {
+  if (read_only_) {
+    throw StorageError(ErrorCode::kStorageReadOnly,
+                       "cannot write to a read-only project", {}, false,
+                       "Open the project for writing to modify it.");
+  }
+  if (!row.valid_from_ns.has_value()) {
+    throw CalibrationError(ErrorCode::kCalibrationInvalid,
+                           "calibration requires a valid_from_ns interval "
+                           "start (sensor-model.md §3.1)");
+  }
+  if (row.valid_to_ns.has_value() &&
+      *row.valid_to_ns <= *row.valid_from_ns) {
+    throw CalibrationError(ErrorCode::kCalibrationInvalid,
+                           "valid_to_ns must be greater than valid_from_ns");
+  }
+  constexpr std::int64_t kInf = std::numeric_limits<std::int64_t>::max();
+
+  Exec("BEGIN IMMEDIATE TRANSACTION;", "begin add calibration");
+  try {
+    // At most one calibration may be valid per sensor per timestamp. Overlap
+    // test on half-open [a, b): intervals overlap iff a < d && c < b, with a
+    // NULL end treated as +inf.
+    sqlite3_stmt* overlap = nullptr;
+    const char* overlap_sql =
+        "SELECT 1 FROM calibrations WHERE sensor_id = ?"
+        " AND valid_from_ns IS NOT NULL"
+        " AND valid_from_ns < ?"
+        " AND COALESCE(valid_to_ns, ?) > ? LIMIT 1";
+    if (sqlite3_prepare_v2(db_, overlap_sql, -1, &overlap, nullptr) !=
+        SQLITE_OK) {
+      throw SchemaError(ErrorCode::kSchemaInvalid,
+                        "cannot prepare calibration overlap check");
+    }
+    sqlite3_bind_blob(overlap, 1, row.sensor_id.data(),
+                      static_cast<int>(row.sensor_id.size()), SQLITE_TRANSIENT);
+    // Half-open overlap test: intervals [a,b) and [c,d) overlap iff
+    // a < d && c < b, with a NULL end treated as +inf.
+    if (row.valid_to_ns.has_value()) {
+      sqlite3_bind_int64(overlap, 2, *row.valid_to_ns);
+    } else {
+      sqlite3_bind_int64(overlap, 2, kInf);
+    }
+    sqlite3_bind_int64(overlap, 3, kInf);
+    sqlite3_bind_int64(overlap, 4, *row.valid_from_ns);
+    const bool overlaps = sqlite3_step(overlap) == SQLITE_ROW;
+    sqlite3_finalize(overlap);
+    if (overlaps) {
+      throw CalibrationError(
+          ErrorCode::kCalibrationInvalid,
+          "calibration interval overlaps an existing calibration for sensor " +
+              FormatUuid(row.sensor_id));
+    }
+
+    // Append-only versioning: version = previous max + 1, never rewritten.
+    sqlite3_stmt* ver = nullptr;
+    const char* ver_sql =
+        "SELECT COALESCE(MAX(version), 0) + 1 FROM calibrations"
+        " WHERE sensor_id = ?";
+    if (sqlite3_prepare_v2(db_, ver_sql, -1, &ver, nullptr) != SQLITE_OK) {
+      throw SchemaError(ErrorCode::kSchemaInvalid,
+                        "cannot prepare calibration version");
+    }
+    sqlite3_bind_blob(ver, 1, row.sensor_id.data(),
+                      static_cast<int>(row.sensor_id.size()), SQLITE_TRANSIENT);
+    std::int64_t version = 1;
+    if (sqlite3_step(ver) == SQLITE_ROW) {
+      version = sqlite3_column_int64(ver, 0);
+    }
+    sqlite3_finalize(ver);
+
+    sqlite3_stmt* stmt = nullptr;
+    const char* sql =
+        "INSERT INTO calibrations (calibration_id, sensor_id, version,"
+        " calibration_time_ns, source, intrinsics_json, distortion_json,"
+        " extrinsics_json, uncertainty_json, valid_from_ns, valid_to_ns)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+      throw SchemaError(ErrorCode::kSchemaInvalid,
+                        "cannot prepare insert calibration");
+    }
+    sqlite3_bind_blob(stmt, 1, row.calibration_id.data(),
+                      static_cast<int>(row.calibration_id.size()),
+                      SQLITE_TRANSIENT);
+    sqlite3_bind_blob(stmt, 2, row.sensor_id.data(),
+                      static_cast<int>(row.sensor_id.size()), SQLITE_TRANSIENT);
+    sqlite3_bind_int64(stmt, 3, version);
+    sqlite3_bind_int64(stmt, 4, row.calibration_time_ns);
+    sqlite3_bind_text(stmt, 5, row.source.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 6, row.intrinsics_json.c_str(), -1,
+                      SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 7, row.distortion_json.c_str(), -1,
+                      SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 8, row.extrinsics_json.c_str(), -1,
+                      SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 9, row.uncertainty_json.c_str(), -1,
+                      SQLITE_TRANSIENT);
+    sqlite3_bind_int64(stmt, 10, *row.valid_from_ns);
+    if (row.valid_to_ns.has_value()) {
+      sqlite3_bind_int64(stmt, 11, *row.valid_to_ns);
+    } else {
+      sqlite3_bind_null(stmt, 11);
+    }
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+      const std::string msg = sqlite3_errmsg(db_);
+      sqlite3_finalize(stmt);
+      throw SchemaError(ErrorCode::kSchemaInvalid,
+                        "cannot insert calibration row: " + msg);
+    }
+    sqlite3_finalize(stmt);
+
+    // Maintain the sensors.calibration_id "latest" pointer (never used by
+    // ResolveCalibrationAt; historical resolution reads intervals only).
+    sqlite3_stmt* ptr = nullptr;
+    const char* ptr_sql =
+        "UPDATE sensors SET calibration_id = ? WHERE sensor_id = ?";
+    if (sqlite3_prepare_v2(db_, ptr_sql, -1, &ptr, nullptr) != SQLITE_OK) {
+      throw SchemaError(ErrorCode::kSchemaInvalid,
+                        "cannot prepare calibration pointer update");
+    }
+    sqlite3_bind_blob(ptr, 1, row.calibration_id.data(),
+                      static_cast<int>(row.calibration_id.size()),
+                      SQLITE_TRANSIENT);
+    sqlite3_bind_blob(ptr, 2, row.sensor_id.data(),
+                      static_cast<int>(row.sensor_id.size()), SQLITE_TRANSIENT);
+    sqlite3_step(ptr);
+    sqlite3_finalize(ptr);
+
+    Exec("COMMIT;", "commit add calibration");
+  } catch (...) {
+    Exec("ROLLBACK;", "rollback add calibration");
+    throw;
+  }
+}
+
+std::optional<CalibrationRow> MetadataDb::ResolveCalibrationAt(
+    const Uuid& sensor_id, std::int64_t timestamp_ns) const {
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "SELECT calibration_id, sensor_id, version, calibration_time_ns, source,"
+      " intrinsics_json, distortion_json, extrinsics_json, uncertainty_json,"
+      " valid_from_ns, valid_to_ns"
+      " FROM calibrations WHERE sensor_id = ?"
+      " AND valid_from_ns IS NOT NULL AND valid_from_ns <= ?"
+      " AND (valid_to_ns IS NULL OR valid_to_ns > ?)"
+      " ORDER BY valid_from_ns DESC LIMIT 1";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare resolve calibration at");
+  }
+  sqlite3_bind_blob(stmt, 1, sensor_id.data(),
+                    static_cast<int>(sensor_id.size()), SQLITE_TRANSIENT);
+  sqlite3_bind_int64(stmt, 2, timestamp_ns);
+  sqlite3_bind_int64(stmt, 3, timestamp_ns);
+  std::optional<CalibrationRow> out;
+  if (sqlite3_step(stmt) == SQLITE_ROW) {
+    CalibrationRow row;
+    if (const auto u = ColumnUuid(stmt, 0)) row.calibration_id = *u;
+    if (const auto u = ColumnUuid(stmt, 1)) row.sensor_id = *u;
+    row.version = sqlite3_column_int64(stmt, 2);
+    row.calibration_time_ns = sqlite3_column_int64(stmt, 3);
+    if (const auto* t = sqlite3_column_text(stmt, 4)) {
+      row.source = reinterpret_cast<const char*>(t);
+    }
+    if (const auto* t = sqlite3_column_text(stmt, 5)) {
+      row.intrinsics_json = reinterpret_cast<const char*>(t);
+    }
+    if (const auto* t = sqlite3_column_text(stmt, 6)) {
+      row.distortion_json = reinterpret_cast<const char*>(t);
+    }
+    if (const auto* t = sqlite3_column_text(stmt, 7)) {
+      row.extrinsics_json = reinterpret_cast<const char*>(t);
+    }
+    if (const auto* t = sqlite3_column_text(stmt, 8)) {
+      row.uncertainty_json = reinterpret_cast<const char*>(t);
+    }
+    row.valid_from_ns = ColumnInt64OrNull(stmt, 9);
+    row.valid_to_ns = ColumnInt64OrNull(stmt, 10);
+    out = row;
+  }
+  sqlite3_finalize(stmt);
+  return out;
+}
+
+std::optional<CaptureSessionRow> MetadataDb::FindCaptureSession(
+    const Uuid& session_id) const {
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "SELECT session_id, project_id, name, started_at_ns, ended_at_ns,"
+      " source_uri, status, provenance_json FROM capture_sessions"
+      " WHERE session_id = ?";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare find capture session");
+  }
+  sqlite3_bind_blob(stmt, 1, session_id.data(),
+                    static_cast<int>(session_id.size()), SQLITE_TRANSIENT);
+  std::optional<CaptureSessionRow> out;
+  if (sqlite3_step(stmt) == SQLITE_ROW) {
+    CaptureSessionRow row;
+    if (const auto u = ColumnUuid(stmt, 0)) row.session_id = *u;
+    if (const auto u = ColumnUuid(stmt, 1)) row.project_id = *u;
+    if (const auto* t = sqlite3_column_text(stmt, 2)) {
+      row.name = reinterpret_cast<const char*>(t);
+    }
+    row.started_at_ns = sqlite3_column_int64(stmt, 3);
+    row.ended_at_ns = sqlite3_column_int64(stmt, 4);
+    if (const auto* t = sqlite3_column_text(stmt, 5)) {
+      row.source_uri = reinterpret_cast<const char*>(t);
+    }
+    if (const auto* t = sqlite3_column_text(stmt, 6)) {
+      row.status = reinterpret_cast<const char*>(t);
+    }
+    if (const auto* t = sqlite3_column_text(stmt, 7)) {
+      row.provenance_json = reinterpret_cast<const char*>(t);
+    }
+    out = row;
+  }
+  sqlite3_finalize(stmt);
+  return out;
+}
+
+std::optional<SceneRow> MetadataDb::FindSceneByProject(
+    const Uuid& project_id) const {
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "SELECT scene_id, current_version_id, name, origin_frame, crs, status,"
+      " properties_json FROM scenes WHERE project_id = ? AND status = 'open'"
+      " LIMIT 1";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare find scene by project");
+  }
+  sqlite3_bind_blob(stmt, 1, project_id.data(),
+                    static_cast<int>(project_id.size()), SQLITE_TRANSIENT);
+  std::optional<SceneRow> out;
+  if (sqlite3_step(stmt) == SQLITE_ROW) {
+    SceneRow row;
+    if (const auto u = ColumnUuid(stmt, 0)) row.scene_id = *u;
+    if (const auto u = ColumnUuid(stmt, 1)) row.version_id = *u;
+    if (const auto* t = sqlite3_column_text(stmt, 2)) {
+      row.name = reinterpret_cast<const char*>(t);
+    }
+    if (const auto* t = sqlite3_column_text(stmt, 3)) {
+      row.origin_frame = reinterpret_cast<const char*>(t);
+    }
+    if (const auto* t = sqlite3_column_text(stmt, 4)) {
+      row.crs = reinterpret_cast<const char*>(t);
+    }
+    if (const auto* t = sqlite3_column_text(stmt, 5)) {
+      row.status = reinterpret_cast<const char*>(t);
+    }
+    if (const auto* t = sqlite3_column_text(stmt, 6)) {
+      row.properties_json = reinterpret_cast<const char*>(t);
+    }
+    row.project_id = project_id;
+    out = row;
+  }
+  sqlite3_finalize(stmt);
+  return out;
+}
+
+std::vector<FrameRow> MetadataDb::FindFramesByScene(
+    const Uuid& scene_id) const {
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "SELECT frame_id, scene_id, session_id, timestamp_ns, sequence_index,"
+      " sensor_id, pose_ref, properties_json FROM frames"
+      " WHERE scene_id = ? ORDER BY timestamp_ns, sequence_index";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare find frames by scene");
+  }
+  sqlite3_bind_blob(stmt, 1, scene_id.data(),
+                    static_cast<int>(scene_id.size()), SQLITE_TRANSIENT);
+  std::vector<FrameRow> out;
+  while (sqlite3_step(stmt) == SQLITE_ROW) out.push_back(ReadFrameRow(stmt));
+  sqlite3_finalize(stmt);
+  return out;
+}
+
+std::vector<FrameRow> MetadataDb::FindFramesBySession(
+    const Uuid& session_id) const {
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "SELECT frame_id, scene_id, session_id, timestamp_ns, sequence_index,"
+      " sensor_id, pose_ref, properties_json FROM frames"
+      " WHERE session_id = ? ORDER BY timestamp_ns, sequence_index";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare find frames by session");
+  }
+  sqlite3_bind_blob(stmt, 1, session_id.data(),
+                    static_cast<int>(session_id.size()), SQLITE_TRANSIENT);
+  std::vector<FrameRow> out;
+  while (sqlite3_step(stmt) == SQLITE_ROW) out.push_back(ReadFrameRow(stmt));
+  sqlite3_finalize(stmt);
+  return out;
+}
+
+std::vector<FrameRow> MetadataDb::FindFramesBySensor(
+    const Uuid& sensor_id) const {
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "SELECT frame_id, scene_id, session_id, timestamp_ns, sequence_index,"
+      " sensor_id, pose_ref, properties_json FROM frames"
+      " WHERE sensor_id = ? ORDER BY timestamp_ns, sequence_index";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare find frames by sensor");
+  }
+  sqlite3_bind_blob(stmt, 1, sensor_id.data(),
+                    static_cast<int>(sensor_id.size()), SQLITE_TRANSIENT);
+  std::vector<FrameRow> out;
+  while (sqlite3_step(stmt) == SQLITE_ROW) out.push_back(ReadFrameRow(stmt));
+  sqlite3_finalize(stmt);
+  return out;
+}
+
+std::vector<FrameRow> MetadataDb::FindFrames() const {
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "SELECT frame_id, scene_id, session_id, timestamp_ns, sequence_index,"
+      " sensor_id, pose_ref, properties_json FROM frames"
+      " ORDER BY timestamp_ns, sequence_index";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare find all frames");
+  }
+  std::vector<FrameRow> out;
+  while (sqlite3_step(stmt) == SQLITE_ROW) out.push_back(ReadFrameRow(stmt));
+  sqlite3_finalize(stmt);
+  return out;
+}
+
+std::vector<FrameRow> MetadataDb::FindFramesInTimeRange(
+    std::int64_t from_ns, std::int64_t to_ns) const {
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "SELECT frame_id, scene_id, session_id, timestamp_ns, sequence_index,"
+      " sensor_id, pose_ref, properties_json FROM frames"
+      " WHERE timestamp_ns >= ? AND timestamp_ns < ?"
+      " ORDER BY timestamp_ns, sequence_index";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare find frames in time range");
+  }
+  sqlite3_bind_int64(stmt, 1, from_ns);
+  sqlite3_bind_int64(stmt, 2, to_ns);
+  std::vector<FrameRow> out;
+  while (sqlite3_step(stmt) == SQLITE_ROW) out.push_back(ReadFrameRow(stmt));
+  sqlite3_finalize(stmt);
+  return out;
+}
+
+std::vector<ObservationRow> MetadataDb::FindObservationsByScene(
+    const Uuid& scene_id) const {
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "SELECT observation_id, scene_id, sensor_id, frame_id, session_id,"
+      " timestamp_ns, type, artifact_ref, source_json, properties_json,"
+      " width, height, pixel_format FROM observations"
+      " LEFT JOIN observation_payloads USING (observation_id)"
+      " WHERE scene_id = ? ORDER BY timestamp_ns";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare find observations by scene");
+  }
+  sqlite3_bind_blob(stmt, 1, scene_id.data(),
+                    static_cast<int>(scene_id.size()), SQLITE_TRANSIENT);
+  std::vector<ObservationRow> out;
+  while (sqlite3_step(stmt) == SQLITE_ROW) out.push_back(ReadObservationRow(stmt));
+  sqlite3_finalize(stmt);
+  return out;
+}
+
+std::vector<ObservationRow> MetadataDb::FindObservationsByFrame(
+    const Uuid& frame_id) const {
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "SELECT observation_id, scene_id, sensor_id, frame_id, session_id,"
+      " timestamp_ns, type, artifact_ref, source_json, properties_json,"
+      " width, height, pixel_format FROM observations"
+      " LEFT JOIN observation_payloads USING (observation_id)"
+      " WHERE frame_id = ? ORDER BY timestamp_ns";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare find observations by frame");
+  }
+  sqlite3_bind_blob(stmt, 1, frame_id.data(),
+                    static_cast<int>(frame_id.size()), SQLITE_TRANSIENT);
+  std::vector<ObservationRow> out;
+  while (sqlite3_step(stmt) == SQLITE_ROW) out.push_back(ReadObservationRow(stmt));
+  sqlite3_finalize(stmt);
+  return out;
+}
+
+std::vector<ObservationRow> MetadataDb::FindObservationsBySession(
+    const Uuid& session_id) const {
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "SELECT observation_id, scene_id, sensor_id, frame_id, session_id,"
+      " timestamp_ns, type, artifact_ref, source_json, properties_json,"
+      " width, height, pixel_format FROM observations"
+      " LEFT JOIN observation_payloads USING (observation_id)"
+      " WHERE session_id = ? ORDER BY timestamp_ns";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare find observations by session");
+  }
+  sqlite3_bind_blob(stmt, 1, session_id.data(),
+                    static_cast<int>(session_id.size()), SQLITE_TRANSIENT);
+  std::vector<ObservationRow> out;
+  while (sqlite3_step(stmt) == SQLITE_ROW) out.push_back(ReadObservationRow(stmt));
+  sqlite3_finalize(stmt);
+  return out;
+}
+
+std::vector<ObservationRow> MetadataDb::FindObservationsBySensor(
+    const Uuid& sensor_id) const {
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "SELECT observation_id, scene_id, sensor_id, frame_id, session_id,"
+      " timestamp_ns, type, artifact_ref, source_json, properties_json,"
+      " width, height, pixel_format FROM observations"
+      " LEFT JOIN observation_payloads USING (observation_id)"
+      " WHERE sensor_id = ? ORDER BY timestamp_ns";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare find observations by sensor");
+  }
+  sqlite3_bind_blob(stmt, 1, sensor_id.data(),
+                    static_cast<int>(sensor_id.size()), SQLITE_TRANSIENT);
+  std::vector<ObservationRow> out;
+  while (sqlite3_step(stmt) == SQLITE_ROW) out.push_back(ReadObservationRow(stmt));
+  sqlite3_finalize(stmt);
+  return out;
+}
+
+std::vector<ObservationRow> MetadataDb::FindObservations() const {
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "SELECT observation_id, scene_id, sensor_id, frame_id, session_id,"
+      " timestamp_ns, type, artifact_ref, source_json, properties_json,"
+      " width, height, pixel_format FROM observations"
+      " LEFT JOIN observation_payloads USING (observation_id)"
+      " ORDER BY timestamp_ns";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare find all observations");
+  }
+  std::vector<ObservationRow> out;
+  while (sqlite3_step(stmt) == SQLITE_ROW) out.push_back(ReadObservationRow(stmt));
+  sqlite3_finalize(stmt);
+  return out;
+}
+
+std::vector<ObservationRow> MetadataDb::FindObservationsInTimeRange(
+    std::int64_t from_ns, std::int64_t to_ns) const {
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "SELECT observation_id, scene_id, sensor_id, frame_id, session_id,"
+      " timestamp_ns, type, artifact_ref, source_json, properties_json,"
+      " width, height, pixel_format FROM observations"
+      " LEFT JOIN observation_payloads USING (observation_id)"
+      " WHERE timestamp_ns >= ? AND timestamp_ns < ?"
+      " ORDER BY timestamp_ns";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare find observations in time range");
+  }
+  sqlite3_bind_int64(stmt, 1, from_ns);
+  sqlite3_bind_int64(stmt, 2, to_ns);
+  std::vector<ObservationRow> out;
+  while (sqlite3_step(stmt) == SQLITE_ROW) out.push_back(ReadObservationRow(stmt));
   sqlite3_finalize(stmt);
   return out;
 }

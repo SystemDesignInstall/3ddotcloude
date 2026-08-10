@@ -6,7 +6,7 @@ Checks:
     ``## Context``, ``## Decision``, ``## Alternatives``, ``## Consequences``
     sections and a ``- **Status:**`` line;
   * every ``rfc/RFC-*.md`` matches ``RFC-\\d{4}`` naming;
-  * the ADR index table in ``README.md`` lists ADR-001 .. ADR-037.
+  * the ADR index table in ``README.md`` lists ADR-001 .. ADR-038.
 
 Templates (``ADR-TEMPLATE.md``, ``RFC-TEMPLATE.md``) are scaffolding, not
 records, and are exempt from the naming rules.
@@ -26,7 +26,7 @@ RFC_RE = re.compile(r"^RFC-\d{4}-?[a-z0-9-]*\.md$")
 REQUIRED_SECTIONS = ("Context", "Decision", "Alternatives", "Consequences")
 STATUS_RE = re.compile(r"-\s*\*\*Status:\*\*")
 INDEX_ROW_RE = re.compile(r"^\|\s*(ADR-\d{3})\s*\|")
-EXPECTED_IDS = {f"ADR-{i:03d}" for i in range(1, 39)}
+EXPECTED_IDS = {f"ADR-{i:03d}" for i in range(1, 40)}
 TEMPLATES = ("ADR-TEMPLATE.md", "RFC-TEMPLATE.md")
 
 
@@ -124,7 +124,7 @@ def main() -> int:
     print("rfc: PASS")
     print(f"  ADR records validated: {len(adr_files)}")
     print(f"  RFC records validated: {len(rfc_files)}")
-    print("  README.md index lists ADR-001 .. ADR-037")
+    print("  README.md index lists ADR-001 .. ADR-038")
     return 0
 
 

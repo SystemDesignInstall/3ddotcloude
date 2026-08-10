@@ -11,6 +11,8 @@ ErrorDomain DomainOf(ErrorCode code) noexcept {
     case ErrorCode::kProjectNotFound:
     case ErrorCode::kProjectCorrupt:
       return ErrorDomain::kProject;
+    case ErrorCode::kCalibrationInvalid:
+      return ErrorDomain::kCalibration;
     case ErrorCode::kStorageCorrupt:
     case ErrorCode::kStorageReadOnly:
     case ErrorCode::kStorageLock:

@@ -51,9 +51,10 @@ Owns the human surfaces: UI, SDK, services, viewer, benchmarks.
 4. **Build order is P0 → P4, ownership is domain-based.** Sequencing follows milestones, not a single serialized list:
    - **P0** — freeze schemas and interfaces; kernel, storage, coordinates, Scene + Observation Graph, Plugin/Capability contracts, error codes, Recipe schema. Work here is parallel *within* each domain, but all P0 contracts must land before integration-heavy work depends on them.
    - **P1** — scheduler + worker protocol + mock adapters + SDK/CLI skeleton (Core Platform + UX), camera/SLAM importer scaffolds.
-   - **P2** — Geometry Graph logic, quality/uncertainty channels (Geometry).
+   - **G2** — Geometry Graph logic, quality/uncertainty channels (Geometry).
    - **P3** — first real adapters behind mocks (Photogrammetry COLMAP/OpenMVS, SLAM KISS-ICP/GTSAM), AI priors through the ADR-006 validation gate (AI).
    - **P4** — recipes end-to-end, adaptive engine, viewer/export, benchmarks.
+   - **Lane numbering is independent of the product roadmap.** The P0–P4 (and G2) labels here are team-lane build phases. The product milestone **P2 — Photogrammetry Core** (P2.1–P2.5, see `project-context-summary.md` §15 and PPS-0001) is a separate sequence and does not collide with these lane labels.
    - Domains proceed within their lane as fast as dependencies allow; a domain never blocks on another domain's milestone unless it consumes the frozen contract.
 5. **Architecture Debt = 0 in the kernel.** No TODO/FIXME/HACK in `core/**`, `engine/**`, `schemas/**`; a task is either built to the architecture or deferred (ADR-031). Experimental code lives only in `python/research/**` and `benchmarks/experimental/**`.
 6. **Capabilities over names.** Teams build adapters that declare capabilities; the engine selects by capability. A team never hard-codes another team's adapter.
@@ -69,7 +70,7 @@ P0 contracts (all teams, frozen)          ← everything depends on these
    └── (Photogrammetry/SLAM/AI: adapter + importer scaffolds)
    │
    ├── P1: mock pipeline end-to-end, SDK/CLI
-   ├── P2: Geometry Graph + quality channels
+   ├── G2: Geometry Graph + quality channels
    ├── P3: real adapters + AI priors (behind mocks where licensed)
    └── P4: recipes, adaptive engine, viewer, exports, benchmarks
 ```

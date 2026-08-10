@@ -1,9 +1,11 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
 #include <filesystem>
+#include <limits>
 
 #include <sqlite3.h>
 
@@ -269,10 +271,346 @@ TEST_F(MetadataDbTest, SensorResolutionTracksCalibration) {
   EXPECT_FALSE(db.FindSensor(GenerateUuid()).has_value());
 }
 
+TEST_F(MetadataDbTest, RegisterSensorRoundTrip) {
+  auto db = MetadataDb::Create(path_);
+  InsertTestProject(db);
+  SensorRow row;
+  row.sensor_id = GenerateUuid();
+  row.project_id = kProjectId;
+  row.type = "camera";
+  row.manufacturer = "Acme";
+  row.model = "Cam-1";
+  row.serial_number = "SN-42";
+  row.time_domain = "device";
+  row.source_json = R"({"app":"spatial","version":"0.1"})";
+  row.status = "active";
+  db.RegisterSensor(row);
+
+  const auto found = db.FindSensor(row.sensor_id);
+  ASSERT_TRUE(found.has_value());
+  EXPECT_EQ(found->sensor_id, row.sensor_id);
+  EXPECT_EQ(found->project_id, kProjectId);
+  EXPECT_EQ(found->type, "camera");
+  EXPECT_EQ(found->manufacturer, "Acme");
+  EXPECT_EQ(found->model, "Cam-1");
+  EXPECT_EQ(found->serial_number, "SN-42");
+  EXPECT_EQ(found->time_domain, "device");
+  EXPECT_EQ(found->status, "active");
+  EXPECT_TRUE(IsNil(found->calibration_id));
+  EXPECT_FALSE(found->has_calibration);
+}
+
+TEST_F(MetadataDbTest, RegisterSensorDuplicateRejected) {
+  auto db = MetadataDb::Create(path_);
+  InsertTestProject(db);
+  SensorRow row;
+  row.sensor_id = GenerateUuid();
+  row.project_id = kProjectId;
+  row.type = "lidar";
+  db.RegisterSensor(row);
+  EXPECT_THROW(db.RegisterSensor(row), SchemaError);
+  // The original row is intact.
+  EXPECT_TRUE(db.FindSensor(row.sensor_id).has_value());
+}
+
+TEST_F(MetadataDbTest, UpdateSensorMetadataKeepsIdentity) {
+  auto db = MetadataDb::Create(path_);
+  InsertTestProject(db);
+  SensorRow row;
+  row.sensor_id = GenerateUuid();
+  row.project_id = kProjectId;
+  row.type = "imu";
+  row.manufacturer = "old";
+  row.status = "active";
+  db.RegisterSensor(row);
+
+  SensorMetadataUpdate update;
+  update.manufacturer = "new";
+  update.model = "Gyro-9";
+  update.status = "retired";
+  db.UpdateSensorMetadata(row.sensor_id, update);
+
+  const auto found = db.FindSensor(row.sensor_id);
+  ASSERT_TRUE(found.has_value());
+  EXPECT_EQ(found->sensor_id, row.sensor_id);
+  EXPECT_EQ(found->type, "imu");  // type is identity-adjacent, untouched
+  EXPECT_EQ(found->manufacturer, "new");
+  EXPECT_EQ(found->model, "Gyro-9");
+  EXPECT_EQ(found->status, "retired");
+  EXPECT_TRUE(found->serial_number.empty());
+
+  EXPECT_THROW(
+      db.UpdateSensorMetadata(GenerateUuid(), SensorMetadataUpdate{}),
+      SchemaError);
+}
+
+namespace {
+
+SensorRow MakeSensor(const Uuid& id) {
+  SensorRow row;
+  row.sensor_id = id;
+  row.project_id = kProjectId;
+  row.type = "camera";
+  row.status = "active";
+  return row;
+}
+
+CalibrationRow MakeCalibration(const Uuid& sensor_id,
+                               std::int64_t valid_from,
+                               std::optional<std::int64_t> valid_to) {
+  CalibrationRow row;
+  row.calibration_id = GenerateUuid();
+  row.sensor_id = sensor_id;
+  row.calibration_time_ns = valid_from;
+  row.valid_from_ns = valid_from;
+  row.valid_to_ns = valid_to;
+  return row;
+}
+
+}  // namespace
+
+TEST_F(MetadataDbTest, AddCalibrationAppendsVersionsAndLatestPointer) {
+  auto db = MetadataDb::Create(path_);
+  InsertTestProject(db);
+  const Uuid sensor_id = GenerateUuid();
+  db.RegisterSensor(MakeSensor(sensor_id));
+
+  const auto c1 = MakeCalibration(sensor_id, 100, 200);
+  db.AddCalibration(c1);
+  const auto c2 = MakeCalibration(sensor_id, 300, std::nullopt);
+  db.AddCalibration(c2);
+
+  const auto found = db.FindSensor(sensor_id);
+  ASSERT_TRUE(found.has_value());
+  EXPECT_TRUE(found->has_calibration);
+  EXPECT_EQ(found->calibration_id, c2.calibration_id);  // latest pointer
+
+  // Versions are append-only and monotonically increasing.
+  const auto at100 = db.ResolveCalibrationAt(sensor_id, 100);
+  ASSERT_TRUE(at100.has_value());
+  EXPECT_EQ(at100->calibration_id, c1.calibration_id);
+  EXPECT_EQ(at100->version, 1);
+
+  const auto at300 = db.ResolveCalibrationAt(sensor_id, 300);
+  ASSERT_TRUE(at300.has_value());
+  EXPECT_EQ(at300->calibration_id, c2.calibration_id);
+  EXPECT_EQ(at300->version, 2);
+  EXPECT_FALSE(at300->valid_to_ns.has_value());  // open-ended
+}
+
+TEST_F(MetadataDbTest, AddCalibrationRejectsMalformedInterval) {
+  auto db = MetadataDb::Create(path_);
+  InsertTestProject(db);
+  const Uuid sensor_id = GenerateUuid();
+  db.RegisterSensor(MakeSensor(sensor_id));
+
+  CalibrationRow no_start = MakeCalibration(sensor_id, 100, 200);
+  no_start.valid_from_ns.reset();
+  EXPECT_THROW(db.AddCalibration(no_start), CalibrationError);
+
+  CalibrationRow inverted = MakeCalibration(sensor_id, 200, 200);
+  EXPECT_THROW(db.AddCalibration(inverted), CalibrationError);
+
+  CalibrationRow reversed = MakeCalibration(sensor_id, 300, 100);
+  EXPECT_THROW(db.AddCalibration(reversed), CalibrationError);
+}
+
+TEST_F(MetadataDbTest, AddCalibrationRejectsOverlap) {
+  auto db = MetadataDb::Create(path_);
+  InsertTestProject(db);
+  const Uuid sensor_id = GenerateUuid();
+  db.RegisterSensor(MakeSensor(sensor_id));
+
+  db.AddCalibration(MakeCalibration(sensor_id, 100, 200));
+  // Overlaps [100, 200).
+  EXPECT_THROW(db.AddCalibration(MakeCalibration(sensor_id, 150, 250)),
+               CalibrationError);
+  EXPECT_THROW(db.AddCalibration(MakeCalibration(sensor_id, 50, 150)),
+               CalibrationError);
+  // Adjacent half-open intervals [100,200) / [200,300) do not overlap.
+  EXPECT_NO_THROW(db.AddCalibration(MakeCalibration(sensor_id, 200, 300)));
+}
+
+TEST_F(MetadataDbTest, ResolveCalibrationAtIsHalfOpenAndGapAware) {
+  auto db = MetadataDb::Create(path_);
+  InsertTestProject(db);
+  const Uuid sensor_id = GenerateUuid();
+  db.RegisterSensor(MakeSensor(sensor_id));
+
+  db.AddCalibration(MakeCalibration(sensor_id, 100, 200));
+  db.AddCalibration(MakeCalibration(sensor_id, 300, std::nullopt));
+
+  // Half-open: valid_from inclusive, valid_to exclusive.
+  EXPECT_TRUE(db.ResolveCalibrationAt(sensor_id, 100).has_value());
+  EXPECT_TRUE(db.ResolveCalibrationAt(sensor_id, 199).has_value());
+  EXPECT_FALSE(db.ResolveCalibrationAt(sensor_id, 200).has_value());
+  // Before the first interval and in the [200, 300) gap.
+  EXPECT_FALSE(db.ResolveCalibrationAt(sensor_id, 99).has_value());
+  EXPECT_FALSE(db.ResolveCalibrationAt(sensor_id, 250).has_value());
+  // Open-ended interval matches everything >= valid_from.
+  EXPECT_TRUE(db.ResolveCalibrationAt(sensor_id, 300).has_value());
+  EXPECT_TRUE(db.ResolveCalibrationAt(
+      sensor_id, std::numeric_limits<std::int64_t>::max()).has_value());
+  // Uncalibrated and unknown sensors resolve to nullopt, never a guess.
+  const Uuid uncalibrated = GenerateUuid();
+  db.RegisterSensor(MakeSensor(uncalibrated));
+  EXPECT_FALSE(db.ResolveCalibrationAt(uncalibrated, 100).has_value());
+  EXPECT_FALSE(db.ResolveCalibrationAt(GenerateUuid(), 100).has_value());
+}
+
 TEST_F(MetadataDbTest, SceneVersionWithoutSceneThrows) {
   auto db = MetadataDb::Create(path_);
   EXPECT_THROW(db.CreateSceneVersion(GenerateUuid(), "imported", "{}", 1),
                SchemaError);
+}
+
+TEST_F(MetadataDbTest, ReadSurfaceResolvesSessionsAndScenes) {
+  auto db = MetadataDb::Create(path_);
+  InsertTestProject(db);
+  const Uuid session_id = GenerateUuid();
+  CaptureSessionRow srow;
+  srow.session_id = session_id;
+  srow.project_id = kProjectId;
+  srow.name = "session-query";
+  srow.started_at_ns = 100;
+  srow.status = "closed";
+  db.InsertCaptureSession(srow);
+
+  const auto session = db.FindCaptureSession(session_id);
+  ASSERT_TRUE(session.has_value());
+  EXPECT_EQ(session->session_id, session_id);
+  EXPECT_EQ(session->project_id, kProjectId);
+  EXPECT_EQ(session->name, "session-query");
+  EXPECT_EQ(session->status, "closed");
+  EXPECT_FALSE(db.FindCaptureSession(GenerateUuid()).has_value());
+
+  const auto scene = db.FindOrCreateScene(kProjectId, "scene", "{}", 1000);
+  const auto by_project = db.FindSceneByProject(kProjectId);
+  ASSERT_TRUE(by_project.has_value());
+  EXPECT_EQ(by_project->scene_id, scene.scene_id);
+  EXPECT_EQ(by_project->version_id, scene.version_id);
+  EXPECT_EQ(by_project->project_id, kProjectId);
+  EXPECT_FALSE(db.FindSceneByProject(GenerateUuid()).has_value());
+}
+
+TEST_F(MetadataDbTest, FrameAndObservationReadQueriesReturnSubsets) {
+  auto db = MetadataDb::Create(path_);
+  InsertTestProject(db);
+  const auto scene = db.FindOrCreateScene(kProjectId, "scene", "{}", 1000);
+
+  const Uuid session_a = GenerateUuid();
+  const Uuid session_b = GenerateUuid();
+  for (const auto& sid : {session_a, session_b}) {
+    CaptureSessionRow srow;
+    srow.session_id = sid;
+    srow.project_id = kProjectId;
+    srow.name = "s";
+    db.InsertCaptureSession(srow);
+  }
+
+  const Uuid sensor_1 = GenerateUuid();
+  const Uuid sensor_2 = GenerateUuid();
+  InsertTestSensor(db, sensor_1);
+  InsertTestSensor(db, sensor_2);
+
+  struct Record {
+    Uuid id;
+    std::int64_t ts;
+  };
+  std::vector<Record> frames;
+  std::vector<Record> observations;
+
+  const auto add_frame = [&](const Uuid& session_id, const Uuid& sensor_id,
+                             std::int64_t ts) {
+    const Uuid frame_id = GenerateUuid();
+    FrameRow frow;
+    frow.frame_id = frame_id;
+    frow.scene_id = scene.scene_id;
+    frow.session_id = session_id;
+    frow.timestamp_ns = ts;
+    frow.sequence_index = 0;
+    frow.sensor_id = sensor_id;
+    frow.pose_ref = {};
+    db.InsertFrame(frow);
+    frames.push_back({frame_id, ts});
+
+    const Uuid obs_id = GenerateUuid();
+    ObservationRow orow;
+    orow.observation_id = obs_id;
+    orow.scene_id = scene.scene_id;
+    orow.sensor_id = sensor_id;
+    orow.frame_id = frame_id;
+    orow.session_id = session_id;
+    orow.timestamp_ns = ts;
+    orow.type = "image";
+    orow.artifact_ref = FormatUuid(obs_id);
+    db.InsertObservation(orow);
+    observations.push_back({obs_id, ts});
+  };
+
+  // f1/o1: session A, sensor 1, ts 100; f2/o2: session A, sensor 2, ts 200;
+  // f3/o3: session B, sensor 1, ts 300.
+  add_frame(session_a, sensor_1, 100);
+  add_frame(session_a, sensor_2, 200);
+  add_frame(session_b, sensor_1, 300);
+
+  const auto ids = [](const auto& rows) {
+    std::vector<Uuid> out;
+    for (const auto& r : rows) out.push_back(r.frame_id);
+    return out;
+  };
+  const auto obs_ids = [](const auto& rows) {
+    std::vector<Uuid> out;
+    for (const auto& r : rows) out.push_back(r.observation_id);
+    return out;
+  };
+  const auto contains = [](const auto& vec, const Uuid& id) {
+    return std::find(vec.begin(), vec.end(), id) != vec.end();
+  };
+
+  const auto all_frames = db.FindFramesByScene(scene.scene_id);
+  ASSERT_EQ(all_frames.size(), 3u);
+
+  const auto session_a_frames = db.FindFramesBySession(session_a);
+  ASSERT_EQ(session_a_frames.size(), 2u);
+  EXPECT_TRUE(contains(ids(session_a_frames), frames[0].id));
+  EXPECT_TRUE(contains(ids(session_a_frames), frames[1].id));
+
+  const auto sensor_1_frames = db.FindFramesBySensor(sensor_1);
+  ASSERT_EQ(sensor_1_frames.size(), 2u);
+  EXPECT_TRUE(contains(ids(sensor_1_frames), frames[0].id));
+  EXPECT_TRUE(contains(ids(sensor_1_frames), frames[2].id));
+
+  // Half-open time range [100, 300): ts 300 is excluded.
+  const auto ranged = db.FindFramesInTimeRange(100, 300);
+  ASSERT_EQ(ranged.size(), 2u);
+  EXPECT_TRUE(contains(ids(ranged), frames[0].id));
+  EXPECT_TRUE(contains(ids(ranged), frames[1].id));
+  EXPECT_FALSE(contains(ids(ranged), frames[2].id));
+
+  const auto frame_obs = db.FindObservationsByFrame(frames[0].id);
+  ASSERT_EQ(frame_obs.size(), 1u);
+  EXPECT_EQ(frame_obs[0].observation_id, observations[0].id);
+
+  const auto session_a_obs = db.FindObservationsBySession(session_a);
+  ASSERT_EQ(session_a_obs.size(), 2u);
+  EXPECT_TRUE(contains(obs_ids(session_a_obs), observations[0].id));
+  EXPECT_TRUE(contains(obs_ids(session_a_obs), observations[1].id));
+
+  const auto sensor_1_obs = db.FindObservationsBySensor(sensor_1);
+  ASSERT_EQ(sensor_1_obs.size(), 2u);
+  EXPECT_TRUE(contains(obs_ids(sensor_1_obs), observations[0].id));
+  EXPECT_TRUE(contains(obs_ids(sensor_1_obs), observations[2].id));
+
+  const auto ranged_obs = db.FindObservationsInTimeRange(100, 300);
+  ASSERT_EQ(ranged_obs.size(), 2u);
+  EXPECT_TRUE(contains(obs_ids(ranged_obs), observations[0].id));
+  EXPECT_TRUE(contains(obs_ids(ranged_obs), observations[1].id));
+
+  const auto scene_obs = db.FindObservationsByScene(scene.scene_id);
+  ASSERT_EQ(scene_obs.size(), 3u);
+  EXPECT_EQ(scene_obs[0].type, "image");
+  EXPECT_EQ(scene_obs[0].timestamp_ns, 100);
 }
 
 }  // namespace

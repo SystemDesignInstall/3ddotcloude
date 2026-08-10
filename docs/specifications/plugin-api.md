@@ -63,6 +63,8 @@ The descriptor is loaded, validated, and cached by `PluginManager`; any field th
 
 Capabilities are the platform's vocabulary for "what an algorithm can do." The built-in taxonomy:
 
+- `FeatureExtraction`
+- `Import`
 - `SparseReconstruction`
 - `DenseStereo`
 - `BundleAdjustment`

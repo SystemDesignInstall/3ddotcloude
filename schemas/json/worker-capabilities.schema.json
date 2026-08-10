@@ -15,6 +15,7 @@
       "items": {
         "type": "string",
         "enum": [
+          "feature_extraction",
           "import",
           "sparse_reconstruction",
           "dense_stereo",

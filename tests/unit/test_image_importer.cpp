@@ -18,6 +18,7 @@
 #include "core/artifacts/artifact_store.h"
 #include "core/errors/project_error.h"
 #include "core/scene/identity.h"
+#include "core/scene/query/scene_query.h"
 #include "core/storage/metadata_db.h"
 #include "core/utils/fs.h"
 #include "core/utils/sha256.h"
@@ -71,14 +72,32 @@ void InsertTestSensor(MetadataDb& db, const Uuid& sensor_id) {
 void InsertTestCalibration(MetadataDb& db, const Uuid& sensor_id) {
   sqlite3_stmt* stmt = nullptr;
   const char* sql =
-      "INSERT INTO calibrations (calibration_id, sensor_id, version)"
-      " VALUES (?, ?, 1)";
+      "INSERT INTO calibrations (calibration_id, sensor_id, version,"
+      " valid_from_ns) VALUES (?, ?, 1, 0)";
   ASSERT_EQ(sqlite3_prepare_v2(db.db(), sql, -1, &stmt, nullptr), SQLITE_OK);
   const Uuid cal_id = GenerateUuid();
   sqlite3_bind_blob(stmt, 1, cal_id.data(), static_cast<int>(cal_id.size()),
                     SQLITE_TRANSIENT);
   sqlite3_bind_blob(stmt, 2, sensor_id.data(),
                     static_cast<int>(sensor_id.size()), SQLITE_TRANSIENT);
+  ASSERT_EQ(sqlite3_step(stmt), SQLITE_DONE);
+  sqlite3_finalize(stmt);
+}
+
+void InsertWindowedCalibration(MetadataDb& db, const Uuid& sensor_id,
+                               std::int64_t valid_from, std::int64_t valid_to) {
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "INSERT INTO calibrations (calibration_id, sensor_id, version,"
+      " valid_from_ns, valid_to_ns) VALUES (?, ?, 1, ?, ?)";
+  ASSERT_EQ(sqlite3_prepare_v2(db.db(), sql, -1, &stmt, nullptr), SQLITE_OK);
+  const Uuid cal_id = GenerateUuid();
+  sqlite3_bind_blob(stmt, 1, cal_id.data(), static_cast<int>(cal_id.size()),
+                    SQLITE_TRANSIENT);
+  sqlite3_bind_blob(stmt, 2, sensor_id.data(),
+                    static_cast<int>(sensor_id.size()), SQLITE_TRANSIENT);
+  sqlite3_bind_int64(stmt, 3, valid_from);
+  sqlite3_bind_int64(stmt, 4, valid_to);
   ASSERT_EQ(sqlite3_step(stmt), SQLITE_DONE);
   sqlite3_finalize(stmt);
 }
@@ -370,6 +389,33 @@ TEST_F(ImageImporterTest, UncalibratedSensorIsWarningNotFailure) {
   EXPECT_FALSE(second.imported[0].uncalibrated);
 }
 
+TEST_F(ImageImporterTest, CalibrationValidityIsIntervalAware) {
+  const Uuid sensor_id = GenerateUuid();
+  InsertTestSensor(*db_, sensor_id);
+  // Calibration valid for [100, 200) only (RFC-0006 §9, half-open intervals).
+  InsertWindowedCalibration(*db_, sensor_id, 100, 200);
+  const auto path = WriteImage("cam.jpg", kJpeg);
+  ImageImporter importer(*store_, *db_, kProjectId, config_);
+
+  const auto inside = importer.Import(
+      {Source(path, "file:///in.jpg", sensor_id, 150)});
+  ASSERT_EQ(inside.imported.size(), 1u);
+  EXPECT_FALSE(inside.imported[0].uncalibrated);
+
+  // Outside the interval (before, in the gap, at the exclusive end): the
+  // capture is flagged uncalibrated, a warning, never a failure.
+  for (const auto& [uri, ts] :
+       {std::pair{"file:///before.jpg", 99LL},
+        std::pair{"file:///gap.jpg", 250LL},
+        std::pair{"file:///end.jpg", 200LL}}) {
+    const auto result = importer.Import(
+        {Source(path, uri, sensor_id, ts)});
+    ASSERT_EQ(result.imported.size(), 1u) << uri;
+    EXPECT_TRUE(result.imported[0].uncalibrated) << uri;
+    EXPECT_EQ(result.failures.size(), 0u) << uri;
+  }
+}
+
 TEST_F(ImageImporterTest, PayloadIsByteExact) {
   const Uuid sensor_id = GenerateUuid();
   InsertTestSensor(*db_, sensor_id);
@@ -599,6 +645,86 @@ TEST_F(ImageImporterTest, RejectedInputsLeavePersistentProvenance) {
   EXPECT_EQ(rejections[1].error_code, "IMPORT_UNREADABLE");
   EXPECT_GT(rejections[1].rejected_at_ns, 0);
   EXPECT_LT(rejections[0].sequence_index, rejections[1].sequence_index);
+}
+
+TEST_F(ImageImporterTest, QuerySurfaceRoundTripsImportedRecords) {
+  // P2.2-B3 round-trip (plan §7): importer fixtures -> the typed Scene Query
+  // surface returns exactly the written frames/observations.
+  const Uuid sensor_a = GenerateUuid();
+  const Uuid sensor_b = GenerateUuid();
+  InsertTestSensor(*db_, sensor_a);
+  InsertTestSensor(*db_, sensor_b);
+  InsertTestCalibration(*db_, sensor_a);
+  InsertTestCalibration(*db_, sensor_b);
+
+  const auto path = WriteImage("cam.jpg", kJpeg);
+  ImageImporter importer(*store_, *db_, kProjectId, config_);
+  const auto result = importer.Import(
+      {Source(path, "file:///a.jpg", sensor_a, 1'700'000'000'000ULL),
+       Source(path, "file:///b.jpg", sensor_b, 1'700'000'000'010ULL)});
+  ASSERT_EQ(result.failures.size(), 0u);
+  ASSERT_EQ(result.imported.size(), 2u);
+
+  SceneQuery q(*db_);
+
+  // Session -> scene traversal from the importer's batch session.
+  const auto session = q.FindCaptureSession(result.session_id);
+  ASSERT_TRUE(session.has_value());
+  EXPECT_EQ(session->project_id, kProjectId);
+  const auto session_scene = q.SessionScene(result.session_id);
+  ASSERT_TRUE(session_scene.has_value());
+
+  // Frames: exactly the two written, ordered by timestamp.
+  const auto frames = q.FramesBySession(result.session_id);
+  ASSERT_EQ(frames.size(), 2u);
+  EXPECT_EQ(frames[0].frame_id, result.imported[0].frame_id);
+  EXPECT_EQ(frames[0].sensor_id, sensor_a);
+  EXPECT_EQ(frames[0].timestamp_ns,
+            TimestampNs(1'700'000'000'000LL));
+  EXPECT_EQ(frames[1].frame_id, result.imported[1].frame_id);
+  EXPECT_EQ(frames[1].sensor_id, sensor_b);
+  EXPECT_EQ(frames[1].timestamp_ns,
+            TimestampNs(1'700'000'000'010LL));
+  EXPECT_EQ(frames[1].scene_id, session_scene->scene_id);
+  EXPECT_TRUE(IsNil(frames[0].pose_ref));  // importer writes no pose
+
+  const auto sensor_a_frames = q.FramesBySensor(sensor_a);
+  ASSERT_EQ(sensor_a_frames.size(), 1u);
+  EXPECT_EQ(sensor_a_frames[0].frame_id, result.imported[0].frame_id);
+
+  const auto ranged = q.FramesInTimeRange(TimestampNs(1'700'000'000'000LL),
+                                          TimestampNs(1'700'000'000'010LL));
+  ASSERT_EQ(ranged.size(), 1u);
+  EXPECT_EQ(ranged[0].frame_id, result.imported[0].frame_id);
+
+  // Observations: exactly the two written, image payload fields included.
+  const auto observations = q.ObservationsBySession(result.session_id);
+  ASSERT_EQ(observations.size(), 2u);
+  EXPECT_EQ(observations[0].observation_id,
+            result.imported[0].observation_id);
+  EXPECT_EQ(observations[0].frame_id, result.imported[0].frame_id);
+  EXPECT_EQ(observations[0].sensor_id, sensor_a);
+  EXPECT_EQ(observations[0].artifact_ref, result.imported[0].artifact_uuid);
+  EXPECT_EQ(observations[0].width, 4);
+  EXPECT_EQ(observations[0].height, 2);
+  EXPECT_EQ(observations[0].pixel_format, "rgb8");
+  EXPECT_EQ(observations[1].observation_id,
+            result.imported[1].observation_id);
+  EXPECT_EQ(observations[1].artifact_ref, result.imported[1].artifact_uuid);
+
+  const auto sensor_b_obs = q.ObservationsBySensor(sensor_b);
+  ASSERT_EQ(sensor_b_obs.size(), 1u);
+  EXPECT_EQ(sensor_b_obs[0].observation_id, result.imported[1].observation_id);
+
+  const auto obs_by_frame = q.ObservationsByFrame(result.imported[0].frame_id);
+  ASSERT_EQ(obs_by_frame.size(), 1u);
+  EXPECT_EQ(obs_by_frame[0].observation_id, result.imported[0].observation_id);
+
+  // Both sensors resolve with a calibration valid at capture time.
+  const auto cal_a =
+      q.ResolveCalibrationAt(sensor_a, TimestampNs(1'700'000'000'000LL));
+  ASSERT_TRUE(cal_a.has_value());
+  EXPECT_EQ(cal_a->sensor_id, sensor_a);
 }
 
 }  // namespace

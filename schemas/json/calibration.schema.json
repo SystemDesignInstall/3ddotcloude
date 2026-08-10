@@ -11,6 +11,14 @@
     "sensor_id": { "type": "string", "format": "uuid" },
     "version": { "type": "integer", "minimum": 1 },
     "calibration_time_ns": { "type": "integer" },
+    "valid_from_ns": {
+      "type": "integer",
+      "description": "Validity interval start (inclusive). Resolution is half-open: valid_from_ns <= timestamp_ns < valid_to_ns."
+    },
+    "valid_to_ns": {
+      "type": "integer",
+      "description": "Validity interval end (exclusive). Omit or null for an open-ended interval (valid for every timestamp >= valid_from_ns)."
+    },
     "source": { "type": "string", "description": "Provenance of this calibration (factory, self-calibration, import)." },
     "intrinsic_model": {
       "type": "string",

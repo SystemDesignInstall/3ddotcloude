@@ -72,6 +72,8 @@ enum class ErrorCode : int32_t {
   kProjectInvalid = 1001,
   kProjectNotFound = 1002,
   kProjectCorrupt = 1003,
+  // CALIBRATION_* (domain 5)
+  kCalibrationInvalid = 5001,
   // VALIDATION_* (domain 11)
   kValidationSchema = 11001,
   kValidationDomain = 11002,

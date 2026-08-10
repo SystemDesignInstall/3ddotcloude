@@ -27,6 +27,10 @@ string(REPLACE "PRAGMA foreign_keys = ON;" "" SPATIAL_MIGRATION_0004 "${SPATIAL_
 # without BEGIN/COMMIT; the runner records schema version 5 in schema_meta.
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/../schemas/database/migrations/0005_import_rejections.sql" SPATIAL_MIGRATION_0005)
 string(REPLACE "PRAGMA foreign_keys = ON;" "" SPATIAL_MIGRATION_0005 "${SPATIAL_MIGRATION_0005}")
+# 0006_sensor_calibration_validity.sql (RFC-0002 §3.1 + RFC-0006 §9) is
+# likewise written without BEGIN/COMMIT; the runner records schema version 6.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/../schemas/database/migrations/0006_sensor_calibration_validity.sql" SPATIAL_MIGRATION_0006)
+string(REPLACE "PRAGMA foreign_keys = ON;" "" SPATIAL_MIGRATION_0006 "${SPATIAL_MIGRATION_0006}")
 configure_file("${CMAKE_CURRENT_SOURCE_DIR}/storage/migrations_generated.h.in"
                "${CMAKE_CURRENT_BINARY_DIR}/storage/migrations_generated.h" @ONLY)
 
@@ -41,6 +45,7 @@ add_library(spatial_core STATIC
   coordinates/frame_graph.cpp
   coordinates/frame_graph_validator.cpp
   project/project.cpp
+  scene/query/scene_query.cpp
 )
 
 target_include_directories(spatial_core PUBLIC

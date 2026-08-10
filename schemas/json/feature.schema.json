@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spatial-platform.dev/schemas/json/feature.schema.json",
+  "title": "FeatureArtifact content (P2.3)",
+  "description": "Content-addressed payload of a FeatureArtifact (RFC-0007). One artifact per frame: keypoints + descriptors for a single image. M0 uses a JSON array representation; a packed/binary encoding is reserved for the COLMAP adapter and will declare a future schema_version. additionalProperties is implicit-true: additive-only under the RFC-0005 Schema Evolution Policy. The producer guarantees count == keypoints.length == descriptors.length.",
+  "type": "object",
+  "required": ["detector", "descriptor_type", "count", "keypoints", "descriptors", "schema_version"],
+  "properties": {
+    "detector": { "type": "string", "description": "Canonical detector id, e.g. mock (M0); SIFT names are ratified with the COLMAP adapter." },
+    "descriptor_type": { "type": "string", "description": "Canonical descriptor type, e.g. mock_16 (16-dim float rows)." },
+    "count": { "type": "integer", "minimum": 0, "description": "Number of keypoints; equal to keypoints.length and descriptors.length." },
+    "keypoints": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["x", "y"],
+        "properties": {
+          "x": { "type": "number", "description": "Image-space x coordinate in pixels." },
+          "y": { "type": "number", "description": "Image-space y coordinate in pixels." },
+          "size": { "type": "number" },
+          "angle": { "type": "number" },
+          "response": { "type": "number" }
+        }
+      }
+    },
+    "descriptors": {
+      "type": "array",
+      "items": { "type": "array", "items": { "type": "number" } },
+      "description": "One descriptor row per keypoint."
+    },
+    "schema_version": { "const": 1 }
+  }
+}
