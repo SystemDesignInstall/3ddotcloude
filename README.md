@@ -81,3 +81,4 @@ proposal → draft → proposed → accepted → ratified → superseded
 | RFC-0003 | Processing engine & execution architecture |
 | RFC-0005 | Accuracy & quality assurance |
 | RFC-0006 | Image import capability |
+| RFC-0007 | Feature extraction capability |
