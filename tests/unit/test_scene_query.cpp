@@ -239,5 +239,47 @@ TEST_F(SceneQueryTest, NonImageObservationsAreExcluded) {
   EXPECT_TRUE(q.ObservationsBySensor(sensor_id).empty());
 }
 
+TEST_F(SceneQueryTest, ArtifactHashBridgesUuidToContentHash) {
+  auto db = MetadataDb::Create(path_);
+  InsertTestProject(db);
+
+  const Uuid artifact_uuid = GenerateUuid();
+  ArtifactIndexRow row;
+  row.artifact_id = artifact_uuid;
+  row.content_hash = "deadbeef0123456789";
+  row.type = "image";
+  row.producer_json = "{}";
+  row.created_at_ns = 1000;
+  db.UpsertArtifact(row);
+
+  SceneQuery q(db);
+  const auto hash = q.ArtifactHash(artifact_uuid);
+  ASSERT_TRUE(hash.has_value());
+  EXPECT_EQ(*hash, "deadbeef0123456789");
+  EXPECT_FALSE(q.ArtifactHash(GenerateUuid()).has_value());
+}
+
+TEST_F(SceneQueryTest, SceneVersionReadsMapRowsToDomainType) {
+  auto db = MetadataDb::Create(path_);
+  InsertTestProject(db);
+  const auto scene = db.FindOrCreateScene(kProjectId, "scene", "{}", 1000);
+  const auto v2 = db.CreateSceneVersion(scene.scene_id, "imported", "{}", 2000);
+
+  SceneQuery q(db);
+  const auto version = q.SceneVersion(v2.version_id);
+  ASSERT_TRUE(version.has_value());
+  EXPECT_EQ(version->version_id, v2.version_id);
+  EXPECT_EQ(version->scene_id, scene.scene_id);
+  EXPECT_EQ(version->parent_version_id, scene.version_id);
+  EXPECT_EQ(version->stage, "imported");
+  EXPECT_EQ(version->created_at_ns, 2000);
+  EXPECT_FALSE(q.SceneVersion(GenerateUuid()).has_value());
+
+  const auto versions = q.SceneVersions(scene.scene_id);
+  ASSERT_EQ(versions.size(), 2u);
+  EXPECT_EQ(versions[0].stage, "created");
+  EXPECT_EQ(versions[1].stage, "imported");
+}
+
 }  // namespace
 }  // namespace spatial::core

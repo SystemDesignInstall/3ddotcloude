@@ -69,6 +69,18 @@ class SceneQuery {
   std::vector<ImageObservation> ObservationsInTimeRange(TimestampNs from,
                                                         TimestampNs to) const;
 
+  // --- Artifact bridge (P2.3, RFC-0007 §4) ----------------------------------
+  // Resolves an artifact UUID (e.g. ImageObservation::artifact_ref) to its
+  // content hash — the pipeline's ArtifactRef. Read-boundary extension (a),
+  // read-boundary-review.md; backed by the artifact index, never by the CAS.
+  std::optional<std::string> ArtifactHash(const Uuid& artifact_uuid) const;
+
+  // --- Scene versions (P2.3, RFC-0007 §5) -----------------------------------
+  // Immutable, append-only scene version chain (ADR-033). Read-boundary
+  // extension (b), read-boundary-review.md.
+  std::optional<SceneVersion> SceneVersion(const Uuid& version_id) const;
+  std::vector<SceneVersion> SceneVersions(const Uuid& scene_id) const;
+
  private:
   const MetadataDb& db_;
 };

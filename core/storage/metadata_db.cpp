@@ -334,41 +334,28 @@ std::optional<ArtifactIndexRow> MetadataDb::FindArtifactByHash(
   sqlite3_bind_text(stmt, 1, content_hash.c_str(), -1, SQLITE_TRANSIENT);
   std::optional<ArtifactIndexRow> out;
   if (sqlite3_step(stmt) == SQLITE_ROW) {
-    ArtifactIndexRow row;
-    const auto* blob = sqlite3_column_blob(stmt, 0);
-    const int size = sqlite3_column_bytes(stmt, 0);
-    if (blob && size == 16) {
-      std::copy_n(static_cast<const std::uint8_t*>(blob), 16,
-                  row.artifact_id.begin());
-    }
-    if (const auto* t = sqlite3_column_text(stmt, 1)) {
-      row.content_hash = reinterpret_cast<const char*>(t);
-    }
-    if (const auto* t = sqlite3_column_text(stmt, 2)) {
-      row.type = reinterpret_cast<const char*>(t);
-    }
-    row.schema_version = sqlite3_column_int64(stmt, 3);
-    if (const auto* t = sqlite3_column_text(stmt, 4)) {
-      row.producer_json = reinterpret_cast<const char*>(t);
-    }
-    if (const auto* t = sqlite3_column_text(stmt, 5)) {
-      row.config_hash = reinterpret_cast<const char*>(t);
-    }
-    row.created_at_ns = sqlite3_column_int64(stmt, 6);
-    if (const auto* t = sqlite3_column_text(stmt, 7)) {
-      row.coordinate_frame = reinterpret_cast<const char*>(t);
-    }
-    if (const auto* t = sqlite3_column_text(stmt, 8)) {
-      row.unit = reinterpret_cast<const char*>(t);
-    }
-    row.file_size = sqlite3_column_int64(stmt, 9);
-    if (const auto* t = sqlite3_column_text(stmt, 10)) {
-      row.mime_type = reinterpret_cast<const char*>(t);
-    }
-    if (const auto* t = sqlite3_column_text(stmt, 11)) {
-      row.validation_status = reinterpret_cast<const char*>(t);
-    }
-    out = row;
+    out = ReadArtifactRow(stmt);
+  }
+  sqlite3_finalize(stmt);
+  return out;
+}
+
+std::optional<ArtifactIndexRow> MetadataDb::FindArtifactById(
+    const Uuid& artifact_id) const {
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql = "SELECT artifact_id, content_hash, type, schema_version,"
+                    " producer_json, config_hash, created_at_ns, coordinate_frame,"
+                    " unit, file_size, mime_type, validation_status"
+                    " FROM artifacts WHERE artifact_id = ?";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare find artifact by id");
+  }
+  sqlite3_bind_blob(stmt, 1, artifact_id.data(),
+                    static_cast<int>(artifact_id.size()), SQLITE_TRANSIENT);
+  std::optional<ArtifactIndexRow> out;
+  if (sqlite3_step(stmt) == SQLITE_ROW) {
+    out = ReadArtifactRow(stmt);
   }
   sqlite3_finalize(stmt);
   return out;
@@ -388,41 +375,7 @@ std::vector<ArtifactIndexRow> MetadataDb::FindArtifactsByType(
   }
   sqlite3_bind_text(stmt, 1, type.c_str(), -1, SQLITE_TRANSIENT);
   while (sqlite3_step(stmt) == SQLITE_ROW) {
-    ArtifactIndexRow row;
-    const auto* blob = sqlite3_column_blob(stmt, 0);
-    const int size = sqlite3_column_bytes(stmt, 0);
-    if (blob && size == 16) {
-      std::copy_n(static_cast<const std::uint8_t*>(blob), 16,
-                  row.artifact_id.begin());
-    }
-    if (const auto* t = sqlite3_column_text(stmt, 1)) {
-      row.content_hash = reinterpret_cast<const char*>(t);
-    }
-    if (const auto* t = sqlite3_column_text(stmt, 2)) {
-      row.type = reinterpret_cast<const char*>(t);
-    }
-    row.schema_version = sqlite3_column_int64(stmt, 3);
-    if (const auto* t = sqlite3_column_text(stmt, 4)) {
-      row.producer_json = reinterpret_cast<const char*>(t);
-    }
-    if (const auto* t = sqlite3_column_text(stmt, 5)) {
-      row.config_hash = reinterpret_cast<const char*>(t);
-    }
-    row.created_at_ns = sqlite3_column_int64(stmt, 6);
-    if (const auto* t = sqlite3_column_text(stmt, 7)) {
-      row.coordinate_frame = reinterpret_cast<const char*>(t);
-    }
-    if (const auto* t = sqlite3_column_text(stmt, 8)) {
-      row.unit = reinterpret_cast<const char*>(t);
-    }
-    row.file_size = sqlite3_column_int64(stmt, 9);
-    if (const auto* t = sqlite3_column_text(stmt, 10)) {
-      row.mime_type = reinterpret_cast<const char*>(t);
-    }
-    if (const auto* t = sqlite3_column_text(stmt, 11)) {
-      row.validation_status = reinterpret_cast<const char*>(t);
-    }
-    out.push_back(row);
+    out.push_back(ReadArtifactRow(stmt));
   }
   sqlite3_finalize(stmt);
   return out;
@@ -485,6 +438,66 @@ std::optional<Uuid> ColumnUuid(sqlite3_stmt* stmt, int col) {
 std::optional<std::int64_t> ColumnInt64OrNull(sqlite3_stmt* stmt, int col) {
   if (sqlite3_column_type(stmt, col) == SQLITE_NULL) return std::nullopt;
   return sqlite3_column_int64(stmt, col);
+}
+
+// Reads an artifacts row (SELECT column order: artifact_id, content_hash,
+// type, schema_version, producer_json, config_hash, created_at_ns,
+// coordinate_frame, unit, file_size, mime_type, validation_status).
+ArtifactIndexRow ReadArtifactRow(sqlite3_stmt* stmt) {
+  ArtifactIndexRow row;
+  if (const auto* blob = sqlite3_column_blob(stmt, 0);
+      blob && sqlite3_column_bytes(stmt, 0) == 16) {
+    std::copy_n(static_cast<const std::uint8_t*>(blob), 16,
+                row.artifact_id.begin());
+  }
+  if (const auto* t = sqlite3_column_text(stmt, 1)) {
+    row.content_hash = reinterpret_cast<const char*>(t);
+  }
+  if (const auto* t = sqlite3_column_text(stmt, 2)) {
+    row.type = reinterpret_cast<const char*>(t);
+  }
+  row.schema_version = sqlite3_column_int64(stmt, 3);
+  if (const auto* t = sqlite3_column_text(stmt, 4)) {
+    row.producer_json = reinterpret_cast<const char*>(t);
+  }
+  if (const auto* t = sqlite3_column_text(stmt, 5)) {
+    row.config_hash = reinterpret_cast<const char*>(t);
+  }
+  row.created_at_ns = sqlite3_column_int64(stmt, 6);
+  if (const auto* t = sqlite3_column_text(stmt, 7)) {
+    row.coordinate_frame = reinterpret_cast<const char*>(t);
+  }
+  if (const auto* t = sqlite3_column_text(stmt, 8)) {
+    row.unit = reinterpret_cast<const char*>(t);
+  }
+  row.file_size = sqlite3_column_int64(stmt, 9);
+  if (const auto* t = sqlite3_column_text(stmt, 10)) {
+    row.mime_type = reinterpret_cast<const char*>(t);
+  }
+  if (const auto* t = sqlite3_column_text(stmt, 11)) {
+    row.validation_status = reinterpret_cast<const char*>(t);
+  }
+  return row;
+}
+
+// Reads a scene_versions row (SELECT column order: version_id, scene_id,
+// parent_version_id, stage, created_by_json, created_at_ns, status).
+SceneVersionRow ReadSceneVersionRow(sqlite3_stmt* stmt) {
+  SceneVersionRow row;
+  if (const auto u = ColumnUuid(stmt, 0)) row.version_id = *u;
+  if (const auto u = ColumnUuid(stmt, 1)) row.scene_id = *u;
+  if (const auto u = ColumnUuid(stmt, 2)) row.parent_version_id = *u;
+  if (const auto* t = sqlite3_column_text(stmt, 3)) {
+    row.stage = reinterpret_cast<const char*>(t);
+  }
+  if (const auto* t = sqlite3_column_text(stmt, 4)) {
+    row.created_by_json = reinterpret_cast<const char*>(t);
+  }
+  row.created_at_ns = sqlite3_column_int64(stmt, 5);
+  if (const auto* t = sqlite3_column_text(stmt, 6)) {
+    row.status = reinterpret_cast<const char*>(t);
+  }
+  return row;
 }
 
 // Reads a frames row (SELECT column order: frame_id, scene_id, session_id,
@@ -1417,6 +1430,47 @@ SceneVersionRow MetadataDb::CreateSceneVersion(const Uuid& scene_id,
     Exec("ROLLBACK;", "rollback create scene version");
     throw;
   }
+  return out;
+}
+
+std::optional<SceneVersionRow> MetadataDb::FindSceneVersion(
+    const Uuid& version_id) const {
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "SELECT version_id, scene_id, parent_version_id, stage, created_by_json,"
+      " created_at_ns, status FROM scene_versions WHERE version_id = ?";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare find scene version");
+  }
+  sqlite3_bind_blob(stmt, 1, version_id.data(),
+                    static_cast<int>(version_id.size()), SQLITE_TRANSIENT);
+  std::optional<SceneVersionRow> out;
+  if (sqlite3_step(stmt) == SQLITE_ROW) {
+    out = ReadSceneVersionRow(stmt);
+  }
+  sqlite3_finalize(stmt);
+  return out;
+}
+
+std::vector<SceneVersionRow> MetadataDb::FindSceneVersionsByScene(
+    const Uuid& scene_id) const {
+  std::vector<SceneVersionRow> out;
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "SELECT version_id, scene_id, parent_version_id, stage, created_by_json,"
+      " created_at_ns, status FROM scene_versions WHERE scene_id = ?"
+      " ORDER BY created_at_ns";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare find scene versions");
+  }
+  sqlite3_bind_blob(stmt, 1, scene_id.data(),
+                    static_cast<int>(scene_id.size()), SQLITE_TRANSIENT);
+  while (sqlite3_step(stmt) == SQLITE_ROW) {
+    out.push_back(ReadSceneVersionRow(stmt));
+  }
+  sqlite3_finalize(stmt);
   return out;
 }
 

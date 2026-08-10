@@ -221,6 +221,11 @@ class MetadataDb {
   void UpsertArtifact(const ArtifactIndexRow& row);
   std::optional<ArtifactIndexRow> FindArtifactByHash(
       const std::string& content_hash);
+  // Reverse lookup: artifact UUID -> index row. The P2.3 read-boundary
+  // extension (a) bridge from observation.artifact_ref (UUID) to the pipeline
+  // content-hash input (read-boundary-review.md, RFC-0007 §4).
+  std::optional<ArtifactIndexRow> FindArtifactById(
+      const Uuid& artifact_id) const;
   std::vector<ArtifactIndexRow> FindArtifactsByType(
       const std::string& type) const;
   void RecordDependency(const std::string& input_hash,
@@ -300,6 +305,14 @@ class MetadataDb {
                                      const std::string& stage,
                                      const std::string& created_by_json,
                                      std::int64_t created_at_ns);
+
+  // P2.3 (RFC-0007 §5): read accessors for the scene_versions table — the
+  // immutable, append-only version chain (ADR-033). Read-only; gap (b) of
+  // read-boundary-review.md.
+  std::optional<SceneVersionRow> FindSceneVersion(
+      const Uuid& version_id) const;
+  std::vector<SceneVersionRow> FindSceneVersionsByScene(
+      const Uuid& scene_id) const;
 
   void InsertFrame(const FrameRow& row);
   void InsertObservation(const ObservationRow& row);

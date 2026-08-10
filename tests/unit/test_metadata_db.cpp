@@ -79,6 +79,25 @@ TEST_F(MetadataDbTest, InsertAndFindArtifact) {
   EXPECT_EQ(by_type[0].content_hash, "abc123");
 }
 
+TEST_F(MetadataDbTest, FindArtifactByIdResolvesUuid) {
+  auto db = MetadataDb::Create(path_);
+  const auto uuid = GenerateUuid();
+  ArtifactIndexRow row;
+  row.artifact_id = uuid;
+  row.content_hash = "abcdef1234";
+  row.type = "image";
+  row.producer_json = "{}";
+  row.created_at_ns = 12345;
+  db.UpsertArtifact(row);
+
+  const auto found = db.FindArtifactById(uuid);
+  ASSERT_TRUE(found.has_value());
+  EXPECT_EQ(found->artifact_id, uuid);
+  EXPECT_EQ(found->content_hash, "abcdef1234");
+  EXPECT_EQ(found->type, "image");
+  EXPECT_FALSE(db.FindArtifactById(GenerateUuid()).has_value());
+}
+
 TEST_F(MetadataDbTest, DedupUpsertKeepsOneRow) {
   auto db = MetadataDb::Create(path_);
   const auto uuid = GenerateUuid();
@@ -201,6 +220,28 @@ TEST_F(MetadataDbTest, CreateSceneVersionChainsAndAdvances) {
 
   const auto s2 = db.FindOrCreateScene(kProjectId, "scene", "{}", 3000);
   EXPECT_EQ(s2.version_id, v2.version_id);
+}
+
+TEST_F(MetadataDbTest, SceneVersionReadQueriesReturnRows) {
+  auto db = MetadataDb::Create(path_);
+  InsertTestProject(db);
+  const auto scene = db.FindOrCreateScene(kProjectId, "scene", "{}", 1000);
+  const auto v2 = db.CreateSceneVersion(scene.scene_id, "imported", "{}", 2000);
+
+  const auto by_id = db.FindSceneVersion(v2.version_id);
+  ASSERT_TRUE(by_id.has_value());
+  EXPECT_EQ(by_id->version_id, v2.version_id);
+  EXPECT_EQ(by_id->scene_id, scene.scene_id);
+  EXPECT_EQ(by_id->parent_version_id, scene.version_id);
+  EXPECT_EQ(by_id->stage, "imported");
+  EXPECT_EQ(by_id->created_at_ns, 2000);
+
+  const auto chain = db.FindSceneVersionsByScene(scene.scene_id);
+  ASSERT_EQ(chain.size(), 2u);
+  EXPECT_EQ(chain[0].stage, "created");
+  EXPECT_EQ(chain[1].stage, "imported");
+  EXPECT_FALSE(db.FindSceneVersion(GenerateUuid()).has_value());
+  EXPECT_TRUE(db.FindSceneVersionsByScene(GenerateUuid()).empty());
 }
 
 TEST_F(MetadataDbTest, FrameObservationPayloadRoundTrip) {

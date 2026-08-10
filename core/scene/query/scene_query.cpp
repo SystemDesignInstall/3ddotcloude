@@ -108,6 +108,18 @@ Calibration ToDomain(const CalibrationRow& row) {
   return out;
 }
 
+SceneVersion ToDomain(const SceneVersionRow& row) {
+  SceneVersion out;
+  out.version_id = row.version_id;
+  out.scene_id = row.scene_id;
+  out.parent_version_id = row.parent_version_id;
+  out.stage = row.stage;
+  out.created_by_json = row.created_by_json;
+  out.created_at_ns = row.created_at_ns;
+  out.status = row.status;
+  return out;
+}
+
 std::vector<ImageObservation> ImageObservationsFrom(
     std::vector<ObservationRow> rows) {
   std::vector<ImageObservation> out;
@@ -206,6 +218,29 @@ std::vector<ImageObservation> SceneQuery::ObservationsInTimeRange(
     TimestampNs from, TimestampNs to) const {
   return ImageObservationsFrom(
       db_.FindObservationsInTimeRange(from.value(), to.value()));
+}
+
+std::optional<std::string> SceneQuery::ArtifactHash(
+    const Uuid& artifact_uuid) const {
+  const auto row = db_.FindArtifactById(artifact_uuid);
+  if (!row) return std::nullopt;
+  return row->content_hash;
+}
+
+std::optional<SceneVersion> SceneQuery::SceneVersion(
+    const Uuid& version_id) const {
+  const auto row = db_.FindSceneVersion(version_id);
+  if (!row) return std::nullopt;
+  return ToDomain(*row);
+}
+
+std::vector<SceneVersion> SceneQuery::SceneVersions(
+    const Uuid& scene_id) const {
+  std::vector<::spatial::core::SceneVersion> out;
+  for (const auto& row : db_.FindSceneVersionsByScene(scene_id)) {
+    out.push_back(ToDomain(row));
+  }
+  return out;
 }
 
 }  // namespace spatial::core
