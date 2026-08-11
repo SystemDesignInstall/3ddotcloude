@@ -23,6 +23,7 @@
 #include "core/utils/fs.h"
 #include "core/utils/sha256.h"
 #include "core/utils/uuid.h"
+#include "schema_check.h"
 #include "importers/images/image_importer.h"
 
 namespace spatial::core {
@@ -501,72 +502,6 @@ TEST_F(ImageImporterTest, ProvenanceIsRecorded) {
 }
 
 namespace {
-
-// Self-contained JSON-Schema conformance check for the subset of keywords used
-// by image.schema.json (RFC-0006 §8): required, properties, type, const,
-// enum, pattern, minimum, and array items. `format` (uuid / date-time) is
-// intentionally not enforced beyond the string `type` — structure, values and
-// patterns are. P2.1 review debt #7 (image-import.md §16.8) requires the
-// *produced* manifest to validate against the ratified schema, not just the
-// schema file to be well-formed.
-void CheckNode(const nlohmann::json& schema, const nlohmann::json& doc,
-               const std::string& path, std::vector<std::string>* violations) {
-  if (schema.contains("type")) {
-    const std::string t = schema["type"];
-    const bool ok = (t == "string" && doc.is_string()) ||
-                    (t == "integer" && doc.is_number_integer()) ||
-                    (t == "object" && doc.is_object()) ||
-                    (t == "array" && doc.is_array());
-    if (!ok) {
-      violations->push_back(path + ": expected " + t + ", got " +
-                            doc.type_name());
-    }
-  }
-  if (schema.is_object() && schema.contains("required")) {
-    for (const auto& key : schema["required"]) {
-      if (!doc.is_object() || !doc.contains(key)) {
-        violations->push_back(path + ": missing required '" +
-                              key.get<std::string>() + "'");
-      }
-    }
-  }
-  if (schema.is_object() && schema.contains("properties")) {
-    for (auto it = schema["properties"].begin();
-         it != schema["properties"].end(); ++it) {
-      const std::string key = it.key();
-      const std::string child = path + "/" + key;
-      if (doc.is_object() && doc.contains(key)) {
-        CheckNode(it.value(), doc[key], child, violations);
-      }
-    }
-  }
-  if (schema.contains("const") && doc != schema["const"]) {
-    violations->push_back(path + ": const mismatch");
-  }
-  if (schema.contains("enum")) {
-    if (std::find(schema["enum"].begin(), schema["enum"].end(), doc) ==
-        schema["enum"].end()) {
-      violations->push_back(path + ": not in enum");
-    }
-  }
-  if (schema.contains("pattern") && doc.is_string()) {
-    const std::regex re(schema["pattern"].get<std::string>());
-    if (!std::regex_match(doc.get<std::string>(), re)) {
-      violations->push_back(path + ": pattern mismatch");
-    }
-  }
-  if (schema.contains("minimum") && doc.is_number_integer()) {
-    if (doc.get<std::int64_t>() < schema["minimum"].get<std::int64_t>()) {
-      violations->push_back(path + ": below minimum");
-    }
-  }
-  if (schema.contains("items") && doc.is_array()) {
-    const auto& items = schema["items"];
-    for (std::size_t i = 0; i < doc.size(); ++i) {
-      CheckNode(items, doc[i], path + "/" + std::to_string(i), violations);
-    }
-  }
-}
 
 }  // namespace
 

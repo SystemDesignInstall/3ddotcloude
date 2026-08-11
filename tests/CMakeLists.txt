@@ -29,6 +29,7 @@ set(SPATIAL_UNIT_TESTS
   unit/test_quality_report.cpp
   unit/test_image_format.cpp
   unit/test_image_importer.cpp
+  unit/test_feature_artifact.cpp
   unit/test_cli_import.cpp
 )
 
@@ -60,6 +61,7 @@ target_compile_definitions(spatial_unit_tests PRIVATE
   SPATIAL_CLI_EXECUTABLE="$<TARGET_FILE:spatial>"
   SPATIAL_QUALITY_SCHEMA_JSON="${CMAKE_SOURCE_DIR}/schemas/json/quality-report.schema.json"
   SPATIAL_IMAGE_SCHEMA_JSON="${CMAKE_SOURCE_DIR}/schemas/json/image.schema.json"
+  SPATIAL_FEATURE_SCHEMA_JSON="${CMAKE_SOURCE_DIR}/schemas/json/feature.schema.json"
 )
 
 include(GoogleTest)

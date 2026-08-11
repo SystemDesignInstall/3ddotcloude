@@ -88,6 +88,7 @@ add_library(spatial_engine STATIC
   pipeline/pipeline_compiler.cpp
   pipeline/execution_manifest.cpp
   pipeline/quality/quality_report.cpp
+  pipeline/feature_extraction.cpp
   pipeline/mock_photogrammetry.cpp
   workers/protocol_framing.cpp
   workers/in_process_executor.cpp

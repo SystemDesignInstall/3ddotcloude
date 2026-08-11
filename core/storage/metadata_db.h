@@ -133,6 +133,19 @@ struct SceneVersionRow {
   std::string status = "active";
 };
 
+// Feature set write/read record (RFC-0007 §3). Mirrors the migration-0001
+// feature_sets table (schema-resident, no new migrations). artifact_ref is
+// the canonical UUID string of the FeatureArtifact (same convention as
+// observations.artifact_ref, 0001_init.sql).
+struct FeatureSetRow {
+  Uuid feature_set_id{};
+  Uuid frame_id{};
+  std::string detector;
+  std::string descriptor_type;
+  std::int64_t count = 0;
+  std::string artifact_ref;
+};
+
 struct SensorRow {
   Uuid sensor_id{};
   Uuid project_id{};
@@ -312,6 +325,16 @@ class MetadataDb {
   std::optional<SceneVersionRow> FindSceneVersion(
       const Uuid& version_id) const;
   std::vector<SceneVersionRow> FindSceneVersionsByScene(
+      const Uuid& scene_id) const;
+
+  // P2.3 (RFC-0007 §3): per-frame feature_sets accessors — the schema-
+  // resident migration-0001 table is used as-is (no new migrations). The
+  // write is insert-only and immutable (PPS-0001 §5.3); reads resolve by
+  // frame directly and by scene through the frames join.
+  void InsertFeatureSet(const FeatureSetRow& row);
+  std::vector<FeatureSetRow> FindFeatureSetsByFrame(
+      const Uuid& frame_id) const;
+  std::vector<FeatureSetRow> FindFeatureSetsByScene(
       const Uuid& scene_id) const;
 
   void InsertFrame(const FrameRow& row);

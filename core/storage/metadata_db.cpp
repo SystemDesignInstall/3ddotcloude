@@ -559,6 +559,25 @@ ObservationRow ReadObservationRow(sqlite3_stmt* stmt) {
   return row;
 }
 
+// Reads a feature_sets row (SELECT column order: feature_set_id, frame_id,
+// detector, descriptor_type, count, artifact_ref).
+FeatureSetRow ReadFeatureSetRow(sqlite3_stmt* stmt) {
+  FeatureSetRow row;
+  if (const auto u = ColumnUuid(stmt, 0)) row.feature_set_id = *u;
+  if (const auto u = ColumnUuid(stmt, 1)) row.frame_id = *u;
+  if (const auto* t = sqlite3_column_text(stmt, 2)) {
+    row.detector = reinterpret_cast<const char*>(t);
+  }
+  if (const auto* t = sqlite3_column_text(stmt, 3)) {
+    row.descriptor_type = reinterpret_cast<const char*>(t);
+  }
+  row.count = sqlite3_column_int64(stmt, 4);
+  if (const auto* t = sqlite3_column_text(stmt, 5)) {
+    row.artifact_ref = reinterpret_cast<const char*>(t);
+  }
+  return row;
+}
+
 }  // namespace
 
 std::optional<Uuid> MetadataDb::FindSession(const Uuid& session_id) {
@@ -1475,6 +1494,82 @@ std::vector<SceneVersionRow> MetadataDb::FindSceneVersionsByScene(
                     static_cast<int>(scene_id.size()), SQLITE_TRANSIENT);
   while (sqlite3_step(stmt) == SQLITE_ROW) {
     out.push_back(ReadSceneVersionRow(stmt));
+  }
+  sqlite3_finalize(stmt);
+  return out;
+}
+
+void MetadataDb::InsertFeatureSet(const FeatureSetRow& row) {
+  if (read_only_) {
+    throw StorageError(ErrorCode::kStorageReadOnly,
+                       "cannot write to a read-only project", {}, false,
+                       "Open the project for writing to modify it.");
+  }
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "INSERT INTO feature_sets (feature_set_id, frame_id, detector,"
+      " descriptor_type, count, artifact_ref) VALUES (?, ?, ?, ?, ?, ?)";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare insert feature set");
+  }
+  sqlite3_bind_blob(stmt, 1, row.feature_set_id.data(),
+                    static_cast<int>(row.feature_set_id.size()),
+                    SQLITE_TRANSIENT);
+  sqlite3_bind_blob(stmt, 2, row.frame_id.data(),
+                    static_cast<int>(row.frame_id.size()), SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 3, row.detector.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 4, row.descriptor_type.c_str(), -1,
+                    SQLITE_TRANSIENT);
+  sqlite3_bind_int64(stmt, 5, row.count);
+  sqlite3_bind_text(stmt, 6, row.artifact_ref.c_str(), -1, SQLITE_TRANSIENT);
+  if (sqlite3_step(stmt) != SQLITE_DONE) {
+    const std::string msg = sqlite3_errmsg(db_);
+    sqlite3_finalize(stmt);
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot insert feature set row: " + msg);
+  }
+  sqlite3_finalize(stmt);
+}
+
+std::vector<FeatureSetRow> MetadataDb::FindFeatureSetsByFrame(
+    const Uuid& frame_id) const {
+  std::vector<FeatureSetRow> out;
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "SELECT feature_set_id, frame_id, detector, descriptor_type, count,"
+      " artifact_ref FROM feature_sets WHERE frame_id = ?"
+      " ORDER BY detector, descriptor_type";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare find feature sets by frame");
+  }
+  sqlite3_bind_blob(stmt, 1, frame_id.data(),
+                    static_cast<int>(frame_id.size()), SQLITE_TRANSIENT);
+  while (sqlite3_step(stmt) == SQLITE_ROW) {
+    out.push_back(ReadFeatureSetRow(stmt));
+  }
+  sqlite3_finalize(stmt);
+  return out;
+}
+
+std::vector<FeatureSetRow> MetadataDb::FindFeatureSetsByScene(
+    const Uuid& scene_id) const {
+  std::vector<FeatureSetRow> out;
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "SELECT fs.feature_set_id, fs.frame_id, fs.detector, fs.descriptor_type,"
+      " fs.count, fs.artifact_ref FROM feature_sets fs"
+      " JOIN frames f ON f.frame_id = fs.frame_id WHERE f.scene_id = ?"
+      " ORDER BY fs.detector, fs.descriptor_type";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare find feature sets by scene");
+  }
+  sqlite3_bind_blob(stmt, 1, scene_id.data(),
+                    static_cast<int>(scene_id.size()), SQLITE_TRANSIENT);
+  while (sqlite3_step(stmt) == SQLITE_ROW) {
+    out.push_back(ReadFeatureSetRow(stmt));
   }
   sqlite3_finalize(stmt);
   return out;
