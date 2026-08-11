@@ -6,6 +6,7 @@
 - **Basis:** `docs/development/p2.1-completion-review.md` (#9: typed scene read surface), `docs/development/p2.2-plan.md` (P2.2 implementation record), `docs/specifications/scene-model.md` §6, `docs/project-context-summary.md` §15
 - **Scope:** this review answers one question and does NOT introduce new API proposals. It accepts the current read boundary and records the minimal targeted extensions gated to the start of P2.3.
 - **Code changed:** none.
+- **Superseded by:** RFC-0007 §4/§5 — gaps (a) `ArtifactHash` and (b) `SceneVersion` reads are implemented in P2.3 C4 (`core/scene/query/scene_query.h:76,81-83`).
 
 ## 1. Review question
 
@@ -23,8 +24,8 @@ The full intended `scene.query()` surface is defined by ADR-035 (`ADR-035-scene-
 | `.frames()` | `Frames()`, `FramesBySession/Sensor/InTimeRange` → `Frame` with `pose_ref` (`scene_query.h:53-57`) | Implemented |
 | `.sensors()` | `ResolveSensor`, `ResolveCalibrationAt(sensor, timestamp)` (half-open validity) (`scene_query.h:45-50`) | Implemented |
 | Session → Scene traversal | `FindCaptureSession`, `FindSceneByProject`, `SessionScene` (`scene_query.h:36-42`) | Implemented |
-| `.version()` | Scene returned with `version_id`; no `SceneVersion` read accessor | **Gap (b)** — deferred to P2.3 |
-| observation → artifact bytes | no resolution from `observation.artifact_ref` (artifact UUID) to pipeline `ArtifactRef` (content hash) | **Gap (a)** — deferred to P2.3 |
+| `.version()` | `SceneQuery::SceneVersion(version_id)` / `SceneVersions(scene_id)` (`scene_query.h:81-83`) | Implemented (RFC-0007 §5) |
+| observation → artifact bytes | `SceneQuery::ArtifactHash(artifact_uuid)` → content hash (`scene_query.h:76`); the pipeline's CAS hash | Implemented (RFC-0007 §4) |
 | `.lidar()`, `.imu()`, `.gnss()`, `.depth()` | non-image rows exist in `ObservationRow` but are deliberately unqueryable through the typed surface (`scene_query.h:60-61`) | post-M0 (per ADR-035) |
 | `.points()`, `.geometry()`, `.visibleFrom()`, `.observedBy()` | geometry-graph joins; no geometry surface yet (ADR-032 base only) | post-M0 (per ADR-035) |
 | `.quality()`, `.uncertainty()` | channels (ADR-025); schemas P0, implementation deferred | post-M0 (per ADR-035/ADR-030) |
@@ -47,12 +48,12 @@ Assessed against the **immediate** consumer, P2.3 Feature Extraction (COLMAP-fir
 
 | # | Gap | Evidence | Severity for P2.3 | Decision |
 |---|---|---|---|---|
-| (a) | No resolution `observation.artifact_ref` (artifact **UUID**) → pipeline `ArtifactRef` (content **hash**). Today an imported observation points at an artifact UUID (`image_observation.h:25`), while pipeline inputs are content hashes (`task_types.h:16`); nothing bridges them. | `engine` grep: no `core/scene/**` includes; `pipeline_compiler.cpp` takes CAS hashes only | **Blocker when P2.3 lands** — Feature Extraction must read the image bytes referenced by an observation | **Deferral-gated extension (a)**: add to `SceneQuery` a minimal read that resolves an observation (or frame/session) to its artifact content hash, backed by the artifact index (`MetadataDb::FindArtifactByHash`). No schema/engine change. |
-| (b) | No `SceneVersion` read accessor. `SceneQuery` returns `Scene` carrying `version_id` (`scene.h:20`) but exposes no version row; the only version accessors are writes (`FindOrCreateScene`/`CreateSceneVersion`, `metadata_db.h:292-302`). | `reconstruction-pipeline.md` — "each stage consumes a scene version and produces a NEW scene version" (ADR-033) | **Required when P2.3/P2.4 stages record versions** | **Deferral-gated extension (b)**: add a `SceneVersion(version_id)` / `Versions(scene_id)` read accessor returning `SceneVersion`. |
+| (a) | No resolution `observation.artifact_ref` (artifact **UUID**) → pipeline `ArtifactRef` (content **hash**). Today an imported observation points at an artifact UUID (`image_observation.h:25`), while pipeline inputs are content hashes (`task_types.h:16`); nothing bridges them. | `engine` grep: no `core/scene/**` includes; `pipeline_compiler.cpp` takes CAS hashes only | **Blocker when P2.3 lands** — Feature Extraction must read the image bytes referenced by an observation | **Implemented (RFC-0007 §4, C4)**: `SceneQuery::ArtifactHash(Uuid)` → content hash, backed by `MetadataDb::FindArtifactById`. No schema/engine change. |
+| (b) | No `SceneVersion` read accessor. `SceneQuery` returns `Scene` carrying `version_id` (`scene.h:20`) but exposes no version row; the only version accessors are writes (`FindOrCreateScene`/`CreateSceneVersion`, `metadata_db.h:292-302`). | `reconstruction-pipeline.md` — "each stage consumes a scene version and produces a NEW scene version" (ADR-033) | **Required when P2.3/P2.4 stages record versions** | **Implemented (RFC-0007 §5, C4)**: `SceneQuery::SceneVersion(version_id)` / `SceneVersions(scene_id)` returning `SceneVersion`. |
 | (c) | Non-image observation views (lidar/imu/gnss/depth) are unrepresentable through the typed surface. | `scene_query.h:60-61`; deliberate | None for P2.3 (image-only) | **post-M0** (per ADR-035); no action now |
 | (d) | Worker/thread safety of `SceneQuery` is not explicitly documented (wraps a single `MetadataDb`; SQLite WAL single-writer per ADR-020). | `scene_query.h:3-8` | Low; affects process workers later (IPC already omits input refs, `worker.proto:48-53`) | **Document in the P2.3 work item**; runtime contract change is a separate review. |
 
-Both gaps are **deferral-gated**: they are the minimum a capability needs immediately before P2.3 and must not be built speculatively now. Their design detail is deliberately out of scope for this review (accepted by the review board; see §1).
+Both gaps are **deferral-gated**: they are the minimum a capability needs immediately before P2.3 and must not be built speculatively now. Their design detail is deliberately out of scope for this review (accepted by the review board; see §1). Both are now **implemented** inside the P2.3 work item (RFC-0007 §4/§5, milestone C4).
 
 ## 5. Verdict
 
@@ -61,7 +62,7 @@ Both gaps are **deferral-gated**: they are the minimum a capability needs immedi
 - The implemented subset covers P2.3's entire read need (image observations, frames, sensors, calibration) with strict domain types and read-only safety.
 - The engine stays scene-agnostic (ADR-038, PPS-0001 §5.9); the boundary between `engine/**` and scene data is the typed surface, and it must remain the only one.
 - **No new query channels are to be added now.** `.lidar()/.imu()/.gnss()/.depth()`, `.points()/.geometry()/.visibleFrom()/.observedBy()`, `.quality()/.uncertainty()`, and spatial-index variants remain **post-M0** (ADR-035). Extending them now would be gold-plating ahead of consumers.
-- The two extensions (a) artifact-UUID→content-hash resolution and (b) `SceneVersion` read are **P2.3 deferral-gated**: to be designed and implemented inside the P2.3 work item, not before it.
+- The two extensions (a) artifact-UUID→content-hash resolution and (b) `SceneVersion` read were **P2.3 deferral-gated**: designed and implemented inside the P2.3 work item (RFC-0007 §4/§5, milestone C4), not before it. The worker side of the boundary — workers consume content hashes + CAS only, never `MetadataDb`/`SceneQuery`/SQLite — is enforced by the `check_worker_boundary` gate (`scripts/check_worker_boundary.py`).
 
 ## 6. Roadmap correction
 
@@ -73,4 +74,4 @@ The next capability is **P2.3 Feature Extraction** (`project-context-summary.md:
 
 - The review adds no code, schema, or engine change. Baseline preserved: full ctest **202/202** in Debug and Release.
 - Gates after this document: `check_rfc` → `check_constitution` → `check_domain_types` → `check_schemas` → `check_dependencies` → `check_arch_debt` → ctest Debug/Release, all PASS.
-- P2.3 work item must include (a) the observation→artifact content-hash read on `SceneQuery` and (b) the `SceneVersion` read accessor, and must not expand any other query channel.
+- P2.3 work item included (a) the observation→artifact content-hash read on `SceneQuery` and (b) the `SceneVersion` read accessor — both implemented (RFC-0007 §4/§5) and covered by `tests/unit/test_scene_query.cpp`; no other query channel was expanded.

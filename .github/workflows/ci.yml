@@ -4,9 +4,10 @@
 # ---------------
 #   validation:  P0 governance + static gates, Python 3.11 stdlib only.
 #                Runs the constitution change-control gate, the governance
-#                (RFC/ADR) validator, the domain-types gate, the architecture
-#                debt gate, the dependency-registry gate, and schema
-#                validation. Ruff/pytest over python/ are best-effort in P0.
+#                (RFC/ADR) validator, the domain-types gate, the worker-
+#                boundary gate, the architecture debt gate, the dependency-
+#                registry gate, and schema validation. Ruff/pytest over
+#                python/ are best-effort in P0.
 #   python-lint: Python SDK quality gates (ruff + mypy + pytest). P0 runs
 #                best-effort (failures are tolerated with `|| true`).
 #   build:       P1 placeholder for the C++ toolchain matrix. The matrix
@@ -54,6 +55,8 @@ jobs:
           --base "${{ github.event.pull_request.base.sha || github.event.before || '' }}"
       - name: Domain-types gate
         run: python scripts/check_domain_types.py
+      - name: Worker-boundary gate
+        run: python scripts/check_worker_boundary.py
       - name: Architecture-debt gate
         run: python scripts/check_arch_debt.py
       - name: Dependency-registry gate

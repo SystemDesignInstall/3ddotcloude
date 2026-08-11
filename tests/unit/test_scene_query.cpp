@@ -2,10 +2,13 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <cstdint>
 #include <ctime>
 #include <filesystem>
 #include <vector>
 
+#include "core/artifacts/artifact_manifest.h"
+#include "core/artifacts/artifact_store.h"
 #include "core/scene/query/scene_query.h"
 #include "core/storage/metadata_db.h"
 #include "core/utils/uuid.h"
@@ -257,6 +260,32 @@ TEST_F(SceneQueryTest, ArtifactHashBridgesUuidToContentHash) {
   ASSERT_TRUE(hash.has_value());
   EXPECT_EQ(*hash, "deadbeef0123456789");
   EXPECT_FALSE(q.ArtifactHash(GenerateUuid()).has_value());
+}
+
+TEST_F(SceneQueryTest, ArtifactHashMatchesAuthoritativeCasHash) {
+  auto db = MetadataDb::Create(path_);
+  InsertTestProject(db);
+  ArtifactStore store(root_ / "artifacts", db);
+
+  const std::vector<std::uint8_t> image_bytes = {'I', 'M', 'G', '0', '1'};
+  ArtifactManifest manifest;
+  manifest.artifact_uuid = GenerateUuid();
+  manifest.type = "image";
+  manifest.producer = {"spatial-platform", "0.1.0", "test"};
+  manifest.creation_timestamp = "2026-01-01T00:00:00Z";
+  manifest.file_size = static_cast<std::int64_t>(image_bytes.size());
+  const auto written = store.Put(image_bytes, manifest);
+
+  // RFC-0007 §4 read-boundary bridge: UUID -> authoritative content hash ->
+  // CAS bytes. The hash the boundary returns is exactly the one the CAS
+  // stored, and the CAS returns exactly the original bytes (ADR-010).
+  SceneQuery q(db);
+  const auto hash = q.ArtifactHash(written.artifact_uuid);
+  ASSERT_TRUE(hash.has_value());
+  EXPECT_EQ(*hash, written.content_hash);
+  const auto bytes = store.Get(*hash);
+  ASSERT_TRUE(bytes.has_value());
+  EXPECT_EQ(*bytes, image_bytes);
 }
 
 TEST_F(SceneQueryTest, SceneVersionReadsMapRowsToDomainType) {
