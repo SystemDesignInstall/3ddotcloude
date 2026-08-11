@@ -30,6 +30,7 @@ set(SPATIAL_UNIT_TESTS
   unit/test_image_format.cpp
   unit/test_image_importer.cpp
   unit/test_feature_artifact.cpp
+  unit/test_feature_extraction_runner.cpp
   unit/test_cli_import.cpp
 )
 

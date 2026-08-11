@@ -20,6 +20,7 @@
 #include "core/project/project.h"
 #include "core/utils/uuid.h"
 #include "engine/engine.h"
+#include "engine/pipeline/feature_extraction.h"
 #include "engine/pipeline/mock_photogrammetry.h"
 #include "engine/pipeline/pipeline_compiler.h"
 #include "engine/pipeline/quality/quality_report.h"
@@ -165,6 +166,48 @@ TEST_F(MockPipelineE2eTest, SecondRunIsACacheHitAcrossAllStages) {
         << "cache-hit stage " << stage.stage_id << " must not have a run row";
     sqlite3_finalize(stmt);
   }
+}
+
+TEST_F(MockPipelineE2eTest, FeatureExtractionPipelineRunsAndReplaysFromCache) {
+  const ArtifactRef input = PutInput("image-a");
+  Engine engine(std::move(*project_));
+  RegisterFeatureExtraction(engine.registry());
+
+  // The single-stage Feature Extraction pipeline (RFC-0007 §6) executes the
+  // feature_extract task behind the worker boundary and persists a manifest.
+  const auto first =
+      engine.RunPipeline("feature_extraction", {input}, "{}");
+
+  EXPECT_EQ(first.status, "succeeded");
+  EXPECT_EQ(first.pipeline_id, "feature_extraction");
+  ASSERT_EQ(first.stages.size(), 1u);
+  EXPECT_EQ(first.stages[0].stage_id, "feature_extract");
+  EXPECT_EQ(first.stages[0].status, "succeeded");
+  EXPECT_EQ(first.stages[0].implementation, "inprocess");
+  EXPECT_FALSE(first.stages[0].cache_hit);
+  ASSERT_EQ(first.stages[0].output_refs.size(), 1u);
+  EXPECT_TRUE(
+      engine.project().artifacts().Has(first.stages[0].output_refs.front()));
+
+  // The produced artifact is a FeatureArtifact whose provenance points at the
+  // input image (RFC-0007 §6; ADR-038 scene-agnostic payload writer).
+  const auto indexed = engine.project().db().FindArtifactByHash(
+      first.stages[0].output_refs.front());
+  ASSERT_TRUE(indexed.has_value());
+  const auto feature_manifest =
+      engine.project().artifacts().ReadManifest(indexed->artifact_id);
+  ASSERT_TRUE(feature_manifest.has_value());
+  EXPECT_EQ(feature_manifest->type, "feature");
+  ASSERT_EQ(feature_manifest->input_artifact_hashes.size(), 1u);
+  EXPECT_EQ(feature_manifest->input_artifact_hashes[0], input);
+
+  // AC-8: an identical second run is served entirely from the ADR-020 task
+  // cache, reproducing the identical output.
+  const auto second =
+      engine.RunPipeline("feature_extraction", {input}, "{}");
+  EXPECT_EQ(second.status, "succeeded");
+  EXPECT_EQ(second.stages[0].output_refs, first.stages[0].output_refs);
+  EXPECT_TRUE(second.stages[0].cache_hit);
 }
 
 TEST_F(MockPipelineE2eTest, RunGraphRunsAdHocDagAndPersistsJobTasks) {

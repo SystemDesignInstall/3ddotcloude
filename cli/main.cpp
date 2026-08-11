@@ -21,6 +21,7 @@
 #include "core/utils/fs.h"
 #include "core/utils/uuid.h"
 #include "engine/engine.h"
+#include "engine/pipeline/feature_extraction.h"
 #include "engine/pipeline/mock_photogrammetry.h"
 #include "engine/pipeline/quality/quality_report.h"
 #include "engine/task/task_serialization.h"
@@ -339,6 +340,7 @@ int main(int argc, char** argv) {
       }
       // `spatial run <pipeline-id>`: everything after the id is flags.
       RegisterMockPhotogrammetry(engine.registry());
+      RegisterFeatureExtraction(engine.registry());
       const std::string pipeline_id = rest[0];
       std::vector<std::string> flags(rest.begin() + 1, rest.end());
       return RunCommand(flags, engine, pipeline_id);

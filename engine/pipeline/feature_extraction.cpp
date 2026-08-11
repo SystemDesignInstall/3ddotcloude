@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -14,6 +15,7 @@ namespace spatial::engine {
 namespace {
 
 using spatial::core::ArtifactManifest;
+using spatial::core::ArtifactWriteResult;
 using spatial::core::DeriveFeatureSetId;
 using spatial::core::ErrorCode;
 using spatial::core::FeatureSetRow;
@@ -27,11 +29,12 @@ json KeypointJson(const FeaturePoint& p) {
               {"angle", p.angle}, {"response", p.response}};
 }
 
-}  // namespace
-
-FeatureExtractionResult WriteFeatureArtifact(
-    spatial::core::ArtifactStore& store, spatial::core::MetadataDb& db,
-    const WriteFeatureArtifactInput& input) {
+// Builds the canonical FeatureArtifact payload + manifest and writes it into
+// the CAS. Shared by the scene-agnostic payload writer and the scene-aware
+// feature_sets writer so the produced bytes are byte-identical (one canonical
+// producer, RFC-0007 §6, AC-8).
+ArtifactWriteResult WritePayload(spatial::core::ArtifactStore& store,
+                                 const WriteFeatureArtifactInput& input) {
   // Producer guarantee (RFC-0007 §2): count == keypoints.length ==
   // descriptors.length. Not expressible in JSON Schema; enforced here.
   if (input.keypoints.size() != input.descriptors.size()) {
@@ -75,8 +78,26 @@ FeatureExtractionResult WriteFeatureArtifact(
   manifest.unit = "pixels";
   manifest.mime_type = "application/json";
 
-  const auto written = store.Put(payload, manifest);
-  const auto artifact_uuid = written.artifact_uuid;
+  return store.Put(payload, manifest);
+}
+
+}  // namespace
+
+FeatureExtractionResult WriteFeatureArtifactPayload(
+    spatial::core::ArtifactStore& store, const WriteFeatureArtifactInput& input) {
+  const auto written = WritePayload(store, input);
+
+  FeatureExtractionResult result;
+  result.artifact_uuid = written.artifact_uuid;
+  result.content_hash = written.content_hash;
+  result.deduplicated = written.deduplicated;
+  return result;
+}
+
+FeatureExtractionResult WriteFeatureArtifact(
+    spatial::core::ArtifactStore& store, spatial::core::MetadataDb& db,
+    const WriteFeatureArtifactInput& input) {
+  const auto written = WritePayload(store, input);
 
   const auto feature_set_id =
       DeriveFeatureSetId(input.frame_id, written.content_hash);
@@ -106,7 +127,7 @@ FeatureExtractionResult WriteFeatureArtifact(
   row.detector = input.detector;
   row.descriptor_type = input.descriptor_type;
   row.count = static_cast<std::int64_t>(input.keypoints.size());
-  row.artifact_ref = FormatUuid(artifact_uuid);
+  row.artifact_ref = FormatUuid(written.artifact_uuid);
   db.InsertFeatureSet(row);
 
   FeatureExtractionResult result;
@@ -115,11 +136,25 @@ FeatureExtractionResult WriteFeatureArtifact(
   result.feature_set.detector = input.detector;
   result.feature_set.descriptor_type = input.descriptor_type;
   result.feature_set.count = row.count;
-  result.feature_set.artifact_ref = artifact_uuid;
-  result.artifact_uuid = artifact_uuid;
+  result.feature_set.artifact_ref = written.artifact_uuid;
+  result.artifact_uuid = written.artifact_uuid;
   result.content_hash = written.content_hash;
   result.deduplicated = written.deduplicated;
   return result;
+}
+
+void RegisterFeatureExtraction(PipelineRegistry& registry) {
+  PipelineDefinition def;
+  def.id = kFeatureExtractionPipelineId;
+  def.name = "Feature Extraction";
+  def.version = "0.1.0";
+  def.git_commit = kEngineGitCommit;
+  def.config_schema_json = "{}";
+  def.stages = {
+      {"feature_extract", "feature_extraction", "feature_extract",
+       {"image"}, {"feature"}},
+  };
+  registry.Register(std::move(def));
 }
 
 }  // namespace spatial::engine
