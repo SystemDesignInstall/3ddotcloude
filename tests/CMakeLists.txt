@@ -32,6 +32,7 @@ set(SPATIAL_UNIT_TESTS
   unit/test_feature_artifact.cpp
   unit/test_feature_extraction_runner.cpp
   unit/test_cli_import.cpp
+  unit/test_cli_feature_extraction.cpp
 )
 
 # A tiny frame-echo helper the framing tests drive as a child process; it

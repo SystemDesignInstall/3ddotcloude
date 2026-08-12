@@ -68,7 +68,7 @@ Stage map (PPS-0001 implementation plan):
 
 - **P2.1** Image Import — `ImageArtifact` (metadata/EXIF/thumbnail/hash), `importers/images`, `ImageObservation` records.
 - **P2.2** Camera Model — canonical taxonomy in `calibration.schema.json` (`fov`, `brown_conrady` alias), `core/calibration`, `core/sensors`.
-- **P2.3** Feature Extraction — `FeatureArtifact`, capability `FeatureExtraction`, COLMAP-first adapter behind `adapters/interfaces/**`. Status: mock `feature_extract` runner (RFC-0007 C3) and the read-boundary bridge (`SceneQuery::ArtifactHash` / `SceneVersion` reads, RFC-0007 C4) complete; CLI/session wiring (`spatial run feature-extraction --session`) pending as C5.
+- **P2.3** Feature Extraction — `FeatureArtifact`, capability `FeatureExtraction`, COLMAP-first adapter behind `adapters/interfaces/**`. Status: mock `feature_extract` runner (RFC-0007 C3), read-boundary bridge (`SceneQuery::ArtifactHash` / `SceneVersion` reads, RFC-0007 C4), and CLI/session wiring (`spatial run feature-extraction --session`, RFC-0007 C5) complete — the full vertical slice is closed. Next: P2.3 architecture review, then the first production backend (COLMAP vs AI features).
 - **P2.4** Feature Matching — `MatchArtifact`, capability `FeatureMatching`.
 - **P2.5** Bundle Adjustment — `SparseModel` artifact, capabilities `SparseReconstruction` + `BundleAdjustment`, COLMAP default (ADR-004).
 

@@ -4,6 +4,7 @@
 //
 //   spatial run <pipeline-id> [--config <json>] [--input <file> ...] [--project <dir>]
 //   spatial run --dag <dag.json> [--project <dir>]
+//   spatial run feature-extraction --session <uuid> [--config <json>] [--project <dir>]
 //   spatial status <run-id> [--project <dir>]
 
 #include <cstdint>
@@ -18,6 +19,7 @@
 #include "core/artifacts/artifact_store.h"
 #include "core/errors/project_error.h"
 #include "core/project/project.h"
+#include "core/scene/query/scene_query.h"
 #include "core/utils/fs.h"
 #include "core/utils/uuid.h"
 #include "engine/engine.h"
@@ -51,6 +53,8 @@ constexpr const char* kUsage =
     "  spatial run <pipeline-id> [--config <json>] [--input <file> ...]"
     " [--project <dir>]\n"
     "  spatial run --dag <dag.json> [--project <dir>]\n"
+    "  spatial run feature-extraction --session <uuid> [--config <json>]"
+    " [--project <dir>]\n"
     "  spatial status <run-id> [--project <dir>]\n"
     "  spatial report <run-id> [--project <dir>]\n"
     "  spatial import <file> ... [--sensor <uuid>] [--time <ns>]"
@@ -300,6 +304,119 @@ int ImportCommand(const std::vector<std::string>& args, Engine& engine) {
   return result.failures.empty() ? 0 : 1;
 }
 
+// `spatial run feature-extraction --session <uuid>` (P2.3, RFC-0007 §8): the
+// session/CLI layer resolves each observation's image to its content hash
+// (SceneQuery::ArtifactHash), runs the single-stage feature_extraction
+// pipeline per image, and records the per-frame feature_sets row via the
+// canonical scene-aware writer. The worker stays scene- and DB-free
+// (ADR-038); this command is the sole production writer of feature_sets.
+// Idempotent re-execution (AC-8): identical inputs replay from the ADR-020
+// task cache and DeriveFeatureSetId re-records nothing (deduplicated=true).
+// Per-observation failures are collected and never abort the batch
+// (ADR-014); non-zero exit iff any observation failed.
+int FeatureExtractionSessionCommand(const std::vector<std::string>& args,
+                                    Engine& engine) {
+  Uuid session_id{};
+  std::string config;
+  for (std::size_t i = 0; i < args.size(); ++i) {
+    if (args[i] == "--session") {
+      session_id = ParseUuid(SingleValue(args, i));
+    } else if (args[i] == "--config") {
+      config = CollectValues(args, i).front();
+    } else {
+      throw ProjectError(spatial::core::ErrorCode::kValidationDomain,
+                         "unknown argument: " + args[i]);
+    }
+  }
+  if (session_id == Uuid{}) {
+    throw ProjectError(spatial::core::ErrorCode::kValidationDomain,
+                       "feature-extraction requires --session <uuid>");
+  }
+
+  spatial::core::SceneQuery query(engine.project().db());
+  if (!query.FindCaptureSession(session_id)) {
+    throw ProjectError(spatial::core::ErrorCode::kValidationDomain,
+                       "no such session: " +
+                           spatial::core::FormatUuid(session_id));
+  }
+  const auto observations = query.ObservationsBySession(session_id);
+
+  nlohmann::json out;
+  out["session_id"] = spatial::core::FormatUuid(session_id);
+  out["feature_sets"] = nlohmann::json::array();
+  out["failures"] = nlohmann::json::array();
+
+  for (const auto& observation : observations) {
+    const auto hash = query.ArtifactHash(observation.artifact_ref);
+    if (!hash) {
+      out["failures"].push_back(
+          {{"frame_id", spatial::core::FormatUuid(observation.frame_id)},
+           {"code", "no_artifact_hash"},
+           {"diagnostic", "observation artifact is not in the project"}});
+      continue;
+    }
+    const auto manifest = engine.RunPipeline(
+        spatial::engine::kFeatureExtractionPipelineId, {*hash}, config);
+    if (manifest.status != "succeeded" || manifest.stages.empty() ||
+        manifest.stages.front().output_refs.empty()) {
+      out["failures"].push_back(
+          {{"frame_id", spatial::core::FormatUuid(observation.frame_id)},
+           {"code", "pipeline_failed"},
+           {"diagnostic", manifest.status}});
+      continue;
+    }
+    const std::string feature_hash =
+        manifest.stages.front().output_refs.front();
+    const auto payload = engine.project().artifacts().Get(feature_hash);
+    if (!payload) {
+      out["failures"].push_back(
+          {{"frame_id", spatial::core::FormatUuid(observation.frame_id)},
+           {"code", "feature_payload_missing"},
+           {"diagnostic", feature_hash}});
+      continue;
+    }
+    const std::string text(payload->begin(), payload->end());
+    const auto payload_json = nlohmann::json::parse(text);
+
+    spatial::engine::WriteFeatureArtifactInput input;
+    input.frame_id = observation.frame_id;
+    input.detector = payload_json.at("detector").get<std::string>();
+    input.descriptor_type =
+        payload_json.at("descriptor_type").get<std::string>();
+    input.input_content_hash = *hash;
+    for (const auto& kp : payload_json.at("keypoints")) {
+      spatial::engine::FeaturePoint p;
+      p.x = kp.at("x").get<double>();
+      p.y = kp.at("y").get<double>();
+      p.size = kp.value("size", 0.0);
+      p.angle = kp.value("angle", 0.0);
+      p.response = kp.value("response", 0.0);
+      input.keypoints.push_back(p);
+    }
+    for (const auto& row : payload_json.at("descriptors")) {
+      input.descriptors.push_back(row.get<std::vector<double>>());
+    }
+
+    const auto result = spatial::engine::WriteFeatureArtifact(
+        engine.project().artifacts(), engine.project().db(), input);
+
+    out["feature_sets"].push_back(
+        {{"frame_id", spatial::core::FormatUuid(result.feature_set.frame_id)},
+         {"feature_set_id",
+          spatial::core::FormatUuid(result.feature_set.feature_set_id)},
+         {"detector", result.feature_set.detector},
+         {"descriptor_type", result.feature_set.descriptor_type},
+         {"count", result.feature_set.count},
+         {"artifact_ref",
+          spatial::core::FormatUuid(result.feature_set.artifact_ref)},
+         {"content_hash", result.content_hash},
+         {"deduplicated", result.deduplicated}});
+  }
+
+  std::cout << out.dump(2) << "\n";
+  return out["failures"].empty() ? 0 : 1;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -343,6 +460,13 @@ int main(int argc, char** argv) {
       RegisterFeatureExtraction(engine.registry());
       const std::string pipeline_id = rest[0];
       std::vector<std::string> flags(rest.begin() + 1, rest.end());
+      // Session-scoped feature extraction is its own command (RFC-0007 §8):
+      // the session layer resolves observations and owns feature_sets. The
+      // hyphenated form is the CLI name; the pipeline id (underscore) remains
+      // the engine identity used by RunPipeline.
+      if (pipeline_id == "feature-extraction") {
+        return FeatureExtractionSessionCommand(flags, engine);
+      }
       return RunCommand(flags, engine, pipeline_id);
     }
 
