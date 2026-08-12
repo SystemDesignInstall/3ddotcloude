@@ -137,22 +137,22 @@ dependencies:
   - name: VGGT
     repository: https://github.com/facebookresearch/vggt
     version: planned
-    code_license: Apache-2.0
-    model_license: verification-required
+    code_license: VGGT License v1 (2025-07-29, custom; commercial-friendly, military excluded)
+    model_license: VGGT-1B non-commercial; VGGT-1B-Commercial commercial (application)
     commercial_use: conditional
     redistribution: conditional
     status: planned
-    notes: Model license requires verification before commercial use; research only until verified. See MODEL_LICENSES.yml. AI outputs are priors only (ADR-006).
+    notes: License verified from LICENSE.txt on 2026-08-12. Custom Meta license, Acceptable Use Policy (military/ITAR excluded), amendable by Meta. Commercial path exists via VGGT-1B-Commercial checkpoint (application form). AI outputs are priors only (ADR-006). See MODEL_LICENSES.yml.
     security_notes: null
   - name: LingBot-Map
     repository: https://github.com/LingBot/LingBot-Map
-    version: planned
+    version: removed
     code_license: unspecified
-    model_license: verification-required
-    commercial_use: conditional
-    redistribution: conditional
-    status: planned
-    notes: License verification required before any use. See MODEL_LICENSES.yml.
+    model_license: null
+    commercial_use: no
+    redistribution: no
+    status: removed
+    notes: Repository returns 404 (verified 2026-08-12) - registration invalid, no verifiable license or capability. Re-evaluate only if a real repository appears. See MODEL_LICENSES.yml.
     security_notes: null
   - name: gsplat
     repository: https://github.com/nerfstudio-project/gsplat

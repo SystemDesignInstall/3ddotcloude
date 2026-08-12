@@ -16,7 +16,11 @@ models:
   - name: VGGT
     license_status: verification_required
     commercial_use: research_only_pending
-    note: Model license requires verification before commercial use; research only until verified. See THIRD_PARTY.yml.
+    note: License verified from LICENSE.txt on 2026-08-12. Code is commercial-friendly (military excluded). Commercial path exists via the VGGT-1B-Commercial checkpoint (application form, LLaMA-like approval) pending Architecture/legal review. Original VGGT-1B remains non-commercial. AI outputs are priors only (ADR-006). See THIRD_PARTY.yml.
+  - name: LingBot-Map
+    license_status: verification_required
+    commercial_use: research_only_pending
+    note: Repository returns 404 (verified 2026-08-12) - registration invalid, license unverifiable. Removed from THIRD_PARTY.yml. Re-evaluate only if a real repository appears.
   - name: MASt3R
     license_status: non_commercial
     commercial_use: research_only
