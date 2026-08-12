@@ -378,12 +378,28 @@ int FeatureExtractionSessionCommand(const std::vector<std::string>& args,
     const std::string text(payload->begin(), payload->end());
     const auto payload_json = nlohmann::json::parse(text);
 
+    // Provenance (P2.3 M1): copy the effective stage configuration hash the
+    // worker recorded on the FeatureArtifact manifest so the session-layer
+    // artifact instance carries identical provenance; the CAS re-Put dedups
+    // to the same payload bytes either way.
+    std::string configuration_hash;
+    const auto worker_artifact =
+        engine.project().db().FindArtifactByHash(feature_hash);
+    if (worker_artifact) {
+      const auto worker_manifest = engine.project().artifacts().ReadManifest(
+          worker_artifact->artifact_id);
+      if (worker_manifest) {
+        configuration_hash = worker_manifest->configuration_hash;
+      }
+    }
+
     spatial::engine::WriteFeatureArtifactInput input;
     input.frame_id = observation.frame_id;
     input.detector = payload_json.at("detector").get<std::string>();
     input.descriptor_type =
         payload_json.at("descriptor_type").get<std::string>();
     input.input_content_hash = *hash;
+    input.configuration_hash = configuration_hash;
     for (const auto& kp : payload_json.at("keypoints")) {
       spatial::engine::FeaturePoint p;
       p.x = kp.at("x").get<double>();

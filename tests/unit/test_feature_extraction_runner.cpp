@@ -24,6 +24,7 @@
 #include "core/errors/project_error.h"
 #include "core/scene/identity.h"
 #include "core/storage/metadata_db.h"
+#include "core/utils/sha256.h"
 #include "core/utils/uuid.h"
 #include "engine/workers/mock_pipeline_runner.h"
 #include "schema_check.h"
@@ -33,8 +34,10 @@ namespace {
 
 using spatial::core::ArtifactManifest;
 using spatial::core::ArtifactStore;
+using spatial::core::FormatUuid;
 using spatial::core::GenerateUuid;
 using spatial::core::MetadataDb;
+using spatial::core::Sha256Hex;
 using spatial::core::Uuid;
 using nlohmann::json;
 
@@ -176,6 +179,43 @@ TEST_F(FeatureExtractionRunnerTest, ManifestRecordsMetadataAndProvenance) {
   // exactly the input image, and the recorded hash is the image's CAS hash.
   ASSERT_EQ(manifest->input_artifact_hashes.size(), 1u);
   EXPECT_EQ(manifest->input_artifact_hashes[0], input);
+
+  // Provenance (P2.3 M1): the manifest records the effective stage config the
+  // worker consumed; Sha256Hex("{}") is the ADR-020 cache-key config digest.
+  EXPECT_EQ(manifest->configuration_hash, Sha256Hex("{}"));
+}
+
+TEST_F(FeatureExtractionRunnerTest, ConfigurationHashPersistsThroughManifest) {
+  const std::string input = PutImage("image-a");
+
+  // Run with a non-trivial config, then read the manifest straight from the
+  // on-disk file artifacts/<uuid>/manifest.json (ArtifactManifest::Read), not
+  // the in-memory copy, to prove the round-trip (P2.3 M1 exit criteria).
+  const auto events = Run(
+      MakeRequest({input}, R"({"config": {"keypoint_count": 128}})"));
+  const std::string ref = ProducedRef(events);
+  ASSERT_FALSE(ref.empty());
+  const auto indexed = db_->FindArtifactByHash(ref);
+  ASSERT_TRUE(indexed.has_value());
+
+  const auto persisted = ArtifactManifest::Read(
+      root_ / "artifacts" / FormatUuid(indexed->artifact_id) /
+      "manifest.json");
+  EXPECT_EQ(persisted.configuration_hash,
+            Sha256Hex(R"({"config": {"keypoint_count": 128}})"));
+
+  // A different effective config must yield a different persisted hash: the
+  // recorded value reflects what actually produced the artifact.
+  const auto default_events = Run(MakeRequest({input}, "{}"));
+  const auto default_indexed =
+      db_->FindArtifactByHash(ProducedRef(default_events));
+  ASSERT_TRUE(default_indexed.has_value());
+  const auto default_persisted = ArtifactManifest::Read(
+      root_ / "artifacts" / FormatUuid(default_indexed->artifact_id) /
+      "manifest.json");
+  EXPECT_EQ(default_persisted.configuration_hash, Sha256Hex("{}"));
+  EXPECT_NE(persisted.configuration_hash,
+            default_persisted.configuration_hash);
 }
 
 TEST_F(FeatureExtractionRunnerTest, DeterministicAcrossRunsAndInputs) {

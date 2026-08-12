@@ -203,6 +203,10 @@ InProcessTaskRunner MakeMockPipelineRunner(spatial::core::ArtifactStore& store) 
       input.input_content_hash = request.input_refs.front();
       input.keypoints = std::move(features.first);
       input.descriptors = std::move(features.second);
+      // Provenance: the effective stage configuration the worker consumed
+      // (task.config_json, scheduler.cpp) is the ADR-020 cache-key config; the
+      // manifest configuration_hash must equal that digest (P2.3 M1).
+      input.configuration_hash = Sha256Hex(request.config_json);
 
       const auto result = WriteFeatureArtifactPayload(store, input);
 

@@ -74,6 +74,7 @@ ArtifactWriteResult WritePayload(spatial::core::ArtifactStore& store,
   manifest.schema_version = 1;
   manifest.producer = {"spatial-platform", kEngineVersion, kEngineGitCommit};
   manifest.input_artifact_hashes = {input.input_content_hash};
+  manifest.configuration_hash = input.configuration_hash;
   manifest.coordinate_frame = "image";
   manifest.unit = "pixels";
   manifest.mime_type = "application/json";

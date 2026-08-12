@@ -216,6 +216,22 @@ TEST_F(CliFeatureExtractionTest, FeatureExtractionThroughCliWritesFeatureSets) {
     EXPECT_EQ(rows.front().descriptor_type, "mock_16");
     EXPECT_EQ(rows.front().count, 64);
   }
+
+  // Provenance (P2.3 M1): every persisted FeatureArtifact manifest records the
+  // effective stage configuration hash, and all instances of this run agree
+  // (the worker's manifest is what persists; the CLI re-Put dedups to it).
+  std::string expected_config_hash;
+  for (const auto& row : p.db().FindArtifactsByType("feature")) {
+    const auto manifest = p.artifacts().ReadManifest(row.artifact_id);
+    ASSERT_TRUE(manifest.has_value());
+    EXPECT_EQ(manifest->configuration_hash.size(), 64u);
+    if (expected_config_hash.empty()) {
+      expected_config_hash = manifest->configuration_hash;
+    } else {
+      EXPECT_EQ(manifest->configuration_hash, expected_config_hash);
+    }
+  }
+  ASSERT_FALSE(expected_config_hash.empty());
 }
 
 TEST_F(CliFeatureExtractionTest, FeatureExtractionThroughCliIsIdempotent) {
@@ -257,6 +273,56 @@ TEST_F(CliFeatureExtractionTest, UnknownSessionIsRejected) {
   SeedSensor();
   const auto run = RunCli(FeatureArgs(FormatUuid(GenerateUuid())));
   EXPECT_EQ(run.exit_code, 1);
+}
+
+TEST_F(CliFeatureExtractionTest, ConfigurationHashReflectsEffectiveConfig) {
+  SeedSensor();
+  const std::string session_id = ImportTwoImages();
+
+  const auto default_run = RunCli(FeatureArgs(session_id));
+  ASSERT_EQ(default_run.exit_code, 0);
+  const auto default_json = nlohmann::json::parse(default_run.stdout_text);
+  ASSERT_EQ(default_json["feature_sets"].size(), 2u);
+
+  const auto sized_run = RunCli(
+      FeatureArgs(session_id, R"({"keypoint_count": 128})"));
+  ASSERT_EQ(sized_run.exit_code, 0);
+  const auto sized_json = nlohmann::json::parse(sized_run.stdout_text);
+  ASSERT_EQ(sized_json["feature_sets"].size(), 2u);
+  EXPECT_EQ(sized_json["failures"].size(), 0u);
+
+  const std::string default_ref =
+      default_json["feature_sets"][0]["content_hash"].get<std::string>();
+  const std::string sized_ref =
+      sized_json["feature_sets"][0]["content_hash"].get<std::string>();
+  EXPECT_EQ(default_ref.size(), 64u);
+  EXPECT_EQ(sized_ref.size(), 64u);
+  // A different config changes the derived payload, hence the content hash.
+  EXPECT_NE(sized_ref, default_ref);
+
+  // The persisted FeatureArtifact manifest's configuration_hash must reflect
+  // the effective stage configuration (P2.3 M1): differ between the two runs.
+  std::string default_hash;
+  std::string sized_hash;
+  {
+    auto p = Project::Open(project_path_);
+    const auto default_indexed = p.db().FindArtifactByHash(default_ref);
+    ASSERT_TRUE(default_indexed.has_value());
+    const auto default_manifest =
+        p.artifacts().ReadManifest(default_indexed->artifact_id);
+    ASSERT_TRUE(default_manifest.has_value());
+    default_hash = default_manifest->configuration_hash;
+    EXPECT_EQ(default_hash.size(), 64u);
+
+    const auto sized_indexed = p.db().FindArtifactByHash(sized_ref);
+    ASSERT_TRUE(sized_indexed.has_value());
+    const auto sized_manifest =
+        p.artifacts().ReadManifest(sized_indexed->artifact_id);
+    ASSERT_TRUE(sized_manifest.has_value());
+    sized_hash = sized_manifest->configuration_hash;
+    EXPECT_EQ(sized_hash.size(), 64u);
+  }
+  EXPECT_NE(sized_hash, default_hash);
 }
 
 }  // namespace

@@ -33,7 +33,10 @@ std::string ToJsonString(const ArtifactManifest& m) {
   j["producer"]["version"] = m.producer.version;
   j["producer"]["git_commit"] = m.producer.git_commit;
   j["input_artifact_hashes"] = m.input_artifact_hashes;
-  j["configuration_hash"] = m.configuration_hash;
+  // The schema allows string|null; empty means "no configuration recorded".
+  j["configuration_hash"] = m.configuration_hash.empty()
+                               ? json(nullptr)
+                               : json(m.configuration_hash);
   j["creation_timestamp"] = m.creation_timestamp;
   j["coordinate_frame"] = m.coordinate_frame;
   j["unit"] = m.unit;
@@ -73,7 +76,8 @@ ArtifactManifest FromJsonString(const std::string& s) {
       m.input_artifact_hashes.push_back(h.get<std::string>());
     }
   }
-  if (j.contains("configuration_hash")) {
+  if (j.contains("configuration_hash") &&
+      j["configuration_hash"].is_string()) {
     m.configuration_hash = j["configuration_hash"].get<std::string>();
   }
   if (j.contains("creation_timestamp")) {

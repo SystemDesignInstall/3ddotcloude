@@ -37,6 +37,12 @@ struct WriteFeatureArtifactInput {
   std::vector<FeaturePoint> keypoints;
   std::vector<std::vector<double>> descriptors;  // one row per keypoint
   std::string input_content_hash;  // image bytes hash (manifest input ref)
+  // SHA-256 of the effective stage configuration that produced the payload
+  // (manifest configuration_hash, artifact-manifest.schema.json). Callers
+  // supply it; the payload writer is scene- and config-agnostic (ADR-038).
+  // For the worker path it is Sha256Hex(request.config_json), the ADR-020
+  // cache-key config hash; the session/CLI layer copies the worker's value.
+  std::string configuration_hash;
 };
 
 struct FeatureExtractionResult {
