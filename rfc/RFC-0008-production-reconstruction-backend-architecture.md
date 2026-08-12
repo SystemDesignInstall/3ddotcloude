@@ -1,6 +1,6 @@
 # RFC-0008 — Production Reconstruction Backend Architecture
 
-- **Status:** draft
+- **Status:** ratified
 - **Author:** Spatial Platform Architecture Board
 - **Date:** 2026-08-12
 - **Supersedes:** none
