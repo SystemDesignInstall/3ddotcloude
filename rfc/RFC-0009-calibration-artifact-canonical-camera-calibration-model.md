@@ -1,6 +1,6 @@
 # RFC-0009 — Calibration Artifact & Canonical Camera Calibration Model
 
-- **Status:** draft
+- **Status:** ratified
 - **Author:** Spatial Platform Architecture Board
 - **Date:** 2026-08-13
 - **Supersedes:** none
