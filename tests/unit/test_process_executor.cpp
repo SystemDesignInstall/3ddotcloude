@@ -14,6 +14,8 @@
 #include "core/artifacts/artifact_store.h"
 #include "core/errors/project_error.h"
 #include "core/storage/metadata_db.h"
+#include "core/utils/fs.h"
+#include "core/utils/sha256.h"
 #include "core/utils/uuid.h"
 #include "engine/cache/task_cache.h"
 #include "engine/scheduler/scheduler.h"
@@ -48,6 +50,7 @@ using spatial::core::ArtifactManifest;
 using spatial::core::ArtifactStore;
 using spatial::core::GenerateUuid;
 using spatial::core::MetadataDb;
+using spatial::core::Sha256Hex;
 using spatial::core::WorkerError;
 
 // Detects a usable Python interpreter ("python", then the "py -3" launcher)
@@ -109,12 +112,14 @@ class ProcessExecutorTest : public ::testing::Test {
   }
 
   std::unique_ptr<ProcessExecutor> MakeExecutor(
-      const std::vector<std::string>& extra_argv = {}) {
+      const std::vector<std::string>& extra_argv = {},
+      spatial::core::ArtifactStore* store = nullptr) {
     std::vector<std::string> command = python_;
     command.push_back(kDemoWorkerScript);
     command.insert(command.end(), extra_argv.begin(), extra_argv.end());
     return std::make_unique<ProcessExecutor>(test::BigWorker(), command,
-                                             kWorkerGeneratedProtoDir);
+                                             kWorkerGeneratedProtoDir, 5000,
+                                             store);
   }
 
   // Directory containing spatial_wire.py (imported by the fixture workers).
@@ -312,6 +317,345 @@ TEST_F(ProcessExecutorTest, SchedulerRunsDemoWorkerEndToEnd) {
   }
   std::error_code ec;
   std::filesystem::remove_all(root, ec);
+}
+
+// --- C1-S1: fail-closed CAS ingest + input materialization -----------------
+//
+// A fixture worker producing an artifact with a constant payload. The
+// trailing `behavior` lines customize the artifact report (bad hash, missing
+// payload, ...). All paths are absolute so the executor can read the payload.
+std::string IngestFixtureScript(const std::string& wire_dir,
+                                const std::string& behavior) {
+  return "import hashlib, json, os, struct, sys, uuid\n"
+         "sys.path.insert(0, r'" + wire_dir + "')\n"
+         "import spatial_wire\n"
+         "def write(p):\n"
+         "    sys.stdout.buffer.write(struct.pack('<I', len(p)) + p)\n"
+         "    sys.stdout.buffer.flush()\n"
+         "def read_frame():\n"
+         "    prefix = sys.stdin.buffer.read(4)\n"
+         "    if not prefix: return None\n"
+         "    (length,) = struct.unpack('<I', prefix)\n"
+         "    return sys.stdin.buffer.read(length)\n"
+         "write(spatial_wire.worker_hello(1, str(uuid.uuid4()),\n"
+         "    ['demo_task'], 2, 1024, 0, 'win32', '64-bit', 1))\n"
+         "frame = read_frame()\n"
+         "if frame is None: sys.exit(0)\n"
+         "name, payload = spatial_wire.parse_worker_message(frame)\n"
+         "req = spatial_wire.parse_task_request(payload)\n"
+         "data = b'constant-payload-bytes'\n"
+         "content_hash = hashlib.sha256(data).hexdigest()\n"
+         "artifact_id = str(uuid.uuid4())\n"
+         "manifest = json.dumps({\n"
+         "    'artifact_uuid': artifact_id,\n"
+         "    'content_hash': content_hash,\n"
+         "    'type': 'demo_output',\n"
+         "    'schema_version': 1,\n"
+         "    'producer': {'id': 'fixture', 'version': '1.0.0', 'git_commit': 'abc'},\n"
+         "    'mime_type': 'application/octet-stream',\n"
+         "})\n"
+         "path = os.path.join(req['workspace'], 'out.bin')\n"
+         "os.makedirs(req['workspace'], exist_ok=True)\n"
+         "with open(path, 'wb') as fh:\n"
+         "    fh.write(data)\n"
+         + behavior + "\n";
+}
+
+// Writes a fixture worker script and returns its path.
+std::filesystem::path WriteFixtureWorker(const std::string& tag,
+                                         const std::string& script) {
+  const auto path = std::filesystem::temp_directory_path() /
+                    ("spatial_" + tag + "_" +
+                     std::to_string(std::time(nullptr)) + "_" +
+                     std::to_string(std::rand()) + ".py");
+  std::ofstream out(path);
+  out << script;
+  return path;
+}
+
+TEST_F(ProcessExecutorTest, IngestSucceedsPayloadLandsInCasAndDedupes) {
+  const auto root = std::filesystem::temp_directory_path() /
+                    ("spatial_ingest_" + std::to_string(std::time(nullptr)) +
+                     "_" + std::to_string(std::rand()));
+  std::filesystem::create_directories(root);
+  {
+    auto db = MetadataDb::Create(root / "p.db");
+    ArtifactStore store(root / "artifacts", db);
+    const std::string content =
+        std::string("constant-payload-bytes");
+    const std::string expected_hash =
+        Sha256Hex(std::vector<std::uint8_t>(content.begin(), content.end()));
+
+    const auto run = [&](const std::filesystem::path& ws) {
+      const auto script =
+          WriteFixtureWorker("ingest_ok",
+                             IngestFixtureScript(PythonWireDir(), R"(write(
+    spatial_wire.task_artifact(req['task_id'], artifact_id, content_hash,
+        'demo_output', len(data), 'application/octet-stream', manifest, path))
+write(spatial_wire.task_completed(req['task_id'], []))
+)"));
+      std::vector<std::string> command = python_;
+      command.push_back(script.string());
+      ProcessExecutor executor(test::BigWorker(), command,
+                               kWorkerGeneratedProtoDir, 5000, &store);
+
+      TaskRequest req = MakeRequest();
+      req.workspace = ws.string();
+      executor.Submit(req);
+      const auto events = DrainToTerminal(executor, 2000);
+      EXPECT_EQ(events.back().type, WorkerEventType::kCompleted);
+      for (const auto& e : events) {
+        if (e.type == WorkerEventType::kArtifactProduced) {
+          EXPECT_EQ(e.artifact_ref, expected_hash);
+          // The additive WorkerEvent fields carry the worker report.
+          EXPECT_FALSE(e.payload_path.empty());
+          EXPECT_FALSE(e.manifest_json.empty());
+        }
+      }
+      std::error_code ec;
+      std::filesystem::remove(script, ec);
+    };
+
+    run(root / "ws1");
+    EXPECT_TRUE(store.Has(expected_hash));
+    EXPECT_EQ(store.PayloadCount(), 1u);
+
+    // Repeated ingest of identical content deduplicates (no new payload).
+    run(root / "ws2");
+    EXPECT_EQ(store.PayloadCount(), 1u);
+  }
+  std::error_code ec;
+  std::filesystem::remove_all(root, ec);
+}
+
+TEST_F(ProcessExecutorTest, IngestFailClosedNoPayloadPath) {
+  const auto root = std::filesystem::temp_directory_path() /
+                    ("spatial_ingest_" + std::to_string(std::time(nullptr)) +
+                     "_" + std::to_string(std::rand()));
+  std::filesystem::create_directories(root);
+  {
+    auto db = MetadataDb::Create(root / "p.db");
+    ArtifactStore store(root / "artifacts", db);
+    const auto script = WriteFixtureWorker(
+        "ingest_nopath",
+        IngestFixtureScript(PythonWireDir(), R"(write(
+    spatial_wire.task_artifact(req['task_id'], artifact_id, content_hash,
+        'demo_output', len(data), 'application/octet-stream', manifest, ''))
+write(spatial_wire.task_completed(req['task_id'], []))
+)"));
+    std::vector<std::string> command = python_;
+    command.push_back(script.string());
+    ProcessExecutor executor(test::BigWorker(), command, kWorkerGeneratedProtoDir,
+                             5000, &store);
+
+    TaskRequest req = MakeRequest();
+    req.workspace = (root / "ws").string();
+    executor.Submit(req);
+    const auto events = DrainToTerminal(executor, 2000);
+    ASSERT_FALSE(events.empty());
+    EXPECT_EQ(events.back().type, WorkerEventType::kFailed);
+    EXPECT_EQ(events.back().error_code, "WORKER_INGEST_FAILED");
+    EXPECT_FALSE(events.back().error_message.empty());
+    EXPECT_EQ(store.PayloadCount(), 0u);
+    std::error_code ec;
+    std::filesystem::remove(script, ec);
+  }
+  std::error_code ec;
+  std::filesystem::remove_all(root, ec);
+}
+
+TEST_F(ProcessExecutorTest, IngestFailClosedMissingPayloadFile) {
+  const auto root = std::filesystem::temp_directory_path() /
+                    ("spatial_ingest_" + std::to_string(std::time(nullptr)) +
+                     "_" + std::to_string(std::rand()));
+  std::filesystem::create_directories(root);
+  {
+    auto db = MetadataDb::Create(root / "p.db");
+    ArtifactStore store(root / "artifacts", db);
+    const auto script = WriteFixtureWorker(
+        "ingest_missing",
+        IngestFixtureScript(PythonWireDir(), R"(write(
+    spatial_wire.task_artifact(req['task_id'], artifact_id, content_hash,
+        'demo_output', len(data), 'application/octet-stream', manifest,
+        os.path.join(req['workspace'], 'does-not-exist.bin')))
+write(spatial_wire.task_completed(req['task_id'], []))
+)"));
+    std::vector<std::string> command = python_;
+    command.push_back(script.string());
+    ProcessExecutor executor(test::BigWorker(), command, kWorkerGeneratedProtoDir,
+                             5000, &store);
+
+    TaskRequest req = MakeRequest();
+    req.workspace = (root / "ws").string();
+    executor.Submit(req);
+    const auto events = DrainToTerminal(executor, 2000);
+    ASSERT_FALSE(events.empty());
+    EXPECT_EQ(events.back().type, WorkerEventType::kFailed);
+    EXPECT_EQ(events.back().error_code, "WORKER_INGEST_FAILED");
+    EXPECT_EQ(store.PayloadCount(), 0u);
+    std::error_code ec;
+    std::filesystem::remove(script, ec);
+  }
+  std::error_code ec;
+  std::filesystem::remove_all(root, ec);
+}
+
+TEST_F(ProcessExecutorTest, IngestFailClosedHashMismatch) {
+  const auto root = std::filesystem::temp_directory_path() /
+                    ("spatial_ingest_" + std::to_string(std::time(nullptr)) +
+                     "_" + std::to_string(std::rand()));
+  std::filesystem::create_directories(root);
+  {
+    auto db = MetadataDb::Create(root / "p.db");
+    ArtifactStore store(root / "artifacts", db);
+    const auto script = WriteFixtureWorker(
+        "ingest_badhash",
+        IngestFixtureScript(PythonWireDir(), R"(write(
+    spatial_wire.task_artifact(req['task_id'], artifact_id, '0' * 64,
+        'demo_output', len(data), 'application/octet-stream', manifest, path))
+write(spatial_wire.task_completed(req['task_id'], []))
+)"));
+    std::vector<std::string> command = python_;
+    command.push_back(script.string());
+    ProcessExecutor executor(test::BigWorker(), command, kWorkerGeneratedProtoDir,
+                             5000, &store);
+
+    TaskRequest req = MakeRequest();
+    req.workspace = (root / "ws").string();
+    executor.Submit(req);
+    const auto events = DrainToTerminal(executor, 2000);
+    ASSERT_FALSE(events.empty());
+    EXPECT_EQ(events.back().type, WorkerEventType::kFailed);
+    EXPECT_EQ(events.back().error_code, "WORKER_INGEST_FAILED");
+    EXPECT_EQ(store.PayloadCount(), 0u);
+    std::error_code ec;
+    std::filesystem::remove(script, ec);
+  }
+  std::error_code ec;
+  std::filesystem::remove_all(root, ec);
+}
+
+TEST_F(ProcessExecutorTest, IngestFailClosedMalformedManifest) {
+  const auto root = std::filesystem::temp_directory_path() /
+                    ("spatial_ingest_" + std::to_string(std::time(nullptr)) +
+                     "_" + std::to_string(std::rand()));
+  std::filesystem::create_directories(root);
+  {
+    auto db = MetadataDb::Create(root / "p.db");
+    ArtifactStore store(root / "artifacts", db);
+    const auto script = WriteFixtureWorker(
+        "ingest_badmanifest",
+        IngestFixtureScript(PythonWireDir(), R"(write(
+    spatial_wire.task_artifact(req['task_id'], artifact_id, content_hash,
+        'demo_output', len(data), 'application/octet-stream',
+        'not-json', path))
+write(spatial_wire.task_completed(req['task_id'], []))
+)"));
+    std::vector<std::string> command = python_;
+    command.push_back(script.string());
+    ProcessExecutor executor(test::BigWorker(), command, kWorkerGeneratedProtoDir,
+                             5000, &store);
+
+    TaskRequest req = MakeRequest();
+    req.workspace = (root / "ws").string();
+    executor.Submit(req);
+    const auto events = DrainToTerminal(executor, 2000);
+    ASSERT_FALSE(events.empty());
+    EXPECT_EQ(events.back().type, WorkerEventType::kFailed);
+    EXPECT_EQ(events.back().error_code, "WORKER_INGEST_FAILED");
+    EXPECT_EQ(store.PayloadCount(), 0u);
+    std::error_code ec;
+    std::filesystem::remove(script, ec);
+  }
+  std::error_code ec;
+  std::filesystem::remove_all(root, ec);
+}
+
+TEST_F(ProcessExecutorTest, MaterializesInputsIntoWorkspace) {
+  const auto root = std::filesystem::temp_directory_path() /
+                    ("spatial_mat_" + std::to_string(std::time(nullptr)) +
+                     "_" + std::to_string(std::rand()));
+  std::filesystem::create_directories(root);
+  {
+    auto db = MetadataDb::Create(root / "p.db");
+    ArtifactStore store(root / "artifacts", db);
+    ArtifactManifest manifest;
+    manifest.type = "demo_input";
+    manifest.producer.id = "test";
+    manifest.producer.version = "1.0.0";
+    manifest.mime_type = "text/plain";
+    const std::vector<std::uint8_t> seed = {'s', 'e', 'e', 'd'};
+    const auto written = store.Put(seed, manifest);
+
+    auto executor = MakeExecutor({}, &store);
+    TaskRequest req = MakeRequest();
+    req.input_refs = {written.content_hash};
+    req.workspace = (root / "ws").string();
+    executor->Submit(req);
+
+    const auto events = DrainToTerminal(*executor, 2000);
+    ASSERT_FALSE(events.empty());
+    EXPECT_EQ(events.back().type, WorkerEventType::kCompleted);
+
+    // The input arrived in workspace/inputs/<hash> with the exact CAS bytes.
+    const auto materialized = std::filesystem::path(req.workspace) / "inputs" /
+                              written.content_hash;
+    EXPECT_TRUE(std::filesystem::exists(materialized));
+    const auto got = spatial::core::fs::ReadFile(materialized);
+    EXPECT_EQ(got, seed);
+
+    // The worker consumed the input: its payload embeds "|input:seed".
+    bool saw_artifact = false;
+    for (const auto& e : events) {
+      if (e.type == WorkerEventType::kArtifactProduced) {
+        saw_artifact = true;
+      }
+    }
+    EXPECT_TRUE(saw_artifact);
+  }
+  std::error_code ec;
+  std::filesystem::remove_all(root, ec);
+}
+
+TEST_F(ProcessExecutorTest, MaterializeMissingInputFailsClosed) {
+  const auto root = std::filesystem::temp_directory_path() /
+                    ("spatial_mat_" + std::to_string(std::time(nullptr)) +
+                     "_" + std::to_string(std::rand()));
+  std::filesystem::create_directories(root);
+  {
+    auto db = MetadataDb::Create(root / "p.db");
+    ArtifactStore store(root / "artifacts", db);
+    auto executor = MakeExecutor({}, &store);
+
+    TaskRequest req = MakeRequest();
+    req.input_refs = {std::string(64, 'd')};  // not in CAS
+    req.workspace = (root / "ws").string();
+    executor->Submit(req);
+
+    WorkerEvent event;
+    ASSERT_TRUE(executor->WaitForEvent(event, 2000));
+    EXPECT_EQ(event.type, WorkerEventType::kFailed);
+    EXPECT_EQ(event.error_code, "WORKER_INPUT_MATERIALIZE");
+    EXPECT_FALSE(event.error_message.empty());
+    executor->Shutdown();
+  }
+  std::error_code ec;
+  std::filesystem::remove_all(root, ec);
+}
+
+TEST_F(ProcessExecutorTest, MaterializeWithoutStoreFailsClosed) {
+  auto executor = MakeExecutor();  // no store
+
+  TaskRequest req = MakeRequest();
+  req.input_refs = {std::string(64, 'a')};
+  req.workspace = "temp/job/task";
+  executor->Submit(req);
+
+  WorkerEvent event;
+  ASSERT_TRUE(executor->WaitForEvent(event, 2000));
+  EXPECT_EQ(event.type, WorkerEventType::kFailed);
+  EXPECT_EQ(event.error_code, "WORKER_INPUT_MATERIALIZE");
+  executor->Shutdown();
 }
 
 }  // namespace

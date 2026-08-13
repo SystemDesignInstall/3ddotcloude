@@ -32,9 +32,17 @@ class Engine {
  public:
   // `project` owns the metadata db + artifact store shared by every component
   // (destroyed last). When `runner` is empty the default mock pipeline runner
-  // is installed (engine/workers/mock_pipeline_runner).
+  // is installed (engine/workers/mock_pipeline_runner). This constructor
+  // keeps the default in-process executor (ADR-021).
   Engine(spatial::core::Project project, InProcessTaskRunner runner = {},
          ResourceProfile profile = DemoWorkerProfile());
+
+  // C1-S1: injects a caller-owned execution backend (e.g. a ProcessExecutor
+  // speaking the worker protocol). Takes ownership of `executor`; throws
+  // WorkerError WORKER_BUSY/TERMINATED semantics are preserved. The default
+  // construction path above is unchanged.
+  Engine(spatial::core::Project project,
+         std::unique_ptr<WorkerExecutor> executor);
 
   ~Engine();
   Engine(const Engine&) = delete;
@@ -69,7 +77,7 @@ class Engine {
   std::unique_ptr<ExecutionManifestStore> manifest_store_;
   PipelineCompiler compiler_;
   PipelineRegistry registry_;
-  std::unique_ptr<InProcessExecutor> executor_;
+  std::unique_ptr<WorkerExecutor> executor_;  // default: InProcessExecutor
   std::unique_ptr<Scheduler> scheduler_;
 };
 

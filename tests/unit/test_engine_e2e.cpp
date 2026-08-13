@@ -11,6 +11,9 @@
 #include "core/project/project.h"
 #include "core/utils/uuid.h"
 #include "engine/engine.h"
+#include "engine/task/task_graph.h"
+#include "engine/workers/in_process_executor.h"
+#include "tests/unit/engine_test_helpers.h"
 
 namespace spatial::engine {
 namespace {
@@ -55,6 +58,23 @@ TEST_F(EngineTest, EngineConstructsAndLoadsEmptyManifestList) {
   printf("step: done, ids=%zu\n", ids.size());
   fflush(stdout);
   EXPECT_TRUE(ids.empty());
+}
+
+// C1-S1: an injected WorkerExecutor replaces the default in-process executor
+// and the scheduler runs through it end-to-end.
+TEST_F(EngineTest, InjectedWorkerExecutorRunsTasks) {
+  auto executor = std::make_unique<InProcessExecutor>(test::BigWorker());
+  Engine engine(std::move(*project_), std::move(executor));
+
+  TaskGraph graph(GenerateUuid());
+  graph.AddTask(test::MakeTask("demo_task", {}, {"out"}));
+  const auto job_id = engine.RunGraph(graph, {});
+
+  const auto tasks = engine.LoadJobTasks(job_id);
+  ASSERT_EQ(tasks.size(), 1u);
+  EXPECT_EQ(tasks[0].state, TaskStatus::kSucceeded);
+  EXPECT_EQ(tasks[0].outputs.size(), 1u);
+  EXPECT_EQ(tasks[0].outputs[0].size(), 64u);
 }
 
 }  // namespace

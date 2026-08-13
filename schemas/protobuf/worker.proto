@@ -37,6 +37,12 @@ message ArtifactInfo {
   int64  size           = 4;
   string mime           = 5;
   string manifest_json  = 6; // full artifact manifest (artifact-format.md)
+  // On-disk location of the produced payload (absolute, or relative to the
+  // task workspace). The engine ingests the payload into CAS (verifies
+  // SHA-256 against content_hash, parses manifest_json, ArtifactStore::Put)
+  // before the artifact is reported to the scheduler (fail-closed ingest,
+  // C1-S1). Empty means "no payload on disk" and fails ingest.
+  string payload_path   = 7;
 }
 
 message WorkerHello {
@@ -50,6 +56,11 @@ message TaskRequest {
   string task_type  = 2;
   string spec_json  = 3; // task spec per task-model.md
   string workspace  = 4; // deterministic per-task temp workspace
+  // CAS content hashes of the task's input artifacts (RFC-0009 §6). The
+  // engine materializes each hash into workspace/inputs/<hash> before
+  // dispatch; the worker consumes inputs from its workspace and never
+  // touches the CAS / DB itself (worker-boundary, ADR-035/038).
+  repeated string input_refs = 5;
 }
 
 message TaskAccepted {

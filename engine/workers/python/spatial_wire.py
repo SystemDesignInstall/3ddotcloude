@@ -120,19 +120,21 @@ def task_progress(task_id, percent, substage="", message=""):
 
 
 def _artifact_info(artifact_id, content_hash, artifact_type, size, mime,
-                   manifest_json):
+                   manifest_json, payload_path=""):
     payload = (
         f_string(1, artifact_id) + f_string(2, content_hash)
         + f_string(3, artifact_type) + f_varint(4, size) + f_string(5, mime)
         + f_string(6, manifest_json)
     )
+    if payload_path:
+        payload += f_string(7, payload_path)
     return payload
 
 
 def task_artifact(task_id, artifact_id, content_hash, artifact_type, size,
-                  mime, manifest_json):
+                  mime, manifest_json, payload_path=""):
     info = _artifact_info(artifact_id, content_hash, artifact_type, size, mime,
-                          manifest_json)
+                          manifest_json, payload_path)
     return f_message(6, f_string(1, task_id) + f_message(2, info))
 
 
@@ -162,11 +164,16 @@ def heartbeat(worker_id, timestamp_ns, rss_bytes):
 
 def parse_task_request(data):
     fields = parse_fields(data)
+    input_refs = []
+    for kind, value in fields.get(5, []):
+        if kind == "bytes":
+            input_refs.append(value.decode("utf-8"))
     return {
         "task_id": _string_field(fields, 1),
         "task_type": _string_field(fields, 2),
         "spec_json": _string_field(fields, 3),
         "workspace": _string_field(fields, 4),
+        "input_refs": input_refs,
     }
 
 

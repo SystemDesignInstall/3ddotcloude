@@ -45,6 +45,12 @@ struct WorkerEvent {
   int progress = 0;
   std::string log;
   ArtifactRef artifact_ref;
+  // Populated on kArtifactProduced (C1-S1): the worker-reported on-disk
+  // payload location and its manifest, as received on the wire. With CAS
+  // ingest enabled the artifact_ref is only reported after the payload was
+  // verified and stored.
+  std::string payload_path;
+  std::string manifest_json;
   std::string error_code;    // stable string, e.g. "WORKER_CRASHED"
   std::string error_message;
   bool recoverable = false;

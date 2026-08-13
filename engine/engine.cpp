@@ -11,6 +11,7 @@ namespace {
 using spatial::core::ErrorCode;
 using spatial::core::Project;
 using spatial::core::SchedulerError;
+using spatial::core::WorkerError;
 
 TaskStatus AggregateStatus(const ExecutionPlan& plan, const TaskGraph& graph) {
   bool any_cancelled = false;
@@ -51,6 +52,22 @@ Engine::Engine(Project project, InProcessTaskRunner runner,
   }
   executor_ = std::make_unique<InProcessExecutor>(std::move(profile),
                                                   std::move(runner));
+  scheduler_ =
+      std::make_unique<Scheduler>(*state_store_, *cache_, *executor_);
+}
+
+Engine::Engine(Project project, std::unique_ptr<WorkerExecutor> executor)
+    : project_(std::move(project)),
+      state_store_(std::make_unique<SchedulerStateStore>(project_.db())),
+      cache_(std::make_unique<TaskCache>(project_.artifacts(), *state_store_,
+                                         kEngineVersion, kEngineGitCommit)),
+      manifest_store_(std::make_unique<ExecutionManifestStore>(project_.db())),
+      compiler_(kEngineVersion, kEngineGitCommit),
+      executor_(std::move(executor)) {
+  if (!executor_) {
+    throw WorkerError(ErrorCode::kWorkerProtocol,
+                      "Engine requires a non-null WorkerExecutor");
+  }
   scheduler_ =
       std::make_unique<Scheduler>(*state_store_, *cache_, *executor_);
 }

@@ -66,6 +66,26 @@ def run_task(req, cancel_event):
     workspace = req["workspace"]
     write_message(spatial_wire.task_accepted(task_id))
 
+    # C1-S1: consume declared inputs from the materialized workspace
+    # (workspace/inputs/<hash>). The worker only ever sees its workspace and
+    # never the CAS or a database handle (worker-boundary).
+    input_hashes = req.get("input_refs", [])
+    for ref in input_hashes:
+        path = os.path.join(workspace, "inputs", ref)
+        if not os.path.isfile(path):
+            write_message(
+                spatial_wire.task_failed(
+                    task_id, "INPUT_MATERIALIZED_FILE_MISSING",
+                    "declared input missing from workspace: %s" % ref, False
+                )
+            )
+            return
+    input_payloads = []
+    for ref in input_hashes:
+        with open(os.path.join(workspace, "inputs", ref), "r",
+                  encoding="utf-8") as fh:
+            input_payloads.append(fh.read())
+
     for percent in range(0, 101, 10):
         if cancel_event.is_set():
             write_message(
@@ -78,6 +98,8 @@ def run_task(req, cancel_event):
         time.sleep(0.05)
 
     payload = "demo:" + task_id + ":" + req["task_type"] + ":" + req["spec_json"]
+    for p in input_payloads:
+        payload += "|input:" + p
     content_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     os.makedirs(workspace, exist_ok=True)
@@ -87,17 +109,33 @@ def run_task(req, cancel_event):
 
     artifact_id = str(uuid.uuid4())
     size = len(payload.encode("utf-8"))
-    manifest = json.dumps({"format_version": "1", "kind": "demo_output"})
+    manifest = json.dumps({
+        "artifact_uuid": artifact_id,
+        "content_hash": content_hash,
+        "type": "demo_output",
+        "schema_version": 1,
+        "producer": {"id": "demo-worker", "version": "0.1.0",
+                     "git_commit": "demo"},
+        "input_artifact_hashes": input_hashes,
+        "configuration_hash": None,
+        "creation_timestamp": "1970-01-01T00:00:00Z",
+        "coordinate_frame": "",
+        "unit": "meter",
+        "file_size": size,
+        "mime_type": "text/plain",
+        "validation_status": "valid",
+    })
     write_message(
         spatial_wire.task_artifact(task_id, artifact_id, content_hash,
-                                   "demo_output", size, "text/plain", manifest)
+                                   "demo_output", size, "text/plain",
+                                   manifest, path)
     )
     write_message(
         spatial_wire.task_completed(
             task_id,
             [spatial_wire._artifact_info(artifact_id, content_hash,
                                          "demo_output", size, "text/plain",
-                                         manifest)],
+                                         manifest, path)],
         )
     )
 
