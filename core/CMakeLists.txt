@@ -42,10 +42,12 @@ add_library(spatial_core STATIC
   storage/metadata_db.cpp
   artifacts/artifact_manifest.cpp
   artifacts/artifact_store.cpp
+  artifacts/calibration_artifact.cpp
   coordinates/frame_graph.cpp
   coordinates/frame_graph_validator.cpp
   project/project.cpp
   scene/query/scene_query.cpp
+  scene/query/calibration_materializer.cpp
 )
 
 target_include_directories(spatial_core PUBLIC
