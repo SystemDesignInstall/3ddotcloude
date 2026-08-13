@@ -146,8 +146,9 @@ TEST_F(CalibrationArtifactTest, ManifestRecordsCalibrationMetadata) {
 }
 
 TEST_F(CalibrationArtifactTest, DeterministicAndDeduplicates) {
-  const auto first = WriteCalibrationArtifact(*store_, MakeInput());
-  const auto second = WriteCalibrationArtifact(*store_, MakeInput());
+  const auto input = MakeInput();
+  const auto first = WriteCalibrationArtifact(*store_, input);
+  const auto second = WriteCalibrationArtifact(*store_, input);
   EXPECT_EQ(second.content_hash, first.content_hash);
   EXPECT_TRUE(second.deduplicated);
   EXPECT_EQ(store_->PayloadCount(), 1);
