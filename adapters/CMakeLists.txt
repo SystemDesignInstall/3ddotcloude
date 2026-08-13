@@ -6,4 +6,5 @@
 # tree: it consumes only WorkerExecutor (ADR-034).
 
 add_subdirectory(interfaces)
+add_subdirectory(process)
 add_subdirectory(colmap)

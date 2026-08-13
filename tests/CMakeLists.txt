@@ -78,7 +78,10 @@ gtest_discover_tests(spatial_unit_tests)
 # the doctor test (ValidateEnvironment present case).
 add_executable(spatial_colmap_probe_shim unit/colmap_probe_shim_main.cpp)
 
-add_executable(spatial_adapter_tests unit/test_colmap_adapter.cpp)
+add_executable(spatial_adapter_tests
+  unit/test_colmap_adapter.cpp
+  unit/test_colmap_execution.cpp
+)
 target_link_libraries(spatial_adapter_tests PRIVATE
   spatial_colmap_adapter
   GTest::gtest
@@ -90,3 +93,19 @@ target_compile_definitions(spatial_adapter_tests PRIVATE
   SPATIAL_COLMAP_PROBE_SHIM_EXECUTABLE="$<TARGET_FILE:spatial_colmap_probe_shim>"
 )
 gtest_discover_tests(spatial_adapter_tests)
+
+# Generic adapter-layer subprocess runner tests (C1-S3). Link only the
+# std-only spatial_process target + the probe shim (a real child process);
+# never the engine.
+add_executable(spatial_process_tests unit/test_process_runner.cpp)
+target_link_libraries(spatial_process_tests PRIVATE
+  spatial_process
+  GTest::gtest
+  GTest::gtest_main
+)
+add_dependencies(spatial_process_tests spatial_colmap_probe_shim)
+target_include_directories(spatial_process_tests PRIVATE ${CMAKE_SOURCE_DIR})
+target_compile_definitions(spatial_process_tests PRIVATE
+  SPATIAL_COLMAP_PROBE_SHIM_EXECUTABLE="$<TARGET_FILE:spatial_colmap_probe_shim>"
+)
+gtest_discover_tests(spatial_process_tests)

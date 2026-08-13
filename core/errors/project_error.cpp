@@ -53,6 +53,10 @@ ErrorDomain DomainOf(ErrorCode code) noexcept {
     case ErrorCode::kValidationSchema:
     case ErrorCode::kValidationDomain:
       return ErrorDomain::kValidation;
+    case ErrorCode::kAdapterProcessFailed:
+    case ErrorCode::kAdapterProcessTimeout:
+    case ErrorCode::kAdapterProcessCancelled:
+      return ErrorDomain::kAdapter;
     case ErrorCode::kImportUnreadable:
     case ErrorCode::kImportCorrupt:
     case ErrorCode::kImportUnsupportedFormat:
@@ -169,6 +173,12 @@ const char* ErrorCodeName(ErrorCode code) noexcept {
       return "VALIDATION_SCHEMA";
     case ErrorCode::kValidationDomain:
       return "VALIDATION_DOMAIN";
+    case ErrorCode::kAdapterProcessFailed:
+      return "ADAPTER_PROCESS_FAILED";
+    case ErrorCode::kAdapterProcessTimeout:
+      return "ADAPTER_PROCESS_TIMEOUT";
+    case ErrorCode::kAdapterProcessCancelled:
+      return "ADAPTER_PROCESS_CANCELLED";
     case ErrorCode::kImportUnreadable:
       return "IMPORT_UNREADABLE";
     case ErrorCode::kImportCorrupt:

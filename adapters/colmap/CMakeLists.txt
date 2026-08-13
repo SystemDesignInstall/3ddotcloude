@@ -28,6 +28,7 @@ configure_file(colmap_adapter_build_info.h.in
 
 add_library(spatial_colmap_adapter STATIC
   colmap_adapter.cpp
+  colmap_cli.cpp
   colmap_config.cpp
 )
 
@@ -38,6 +39,7 @@ target_include_directories(spatial_colmap_adapter PUBLIC
 
 target_link_libraries(spatial_colmap_adapter PUBLIC
   spatial_adapter_interfaces
+  spatial_process
   spatial_core
   nlohmann_json::nlohmann_json
 )

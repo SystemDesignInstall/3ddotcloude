@@ -127,6 +127,19 @@ const char* ColmapStageName(ColmapStage stage) noexcept {
   return "unknown";
 }
 
+std::optional<ColmapStage> ColmapStageFromName(const std::string& name) noexcept {
+  if (name == ColmapStageName(ColmapStage::kFeatureExtractor)) {
+    return ColmapStage::kFeatureExtractor;
+  }
+  if (name == ColmapStageName(ColmapStage::kMatcher)) {
+    return ColmapStage::kMatcher;
+  }
+  if (name == ColmapStageName(ColmapStage::kMapper)) {
+    return ColmapStage::kMapper;
+  }
+  return std::nullopt;
+}
+
 ColmapConfig ColmapConfig::Default() {
   ColmapConfig config;
   config.enabled_stages = {};

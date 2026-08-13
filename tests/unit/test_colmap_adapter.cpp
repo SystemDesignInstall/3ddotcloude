@@ -12,7 +12,12 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cstdlib>
+#include <ctime>
+#include <filesystem>
+#include <memory>
 #include <string>
+#include <system_error>
 #include <vector>
 
 #include "adapters/colmap/colmap_adapter.h"
@@ -204,7 +209,19 @@ TEST(ColmapAdapterTest, ConfigMarshalsStageArgs) {
 }
 
 TEST(ColmapAdapterTest, ExecuteReportsDeterministicProgressPerStage) {
-  ColmapAdapter adapter;
+  // C1-S3: Execute now runs the stages as real subprocesses (the probe shim)
+  // in an isolated workspace. Progress stays the deterministic 33/66/100 and
+  // the mapper produces the sparse-model payload artifact.
+  const std::filesystem::path workspace =
+      std::filesystem::temp_directory_path() /
+      ("spatial_colmap_exec_" + std::to_string(std::time(nullptr)) + "_" +
+       std::to_string(rand()));
+  std::filesystem::create_directories(workspace);
+
+  auto context = std::make_shared<ExecutionContext>();
+  context->workspace = workspace;
+
+  ColmapAdapter adapter(SPATIAL_COLMAP_PROBE_SHIM_EXECUTABLE, context);
   const std::vector<std::string> plan = {"feature_extractor", "matcher",
                                          "mapper"};
   RecordingSink sink;
@@ -212,8 +229,11 @@ TEST(ColmapAdapterTest, ExecuteReportsDeterministicProgressPerStage) {
 
   EXPECT_EQ(sink.stages_, plan);
   EXPECT_EQ(sink.percents_, (std::vector<int>{33, 66, 100}));
-  EXPECT_EQ(sink.logs_.size(), 3u);
-  EXPECT_TRUE(sink.artifacts_.empty());  // C1-S2 never fabricates artifacts
+  EXPECT_EQ(sink.artifacts_.size(), 1u);
+  EXPECT_TRUE(std::filesystem::exists(sink.artifacts_.front()));
+
+  std::error_code ec;
+  std::filesystem::remove_all(workspace, ec);
 }
 
 TEST(ColmapAdapterTest, ExecuteRejectsUnknownPlanStep) {

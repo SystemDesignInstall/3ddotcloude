@@ -77,6 +77,12 @@ enum class ErrorCode : int32_t {
   // VALIDATION_* (domain 11)
   kValidationSchema = 11001,
   kValidationDomain = 11002,
+  // ADAPTER_* (domain 10) — backend process execution (C1-S3, RFC-0008 §10;
+  // adding-adapter.md §6). Stable codes carried across the worker boundary.
+  kAdapterProcessFailed = 10001,    // deterministic: non-zero exit / spawn
+                                    // failure / input materialization failure
+  kAdapterProcessTimeout = 10002,   // transient: stage exceeded its deadline
+  kAdapterProcessCancelled = 10003, // cooperative stop at a tool boundary
   // IMPORT_* (domain 6) — RFC-0006 §6.6, image-import.md §12. Per-file import
   // failures; a failed file never partially writes.
   kImportUnreadable = 6001,

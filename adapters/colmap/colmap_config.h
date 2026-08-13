@@ -18,6 +18,7 @@
 // below the adapter boundary (RFC-0008 §17).
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -34,6 +35,10 @@ enum class ColmapStage : int {
 
 // Canonical lowercase stage name (also the plan step and CLI subcommand).
 const char* ColmapStageName(ColmapStage stage) noexcept;
+
+// Reverse of ColmapStageName; nullopt for a name outside the stage
+// vocabulary. Used by the executor to validate plan steps.
+std::optional<ColmapStage> ColmapStageFromName(const std::string& name) noexcept;
 
 // Feature extraction (feature_extraction capability): detector/descriptor
 // settings (RFC-0008 §9). Algorithm settings only.
