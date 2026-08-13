@@ -70,3 +70,23 @@ target_compile_definitions(spatial_unit_tests PRIVATE
 
 include(GoogleTest)
 gtest_discover_tests(spatial_unit_tests)
+
+# Adapter seam tests (C1-S2, RFC-0008 §5). The adapter tests link only the
+# adapter (which brings core's typed-error types) — never the engine aggregate
+# — proving the seam is self-contained behind adapters/interfaces/**.
+# spatial_colmap_probe_shim stands in for a runnable COLMAP installation in
+# the doctor test (ValidateEnvironment present case).
+add_executable(spatial_colmap_probe_shim unit/colmap_probe_shim_main.cpp)
+
+add_executable(spatial_adapter_tests unit/test_colmap_adapter.cpp)
+target_link_libraries(spatial_adapter_tests PRIVATE
+  spatial_colmap_adapter
+  GTest::gtest
+  GTest::gtest_main
+)
+add_dependencies(spatial_adapter_tests spatial_colmap_probe_shim)
+target_include_directories(spatial_adapter_tests PRIVATE ${CMAKE_SOURCE_DIR})
+target_compile_definitions(spatial_adapter_tests PRIVATE
+  SPATIAL_COLMAP_PROBE_SHIM_EXECUTABLE="$<TARGET_FILE:spatial_colmap_probe_shim>"
+)
+gtest_discover_tests(spatial_adapter_tests)

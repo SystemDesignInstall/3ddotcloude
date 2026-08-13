@@ -1,0 +1,14 @@
+#pragma once
+
+// Configure-time build identity embedded into the COLMAP adapter. The git
+// commit is part of the artifact provenance (RFC-0008 §8: producer =
+// {id: "colmap", version, git_commit}); the producer block of every canonical
+// artifact the adapter emits carries these values. Generated from
+// colmap_adapter_build_info.h.in; do not edit by hand.
+
+namespace spatial::adapters::colmap {
+
+inline constexpr const char* kColmapAdapterVersion = "@SPATIAL_COLMAP_ADAPTER_VERSION@";
+inline constexpr const char* kColmapAdapterGitCommit = "@SPATIAL_COLMAP_ADAPTER_GIT_COMMIT@";
+
+}  // namespace spatial::adapters::colmap

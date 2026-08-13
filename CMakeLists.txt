@@ -47,6 +47,7 @@ add_subdirectory(core)
 add_subdirectory(engine)
 add_subdirectory(importers)
 add_subdirectory(cli)
+add_subdirectory(adapters)
 
 if(SPATIAL_ENABLE_TESTS)
   enable_testing()
