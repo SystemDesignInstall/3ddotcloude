@@ -138,7 +138,7 @@ An observation is a fact recorded by a sensor at a time and place; it is never m
 
 ### 5.3 Artifact Immutability
 
-**Principle.** All spatial artifacts — `image`, `feature`, `match`, `sparse_model`, `dense_model`, `mesh`, `texture`, `quality_report` — are immutable. An artifact:
+**Principle.** All spatial artifacts — `image`, `feature`, `match`, `sparse_model`, `dense_model`, `mesh`, `texture`, `quality_report`, `calibration` — are immutable. An artifact:
 
 - is created once;
 - receives a unique identifier;
@@ -296,6 +296,7 @@ DenseModelArtifact
 MeshArtifact
 TextureArtifact
 QualityReport
+CalibrationArtifact
 ```
 
 Never:

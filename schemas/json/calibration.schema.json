@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://spatial-platform.dev/schemas/json/calibration.schema.json",
   "title": "Calibration",
-  "description": "Sensor calibration record (sensor-model.md). Intrinsics/distortion/extrinsics are stored declaratively; solving is deferred.",
+  "description": "Canonical camera calibration model (RFC-0009 §4-§5). The payload contract of the CalibrationArtifact (type \"calibration\"); also the serialized form of a sensor-model.md Calibration record. Intrinsics/distortion/extrinsics are stored declaratively; solving is deferred.",
   "type": "object",
   "additionalProperties": false,
   "required": ["calibration_id", "sensor_id", "version", "calibration_time_ns", "source"],
@@ -22,7 +22,8 @@
     "source": { "type": "string", "description": "Provenance of this calibration (factory, self-calibration, import)." },
     "intrinsic_model": {
       "type": "string",
-      "enum": ["opencv", "pinhole", "opencv_fisheye", "omnidirectional", "opengl", "custom"]
+      "enum": ["opencv", "pinhole", "opencv_fisheye", "omnidirectional", "opengl", "custom", "fov"],
+      "description": "Canonical camera model vocabulary (RFC-0009 §5). `fov` is the additive FOV-division model (COLMAP FOV): fx, fy, cx, cy, omega."
     },
     "intrinsics": {
       "type": "object",
