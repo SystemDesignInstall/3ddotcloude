@@ -161,6 +161,17 @@ ColmapConfig ColmapConfig::FromJson(const std::string& config_json) {
     }
   }
 
+  // The engine's PipelineCompiler wraps each stage's effective configuration
+  // in a fixed envelope {pipeline_id, pipeline_version, stage, config}
+  // (pipeline_compiler.cpp); the adapter unwraps the algorithm settings inside
+  // `config` and validates those. A document without the envelope (direct
+  // adapter calls, the worker's task body) validates as-is.
+  if (doc.is_object() && doc.size() == 4 && doc.contains("pipeline_id") &&
+      doc.contains("pipeline_version") && doc.contains("stage") &&
+      doc.contains("config") && doc["config"].is_object()) {
+    doc = doc["config"];
+  }
+
   try {
     RejectCalibrationVocabulary(doc);
     if (!doc.is_object()) {

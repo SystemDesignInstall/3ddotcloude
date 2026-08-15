@@ -81,18 +81,38 @@ std::vector<std::string> BuildStageCommand(
   return command;
 }
 
-std::filesystem::path SparseModelPayloadPath(
+std::filesystem::path SparseModelDir(
     const std::filesystem::path& workspace) {
-  return workspace / "sparse" / "0" / "model.bin";
+  return workspace / "sparse" / "0";
 }
 
-std::vector<std::filesystem::path> DiscoverOutputs(
+std::vector<std::filesystem::path> DiscoverNativeModelFiles(
     const std::filesystem::path& workspace) {
-  const auto payload = SparseModelPayloadPath(workspace);
-  if (Exists(payload)) {
-    return {payload};
+  const std::filesystem::path model_dir = SparseModelDir(workspace);
+  const std::vector<std::filesystem::path> files = {
+      model_dir / "cameras.bin",
+      model_dir / "images.bin",
+      model_dir / "points3D.bin",
+  };
+  std::size_t present = 0;
+  for (const auto& file : files) {
+    if (Exists(file)) {
+      ++present;
+    }
   }
-  return {};
+  if (present == 0) {
+    return {};  // the mapper produced no reconstruction
+  }
+  if (present != files.size()) {
+    throw spatial::core::AdapterError(
+        spatial::core::ErrorCode::kAdapterProcessFailed,
+        "incomplete COLMAP model in " + model_dir.string() +
+            ": expected cameras.bin, images.bin, points3D.bin",
+        {}, /*recoverable=*/false,
+        "Re-run the reconstruction; a partial sparse model is never "
+        "converted or emitted.");
+  }
+  return files;
 }
 
 }  // namespace spatial::adapters::colmap

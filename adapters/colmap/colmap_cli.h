@@ -26,7 +26,8 @@ std::string StageSubcommand(ColmapStage stage);
 // Deterministic per-task workspace layout (plan §4):
 //   <workspace>/{images/, features/, matches/, sparse/, logs/}
 // plus an empty `database.db` (COLMAP's private SQLite file — it is the
-// task's isolated workspace, never the MetadataDb, ADR-038). Idempotent.
+// task's isolated workspace, never a host database handle, ADR-038).
+// Idempotent.
 void CreateWorkspace(const std::filesystem::path& workspace);
 
 // Full argv for one stage, e.g.:
@@ -39,18 +40,18 @@ std::vector<std::string> BuildStageCommand(
     const std::string& executable, ColmapStage stage,
     const std::filesystem::path& workspace, const ColmapConfig& config);
 
-// The stand-in payload path the mapper stage produces: <ws>/sparse/0/
-// mirrors real COLMAP's sparse/<n>/ model directory. C1-S3 emits this single
-// payload as the SparseModel artifact; the cameras/images/points3D.bin ->
-// canonical SparseModel translation is the deferred colmap_converter slice
-// (plan §6; sparse-model.schema.json deferred to P2.5).
-std::filesystem::path SparseModelPayloadPath(
+// The mapper's model output directory: <ws>/sparse/0/ mirrors real COLMAP's
+// sparse/<n>/ reconstruction directories (the mapper's --output_path is
+// <ws>/sparse). C1-S4 emits the first reconstruction only.
+std::filesystem::path SparseModelDir(
     const std::filesystem::path& workspace);
 
-// Discovers produced canonical artifacts in the workspace after a run.
-// For C1-S3: the sparse-model stand-in payload when the mapper produced it.
-// Deterministic order; empty when nothing was produced.
-std::vector<std::filesystem::path> DiscoverOutputs(
+// Discovers a complete native COLMAP model in SparseModelDir (C1-S4): the
+// three files cameras.bin / images.bin / points3D.bin in a deterministic
+// order. Returns {} when no model directory exists; throws AdapterError when
+// the directory is only partially written (fail-closed — never convert a
+// half-written reconstruction).
+std::vector<std::filesystem::path> DiscoverNativeModelFiles(
     const std::filesystem::path& workspace);
 
 }  // namespace spatial::adapters::colmap

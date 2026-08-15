@@ -8,7 +8,8 @@ are the other side of the contract: they receive content hashes + CAS access
 (``ArtifactStore``, ADR-010) and must never hold a database handle.
 
 This gate makes that invariant machine-checkable. Forbidden inside
-``engine/workers/**``:
+``engine/workers/**`` and, since C1-S4, ``adapters/colmap/**`` (the COLMAP
+process worker):
 
 - ``core/storage/metadata_db.h`` (direct include)
 - ``core/scene/query/scene_query.h`` (direct include)
@@ -46,7 +47,9 @@ FORBIDDEN_IDENTIFIERS = (
     "SceneQuery",
 )
 
-SCAN_DIR = "engine/workers"
+# Workers live in engine/workers/** and, since C1-S4, adapters/colmap/**
+# (the COLMAP process worker). The gate applies to both trees.
+SCAN_DIRS = ("engine/workers", "adapters/colmap")
 
 EXTENSIONS = (".cpp", ".hpp", ".h", ".cc")
 
@@ -89,7 +92,7 @@ def main() -> int:
     args = parser.parse_args()
 
     repo = os.path.abspath(args.repo)
-    root = os.path.join(repo, SCAN_DIR)
+    root = os.path.join(repo, SCAN_DIRS[0])
     violations: list[tuple[str, int, str, str]] = []
     scanned = 0
 
@@ -100,28 +103,33 @@ def main() -> int:
         )
         return 0
 
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
-        for filename in filenames:
-            if not filename.lower().endswith(EXTENSIONS):
-                continue
-            rel = os.path.relpath(os.path.join(dirpath, filename), repo)
-            rel = rel.replace("\\", "/")
-            scanned += 1
-            path = os.path.join(dirpath, filename)
-            with open(path, encoding="utf-8", errors="replace") as fh:
-                for lineno, line in enumerate(fh, start=1):
-                    stripped = RE_LEADING_WS.sub("", line).rstrip()
-                    for pattern in FORBIDDEN_INCLUDES:
-                        if pattern in line:
-                            violations.append(
-                                (rel, lineno, f"include {pattern}", stripped)
-                            )
-                    for identifier in FORBIDDEN_IDENTIFIERS:
-                        if _contains_identifier(line, identifier):
-                            violations.append(
-                                (rel, lineno, f"identifier {identifier}", stripped)
-                            )
+    for scan_dir in SCAN_DIRS:
+        base = os.path.join(repo, scan_dir)
+        if not os.path.isdir(base):
+            continue
+        for dirpath, dirnames, filenames in os.walk(base):
+            dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+            for filename in filenames:
+                if not filename.lower().endswith(EXTENSIONS):
+                    continue
+                rel = os.path.relpath(os.path.join(dirpath, filename), repo)
+                rel = rel.replace("\\", "/")
+                scanned += 1
+                path = os.path.join(dirpath, filename)
+                with open(path, encoding="utf-8", errors="replace") as fh:
+                    for lineno, line in enumerate(fh, start=1):
+                        stripped = RE_LEADING_WS.sub("", line).rstrip()
+                        for pattern in FORBIDDEN_INCLUDES:
+                            if pattern in line:
+                                violations.append(
+                                    (rel, lineno, f"include {pattern}", stripped)
+                                )
+                        for identifier in FORBIDDEN_IDENTIFIERS:
+                            if _contains_identifier(line, identifier):
+                                violations.append(
+                                    (rel, lineno, f"identifier {identifier}",
+                                     stripped)
+                                )
 
     if violations:
         print("worker-boundary: FAIL", file=sys.stderr)

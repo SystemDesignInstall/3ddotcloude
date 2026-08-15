@@ -120,6 +120,10 @@ const ResourceProfile& ProcessExecutor::profile() const { return profile_; }
 
 Uuid ProcessExecutor::id() const { return id_; }
 
+std::string ProcessExecutor::implementation_label() const {
+  return "process";
+}
+
 void ProcessExecutor::Submit(const TaskRequest& request) {
   if (shutdown_ || child_ == nullptr) {
     throw WorkerError(ErrorCode::kWorkerTerminated,

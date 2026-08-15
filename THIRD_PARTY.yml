@@ -76,13 +76,13 @@ dependencies:
     security_notes: null
   - name: COLMAP
     repository: https://github.com/colmap/colmap
-    version: planned
+    version: 3.13
     code_license: BSD-3-Clause
     model_license: null
     commercial_use: yes
     redistribution: yes
-    status: planned
-    notes: Canonical SfM backend behind a capability adapter (ADR-004). Planned; never built in M0.
+    status: active
+    notes: Canonical SfM backend behind a capability adapter (ADR-004). Integrated at C1-S4 (worker bridge + converter proves the chain end-to-end); launched as a subprocess, never linked (RFC-0008 §16).
     security_notes: null
   - name: OpenMVS
     repository: https://github.com/cdcseacave/openMVS

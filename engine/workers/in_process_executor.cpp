@@ -70,6 +70,10 @@ const ResourceProfile& InProcessExecutor::profile() const { return profile_; }
 
 Uuid InProcessExecutor::id() const { return id_; }
 
+std::string InProcessExecutor::implementation_label() const {
+  return "inprocess";
+}
+
 InProcessExecutor::~InProcessExecutor() {
   if (worker_thread_.joinable()) {
     {

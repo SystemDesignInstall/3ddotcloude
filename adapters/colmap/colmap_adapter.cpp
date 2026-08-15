@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "adapters/colmap/colmap_cli.h"
+#include "adapters/colmap/colmap_converter.h"
 #include "adapters/process/process_runner.h"
 #include "core/artifacts/artifact_manifest.h"
 #include "core/artifacts/artifact_store.h"
@@ -136,11 +137,42 @@ void ColmapAdapter::MaterializeInputs(
     return;
   }
   if (context_->store == nullptr) {
-    throw spatial::core::AdapterError(
-        ErrorCode::kAdapterProcessFailed,
-        "input materialization requires an artifact store (none bound)",
-        {}, /*recoverable=*/false,
-        "Bind the project ArtifactStore in the ExecutionContext.");
+    // Worker path (C1-S4): the host already materialized every declared input
+    // into workspace/inputs/<hash> (ProcessExecutor); the worker has no CAS
+    // access (ADR-038). Stage the local files into the CLI layout and fail
+    // closed when a declared input is missing from the workspace.
+    const auto inputs_dir = workspace / "inputs";
+    for (std::size_t i = 0; i < context_->input_refs.size(); ++i) {
+      const std::string& ref = context_->input_refs[i];
+      const std::string kind =
+          i < context_->input_kinds.size() ? context_->input_kinds[i] : "image";
+      if (kind != "image" && kind != "calibration") {
+        throw spatial::core::AdapterError(
+            ErrorCode::kAdapterProcessFailed,
+            "unknown input kind '" + kind + "' for input " + ref, {},
+            /*recoverable=*/false,
+            "Input kinds are restricted to the declared "
+            "input_artifact_kinds {image, calibration}.");
+      }
+      std::vector<std::uint8_t> bytes;
+      try {
+        bytes = ReadFile(inputs_dir / ref);
+      } catch (const std::exception&) {
+        throw spatial::core::AdapterError(
+            ErrorCode::kAdapterProcessFailed,
+            "input not materialized in workspace: " + ref, {},
+            /*recoverable=*/false,
+            "The engine materializes TaskRequest.input_refs into "
+            "workspace/inputs/<hash> before dispatch; a missing file means the "
+            "host-side materialization failed or the ref was never declared.");
+      }
+      if (kind == "image") {
+        AtomicWrite(workspace / "images" / ref, bytes);
+      } else {
+        AtomicWrite(workspace / "calibration.json", bytes);
+      }
+    }
+    return;
   }
   const auto inputs_dir = workspace / "inputs";
   CreateDirectories(inputs_dir);
@@ -241,7 +273,14 @@ void ColmapAdapter::Execute(const std::vector<std::string>& plan,
         "worker builds one per task.");
   }
 
-  const std::filesystem::path workspace(context_->workspace);
+  // The scheduler hands workers relative workspaces (temp/<job>/<task>,
+  // resolved against the host cwd, scheduler.cpp). Canonicalize to an
+  // absolute path before building any CLI argv: the backend resolves
+  // --image_path / --output_path against ITS working directory — which is
+  // the workspace itself — so a relative path would double-nest and break
+  // every stage. Idempotent for already-absolute workspaces.
+  const std::filesystem::path workspace =
+      std::filesystem::absolute(context_->workspace);
 
   // Isolated task workspace (plan §4) + input materialization (RFC-0009 §6).
   CreateWorkspace(workspace);
@@ -319,9 +358,19 @@ void ColmapAdapter::Execute(const std::vector<std::string>& plan,
     }
   }
 
-  // Output discovery -> canonical artifact (workspace -> payload + provenance
-  // manifest). The host verifies and ingests into the CAS.
-  for (const auto& payload : DiscoverOutputs(workspace)) {
+  // Output discovery -> canonical artifact (C1-S4). The only reader of
+  // COLMAP's native binary formats is the converter (RFC-0008 §6/§7): native
+  // cameras/images/points3D.bin -> provisional canonical SparseModel JSON ->
+  // workspace payload -> provenance manifest. The host verifies and ingests
+  // into the CAS.
+  const std::vector<std::filesystem::path> native_files =
+      DiscoverNativeModelFiles(workspace);
+  if (!native_files.empty()) {
+    const SparseModel model = ParseSparseModel(
+        native_files[0], native_files[1], native_files[2]);
+    const std::filesystem::path payload =
+        SparseModelDir(workspace) / "sparse_model.json";
+    AtomicWrite(payload, SparseModelToJson(model));
     sink.ArtifactProduced(payload.string(), BuildManifest(payload));
   }
 }

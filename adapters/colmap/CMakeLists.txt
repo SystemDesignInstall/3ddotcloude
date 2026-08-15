@@ -30,6 +30,7 @@ add_library(spatial_colmap_adapter STATIC
   colmap_adapter.cpp
   colmap_cli.cpp
   colmap_config.cpp
+  colmap_converter.cpp
 )
 
 target_include_directories(spatial_colmap_adapter PUBLIC
@@ -49,4 +50,42 @@ set_target_properties(spatial_colmap_adapter PROPERTIES
   CXX_STANDARD_REQUIRED ON
   CXX_EXTENSIONS OFF
   POSITION_INDEPENDENT_CODE ON
+)
+
+# ---------------------------------------------------------------------------
+# COLMAP process worker (C1-S4; plan §1.1 colmap_worker_main.cpp/colmap_worker.cpp).
+# A standalone child binary the host spawns via ProcessExecutor; it links the
+# adapter + the worker protocol (generated protobuf in the engine build tree).
+# It must never link spatial_engine: the worker is the child process the engine
+# drives, not part of the engine aggregate (RFC-0008 §5).
+# ---------------------------------------------------------------------------
+set(SPATIAL_COLMAP_WORKER_PROTO_DIR "${CMAKE_BINARY_DIR}/engine/generated")
+set(SPATIAL_COLMAP_WORKER_PROTO_SOURCES
+  "${SPATIAL_COLMAP_WORKER_PROTO_DIR}/worker.pb.cc"
+  "${SPATIAL_COLMAP_WORKER_PROTO_DIR}/errors.pb.cc"
+)
+# Generated protobuf output is third-party code: never fail on its warnings.
+set_source_files_properties(
+  ${SPATIAL_COLMAP_WORKER_PROTO_SOURCES}
+  PROPERTIES COMPILE_OPTIONS "/WX-")
+
+find_package(protobuf CONFIG REQUIRED)
+
+add_executable(spatial_colmap_worker
+  colmap_worker_main.cpp
+  colmap_worker.cpp
+  ${SPATIAL_COLMAP_WORKER_PROTO_SOURCES}
+)
+target_include_directories(spatial_colmap_worker PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/../..
+  ${CMAKE_BINARY_DIR}/engine
+)
+target_link_libraries(spatial_colmap_worker PRIVATE
+  spatial_colmap_adapter
+  protobuf::libprotobuf
+)
+set_target_properties(spatial_colmap_worker PROPERTIES
+  CXX_STANDARD 20
+  CXX_STANDARD_REQUIRED ON
+  CXX_EXTENSIONS OFF
 )

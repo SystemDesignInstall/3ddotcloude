@@ -55,6 +55,8 @@ This guide is the complete, reviewable checklist for integrating a new backend (
 - Replaceability is enforced by `check-arch-debt` (no backend includes outside adapters) and the architecture-review gate on `core/plugin/**` and `schemas/**`.
 - Add golden fixtures generated once from a verified backend to keep mocks honest over time.
 
+**COLMAP result (C1-S4):** replaceable in both directions — the engine drives either the in-process mock (`InProcessExecutor`, ADR-021, same capability set) or the real COLMAP process worker (`ProcessExecutor` + `spatial_colmap_worker`) with **no Core/engine change**; the only engine touch was the generic `WorkerExecutor::implementation_label()` provenance label. The mock↔real parity suite is `tests/unit/test_colmap_worker.cpp` + `test_colmap_e2e.cpp` (runs the COLMAP chain end-to-end against the probe shim; real-COLMAP gold fixtures are marked and skipped when COLMAP is absent).
+
 ## When is it done
 
 A new adapter is complete when: registered and CI-green, capabilities declared, descriptor published with a resolvable license, `doctor` passes, worker wrapper runs end-to-end against mocks, negotiation and replaceability tests pass, and the real-backend tests are marked (and skipped when the backend is absent).

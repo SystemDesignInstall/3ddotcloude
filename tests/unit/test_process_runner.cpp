@@ -85,7 +85,10 @@ TEST(ProcessRunnerTest, HonorsWorkingDirectory) {
       10000);
   EXPECT_EQ(result.outcome, ProcessOutcome::kCompleted);
   EXPECT_EQ(result.exit_code, 0);
-  EXPECT_TRUE(std::filesystem::exists(tmp.path_ / "0" / "model.bin"));
+  // The mapper writes the native COLMAP model into <output>/0/ (C1-S4).
+  EXPECT_TRUE(std::filesystem::exists(tmp.path_ / "0" / "cameras.bin"));
+  EXPECT_TRUE(std::filesystem::exists(tmp.path_ / "0" / "images.bin"));
+  EXPECT_TRUE(std::filesystem::exists(tmp.path_ / "0" / "points3D.bin"));
   EXPECT_TRUE(std::filesystem::exists(tmp.path_ / "logs" / "args.txt"));
 }
 

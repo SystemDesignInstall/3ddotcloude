@@ -68,6 +68,12 @@ class WorkerExecutor {
   // Stable identity recorded in ExecutionRecord.worker_id.
   virtual Uuid id() const = 0;
 
+  // Generic implementation label recorded in
+  // ExecutionManifest.stage.implementation (C1-S4; design D1): "inprocess"
+  // for InProcessExecutor, "process" for ProcessExecutor. An additive,
+  // backend-agnostic name for provenance — never a backend identifier.
+  virtual std::string implementation_label() const = 0;
+
   // Starts a task asynchronously. Throws WorkerError WORKER_BUSY when the
   // worker cannot accept another task right now.
   virtual void Submit(const TaskRequest& request) = 0;

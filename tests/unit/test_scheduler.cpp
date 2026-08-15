@@ -47,6 +47,7 @@ class FakeExecutor : public WorkerExecutor {
 
   const ResourceProfile& profile() const override { return profile_; }
   Uuid id() const override { return id_; }
+  std::string implementation_label() const override { return "fake"; }
 
   void Submit(const TaskRequest& request) override {
     submitted_.push_back(request.task_id);

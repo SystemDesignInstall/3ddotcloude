@@ -80,6 +80,7 @@ add_executable(spatial_colmap_probe_shim unit/colmap_probe_shim_main.cpp)
 
 add_executable(spatial_adapter_tests
   unit/test_colmap_adapter.cpp
+  unit/test_colmap_converter.cpp
   unit/test_colmap_execution.cpp
 )
 target_link_libraries(spatial_adapter_tests PRIVATE
@@ -109,3 +110,27 @@ target_compile_definitions(spatial_process_tests PRIVATE
   SPATIAL_COLMAP_PROBE_SHIM_EXECUTABLE="$<TARGET_FILE:spatial_colmap_probe_shim>"
 )
 gtest_discover_tests(spatial_process_tests)
+
+# COLMAP worker protocol + pipeline E2E tests (C1-S4). Drive the real
+# spatial_colmap_worker binary through the engine's ProcessExecutor and the
+# registered sparse_reconstruction pipeline (images-only).
+add_executable(spatial_colmap_worker_tests
+  unit/test_colmap_worker.cpp
+  unit/test_colmap_e2e.cpp
+)
+target_link_libraries(spatial_colmap_worker_tests PRIVATE
+  spatial_engine
+  spatial_core
+  GTest::gtest
+  GTest::gtest_main
+)
+add_dependencies(spatial_colmap_worker_tests
+  spatial_colmap_worker
+  spatial_colmap_probe_shim
+)
+target_include_directories(spatial_colmap_worker_tests PRIVATE ${CMAKE_SOURCE_DIR})
+target_compile_definitions(spatial_colmap_worker_tests PRIVATE
+  SPATIAL_COLMAP_WORKER_EXECUTABLE="$<TARGET_FILE:spatial_colmap_worker>"
+  SPATIAL_COLMAP_PROBE_SHIM_EXECUTABLE="$<TARGET_FILE:spatial_colmap_probe_shim>"
+)
+gtest_discover_tests(spatial_colmap_worker_tests)

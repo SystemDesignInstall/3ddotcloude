@@ -54,6 +54,7 @@ class ProcessExecutor : public WorkerExecutor {
 
   const ResourceProfile& profile() const override;
   Uuid id() const override;
+  std::string implementation_label() const override;
   void Submit(const TaskRequest& request) override;
   void Cancel(const Uuid& task_id, const std::string& reason) override;
   bool WaitForEvent(WorkerEvent& out, std::int64_t timeout_ms) override;

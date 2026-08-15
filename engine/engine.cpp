@@ -80,7 +80,8 @@ ExecutionManifest Engine::RunPipeline(
     const std::string& config_json) {
   const auto& def = registry_.Resolve(pipeline_id);
   auto plan = compiler_.Compile(def, external_inputs, config_json,
-                                executor_->profile(), "inprocess");
+                                executor_->profile(),
+                                executor_->implementation_label());
 
   manifest_store_->Begin(plan);
   for (std::size_t i = 0; i < plan.stages.size(); ++i) {

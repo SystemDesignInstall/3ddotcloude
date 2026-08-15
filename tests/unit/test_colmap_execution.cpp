@@ -29,6 +29,8 @@
 #include <utility>
 #include <vector>
 
+#include <nlohmann/json.hpp>
+
 #include "adapters/colmap/colmap_adapter.h"
 #include "adapters/colmap/colmap_cli.h"
 #include "adapters/colmap/colmap_config.h"
@@ -168,7 +170,7 @@ TEST_F(ColmapExecutionTest, EndToEndRunsStagesAndEmitsSparseModelArtifact) {
   EXPECT_EQ(sink.percents_, (std::vector<int>{33, 66, 100}));
   ASSERT_EQ(sink.artifacts_.size(), 1u);
   EXPECT_EQ(std::filesystem::path(sink.artifacts_.front()),
-            workspace_ / "sparse" / "0" / "model.bin");
+            workspace_ / "sparse" / "0" / "sparse_model.json");
   EXPECT_TRUE(std::filesystem::exists(sink.artifacts_.front()));
 
   // Workspace layout + input materialization.
@@ -182,6 +184,25 @@ TEST_F(ColmapExecutionTest, EndToEndRunsStagesAndEmitsSparseModelArtifact) {
             image1.bytes);
   EXPECT_EQ(spatial::core::fs::ReadText(workspace_ / "calibration.json"),
             "{\"fx\":2457.4}");
+  // The mapper produced the native COLMAP model files (real binary layout);
+  // the adapter converted them to the canonical payload, which must not
+  // collide with the raw native output.
+  EXPECT_TRUE(std::filesystem::exists(workspace_ / "sparse" / "0" /
+                                      "cameras.bin"));
+  EXPECT_TRUE(std::filesystem::exists(workspace_ / "sparse" / "0" /
+                                      "images.bin"));
+  EXPECT_TRUE(std::filesystem::exists(workspace_ / "sparse" / "0" /
+                                      "points3D.bin"));
+
+  // The canonical payload is the provisional SparseModel document.
+  const nlohmann::json payload = nlohmann::json::parse(
+      spatial::core::fs::ReadText(sink.artifacts_.front()));
+  EXPECT_EQ(payload["schema_version"].get<int>(), 1);
+  ASSERT_EQ(payload["cameras"].size(), 1u);
+  EXPECT_EQ(payload["cameras"][0]["intrinsic_model"].get<std::string>(),
+            "pinhole");
+  EXPECT_EQ(payload["images"].size(), 2u);
+  EXPECT_EQ(payload["points3D"].size(), 1u);
 
   // Provenance manifest.
   ASSERT_EQ(sink.manifests_.size(), 1u);
@@ -326,7 +347,10 @@ TEST_F(ColmapExecutionTest, CorruptInputInCasFailsClosed) {
   EXPECT_FALSE(spatial::core::fs::Exists(workspace_ / "logs" / "args.txt"));
 }
 
-TEST_F(ColmapExecutionTest, MissingStoreWithInputsFailsClosed) {
+TEST_F(ColmapExecutionTest, MissingStoreWithUnmaterializedInputFailsClosed) {
+  // C1-S4 worker path: store == nullptr means inputs were pre-materialized
+  // into workspace/inputs/<hash> by the host. A declared input that is not
+  // there fails closed before any CLI spawn.
   auto context = std::make_shared<ExecutionContext>();
   context->workspace = workspace_;
   context->store = nullptr;
@@ -337,12 +361,44 @@ TEST_F(ColmapExecutionTest, MissingStoreWithInputsFailsClosed) {
 
   try {
     adapter.Execute({"feature_extractor"}, sink);
-    FAIL() << "expected AdapterError without a bound artifact store";
+    FAIL() << "expected AdapterError for an input missing from the workspace";
   } catch (const AdapterError& e) {
     EXPECT_EQ(e.code(), ErrorCode::kAdapterProcessFailed);
-    EXPECT_NE(e.message().find("requires an artifact store"),
+    EXPECT_NE(e.message().find("not materialized in workspace"),
               std::string::npos);
   }
+  EXPECT_FALSE(spatial::core::fs::Exists(workspace_ / "logs" / "args.txt"));
+}
+
+TEST_F(ColmapExecutionTest, MissingStoreStagesPreMaterializedInputsLocally) {
+  // C1-S4 worker path happy case: with no CAS store bound, the adapter stages
+  // the host-materialized workspace/inputs/<hash> files into images/ +
+  // calibration.json (ADR-038: the worker never touches the CAS/DB).
+  std::filesystem::create_directories(workspace_ / "inputs");
+  const std::vector<std::uint8_t> image_bytes = {'p', 'n', 'g', '-', 'a'};
+  const std::vector<std::uint8_t> cal_bytes = {'{', '}'};
+  const std::string image_ref = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const std::string cal_ref = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+  spatial::core::fs::AtomicWrite(workspace_ / "inputs" / image_ref, image_bytes);
+  spatial::core::fs::AtomicWrite(workspace_ / "inputs" / cal_ref, cal_bytes);
+
+  auto context = std::make_shared<ExecutionContext>();
+  context->workspace = workspace_;
+  context->store = nullptr;
+  context->input_refs = {image_ref, cal_ref};
+  context->input_kinds = {"image", "calibration"};
+  context->config_json = R"({"threads": 2})";
+  ColmapAdapter adapter(SPATIAL_COLMAP_PROBE_SHIM_EXECUTABLE, context);
+  RecordingSink sink;
+  adapter.Execute({"feature_extractor", "matcher", "mapper"}, sink);
+
+  EXPECT_EQ(spatial::core::fs::ReadFile(workspace_ / "images" / image_ref),
+            image_bytes);
+  EXPECT_EQ(spatial::core::fs::ReadText(workspace_ / "calibration.json"), "{}");
+  ASSERT_EQ(sink.manifests_.size(), 1u);
+  std::vector<std::string> expected_inputs = {image_ref, cal_ref};
+  std::sort(expected_inputs.begin(), expected_inputs.end());
+  EXPECT_EQ(sink.manifests_.front().input_artifact_hashes, expected_inputs);
 }
 
 TEST_F(ColmapExecutionTest, UnknownInputKindIsRejected) {
