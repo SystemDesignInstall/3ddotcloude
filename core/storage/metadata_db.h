@@ -180,6 +180,18 @@ struct CalibrationRow {
   std::optional<std::int64_t> valid_to_ns;    // exclusive, nullopt = open-ended
 };
 
+// P2.5 (D-CRM-15): Canonical reconstruction scene entity. The full
+// Reconstruction document (cameras, images, points3D) lives in the CAS
+// payload; this row stores metadata for query access.
+struct ReconstructionRow {
+  Uuid reconstruction_id{};
+  Uuid scene_id{};
+  std::string coordinate_frame;
+  std::string status;                      // "reconstructing" | "succeeded" | "failed" | "superseded"
+  std::int64_t created_at_ns = 0;
+  std::string document_json;               // full Reconstruction serialized as JSON (CAS payload content)
+};
+
 // Mutable (non-identity) sensor attributes (sensor-model.md §1). sensor_id is
 // immutable; edits are new sensors or new versions, never in-place mutation.
 // Empty strings clear the underlying column to NULL.
@@ -353,6 +365,15 @@ class MetadataDb {
   // insert violates the PK, so the importer queries existence before writing.
   bool FrameExists(const Uuid& frame_id);
   bool ObservationExists(const Uuid& observation_id);
+
+  // P2.5 (D-CRM-15): canonical reconstruction scene entity (migration 0007).
+  // AddReconstruction inserts a scene row; QueryLatestReconstructionByScene
+  // resolves the most recent succeeded reconstruction for a scene.
+  void AddReconstruction(const ReconstructionRow& row);
+  std::optional<ReconstructionRow> QueryLatestReconstructionByScene(
+      const Uuid& scene_id) const;
+  std::vector<ReconstructionRow> FindReconstructionsByScene(
+      const Uuid& scene_id) const;
 
   // Closes the connection.
   void Close();

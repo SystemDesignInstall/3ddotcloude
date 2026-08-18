@@ -72,7 +72,7 @@ class ColmapE2eTest : public ::testing::Test {
     def.git_commit = "test";
     def.stages = {
         {"reconstruct", "sparse_reconstruction", "sparse_reconstruction",
-         {"image"}, {"sparse_model"}},
+         {"image"}, {"reconstruction"}},
     };
     registry.Register(std::move(def));
   }
@@ -123,19 +123,20 @@ TEST_F(ColmapE2eTest, RunPipelineProducesCanonicalSparseModelAndReplays) {
   const ArtifactRef output = first.stages[0].output_refs.front();
   EXPECT_TRUE(engine.project().artifacts().Has(output));
 
-  // The produced artifact is the provisional canonical SparseModel document.
+  // The produced artifact is the canonical Reconstruction v2 document.
   const auto indexed = engine.project().db().FindArtifactByHash(output);
   ASSERT_TRUE(indexed.has_value());
   const auto manifest = engine.project().artifacts().ReadManifest(indexed->artifact_id);
   ASSERT_TRUE(manifest.has_value());
-  EXPECT_EQ(manifest->type, "sparse_model");
-  EXPECT_EQ(manifest->schema_version, 1);
+  EXPECT_EQ(manifest->type, "reconstruction");
+  EXPECT_EQ(manifest->schema_version, 2);
   ASSERT_EQ(manifest->input_artifact_hashes.size(), 2u);
   const auto payload = engine.project().artifacts().Get(output);
   ASSERT_TRUE(payload.has_value());
   const json document =
       json::parse(std::string(payload->begin(), payload->end()));
-  EXPECT_EQ(document["schema_version"].get<int>(), 1);
+  EXPECT_EQ(document["schema_version"].get<int>(), 2);
+  EXPECT_TRUE(document.contains("reconstruction_id"));
   ASSERT_EQ(document["cameras"].size(), 1u);
   EXPECT_EQ(document["cameras"][0]["intrinsic_model"].get<std::string>(),
             "pinhole");

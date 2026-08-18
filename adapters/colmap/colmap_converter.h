@@ -81,8 +81,11 @@
 #include <array>
 #include <cstdint>
 #include <filesystem>
+#include <map>
 #include <string>
 #include <vector>
+
+#include "core/reconstruction/reconstruction.h"
 
 namespace spatial::adapters::colmap {
 
@@ -106,6 +109,8 @@ struct SparseModelCamera {
   SparseModelIntrinsics intrinsics;
   std::int64_t width = 0;
   std::int64_t height = 0;
+  int model_id = 0;                        // COLMAP camera model id (for v2 distortion extraction)
+  std::vector<double> raw_params;           // full parameter vector from cameras.bin (for v2)
 
   bool operator==(const SparseModelCamera&) const = default;
 };
@@ -166,5 +171,52 @@ SparseModel ParseSparseModel(const std::filesystem::path& cameras_bin,
 // order and canonical number formatting. Equal SparseModel values always
 // produce identical bytes (ADR-020).
 std::string SparseModelToJson(const SparseModel& model);
+
+// --- P2.5: Canonical Reconstruction v2 ---
+
+// Provenance metadata for the v2 reconstruction document. The adapter
+// populates this from its build info and execution context.
+struct ReconstructionProvenanceInfo {
+  std::string backend_name = "colmap";
+  std::string backend_version;
+  std::string adapter_version;
+  std::string configuration_hash;
+  std::vector<std::string> input_artifact_hashes;
+  std::string engine_version;
+  std::string engine_commit;
+  std::string git_commit;
+  std::int64_t started_at_ns = 0;
+  std::int64_t finished_at_ns = 0;
+  std::int64_t duration_ns = 0;
+};
+
+// Converts a parsed SparseModel (from ParseSparseModel) into the canonical
+// Reconstruction v2 type (core/reconstruction/reconstruction.h).
+//
+// frame_id_map: optional mapping from COLMAP image name → Frame UUID string.
+//   When provided, ReconImage.frame_id is populated. When empty, frame_id is
+//   left as an empty string (downstream consumer resolves the mapping).
+//
+// The caller provides reconstruction-level metadata (IDs, coordinate frame,
+// provenance) that the adapter obtains from its execution context.
+//
+// COLMAP-specific conversions:
+//   - Quaternion: COLMAP (w,x,y,z) → canonical (x,y,z,w) [D-CRM-02]
+//   - Pose: T_reconstruction_camera (COLMAP camera-to-world inverted) [D-CRM-01]
+//   - Intrinsics + distortion: extracted per RFC-0009 camera model table
+//   - All images included with detected=true (COLMAP only outputs registered)
+spatial::core::Reconstruction SparseModelToReconstruction(
+    const SparseModel& model,
+    const std::string& reconstruction_id,
+    const std::string& scene_id,
+    const std::vector<std::string>& session_ids,
+    const std::string& coordinate_frame,
+    const ReconstructionProvenanceInfo& provenance,
+    const std::map<std::string, std::string>& frame_id_map = {});
+
+// Canonical JSON serialization of a Reconstruction v2 document.
+// Deterministic field order and number formatting (ADR-020).
+// The output conforms to schemas/json/reconstruction.schema.json.
+std::string ReconstructionToJson(const spatial::core::Reconstruction& rec);
 
 }  // namespace spatial::adapters::colmap

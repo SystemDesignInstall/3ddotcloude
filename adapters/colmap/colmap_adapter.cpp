@@ -15,6 +15,7 @@
 #include "core/artifacts/artifact_manifest.h"
 #include "core/artifacts/artifact_store.h"
 #include "core/errors/project_error.h"
+#include "core/reconstruction/reconstruction.h"
 #include "core/utils/fs.h"
 #include "core/utils/sha256.h"
 #include "core/utils/uuid.h"
@@ -29,6 +30,7 @@ using spatial::core::fs::CreateDirectories;
 using spatial::core::fs::Iso8601UtcNow;
 using spatial::core::fs::ReadFile;
 using spatial::core::GenerateUuid;
+using spatial::core::FormatUuid;
 using spatial::core::Sha256Hex;
 using spatial::core::ToJsonString;
 
@@ -96,7 +98,7 @@ spatial::adapters::AdapterDescriptor ColmapAdapter::Descriptor() const {
   descriptor.profile = profile_;
   descriptor.input_artifact_kinds.assign(std::begin(kInputKinds),
                                          std::end(kInputKinds));
-  descriptor.output_artifact_kinds = {"feature", "sparse_model"};
+  descriptor.output_artifact_kinds = {"feature", "reconstruction"};
   return descriptor;
 }
 
@@ -221,8 +223,8 @@ std::string ColmapAdapter::BuildManifest(
   const std::vector<std::uint8_t> bytes = ReadFile(payload);
   ArtifactManifest manifest;
   manifest.artifact_uuid = GenerateUuid();
-  manifest.type = "sparse_model";
-  manifest.schema_version = 1;
+  manifest.type = "reconstruction";
+  manifest.schema_version = 2;
   manifest.producer.id = "colmap";
   manifest.producer.version = kColmapAdapterVersion;
   manifest.producer.git_commit = kColmapAdapterGitCommit;
@@ -358,19 +360,42 @@ void ColmapAdapter::Execute(const std::vector<std::string>& plan,
     }
   }
 
-  // Output discovery -> canonical artifact (C1-S4). The only reader of
-  // COLMAP's native binary formats is the converter (RFC-0008 §6/§7): native
-  // cameras/images/points3D.bin -> provisional canonical SparseModel JSON ->
-  // workspace payload -> provenance manifest. The host verifies and ingests
+  // Output discovery -> canonical Reconstruction v2 artifact. The only reader
+  // of COLMAP's native binary formats is the converter (RFC-0008 §6/§7): native
+  // cameras/images/points3D.bin -> SparseModel -> canonical Reconstruction v2
+  // -> workspace payload -> provenance manifest. The host verifies and ingests
   // into the CAS.
   const std::vector<std::filesystem::path> native_files =
       DiscoverNativeModelFiles(workspace);
   if (!native_files.empty()) {
     const SparseModel model = ParseSparseModel(
         native_files[0], native_files[1], native_files[2]);
+
+    // Build provenance info for v2 output.
+    ReconstructionProvenanceInfo prov_info;
+    prov_info.backend_name = "colmap";
+    prov_info.backend_version = "";  // COLMAP version not readily available here
+    prov_info.adapter_version = kColmapAdapterVersion;
+    prov_info.git_commit = kColmapAdapterGitCommit;
+    prov_info.configuration_hash = Sha256Hex(context_->config_json);
+    prov_info.input_artifact_hashes = SortedUnique(context_->input_refs);
+
+    // Scene/session IDs are not available at adapter level; the downstream
+    // consumer (engine/worker) is responsible for linking the reconstruction
+    // to its scene and sessions via the metadata DB.
+    const std::string reconstruction_id = FormatUuid(GenerateUuid());
+
+    spatial::core::Reconstruction rec = SparseModelToReconstruction(
+        model,
+        /*reconstruction_id=*/reconstruction_id,
+        /*scene_id=*/"",
+        /*session_ids=*/std::vector<std::string>{},
+        /*coordinate_frame=*/"reconstruction_0",
+        /*provenance=*/prov_info);
+
     const std::filesystem::path payload =
-        SparseModelDir(workspace) / "sparse_model.json";
-    AtomicWrite(payload, SparseModelToJson(model));
+        SparseModelDir(workspace) / "reconstruction.json";
+    AtomicWrite(payload, ReconstructionToJson(rec));
     sink.ArtifactProduced(payload.string(), BuildManifest(payload));
   }
 }

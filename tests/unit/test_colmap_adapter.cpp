@@ -78,7 +78,7 @@ TEST(ColmapAdapterTest, DescriptorDeclaresExactCapabilities) {
   EXPECT_EQ(descriptor.input_artifact_kinds,
             (std::vector<std::string>{"image", "calibration"}));
   EXPECT_EQ(descriptor.output_artifact_kinds,
-            (std::vector<std::string>{"feature", "sparse_model"}));
+            (std::vector<std::string>{"feature", "reconstruction"}));
 }
 
 TEST(ColmapAdapterTest, CapabilityNegotiationRejectsUnsupported) {

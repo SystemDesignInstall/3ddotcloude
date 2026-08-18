@@ -1,0 +1,447 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://spatial-platform.dev/schemas/json/reconstruction.schema.json",
+  "title": "Canonical Reconstruction Model v2 (P2.5)",
+  "description": "Backend-independent sparse reconstruction result (D-CRM-01…D-CRM-20). Every reconstruction backend (COLMAP, SLAM, hybrid, AI priors) produces this document through its adapter. The document carries spatial content, provenance, and optional uncertainty. Lifecycle state (reconstructing/succeeded/failed/superseded) belongs to the DB ReconstructionRow, NOT this document — this document represents a finalized reconstruction result.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "reconstruction_id", "scene_id", "session_ids",
+    "coordinate_frame", "provenance", "cameras", "images", "points3D"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 2,
+      "description": "Document schema version. Transitions from 1 (provisional COLMAP-shaped) to 2 (canonical backend-independent) per D-CRM-10."
+    },
+    "reconstruction_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Instance-scoped UUIDv4 identity (D-CRM-07). A reconstruction is an execution result, not a content-derived fact."
+    },
+    "scene_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Scene this reconstruction belongs to."
+    },
+    "session_ids": {
+      "type": "array",
+      "items": { "type": "string", "format": "uuid" },
+      "minItems": 1,
+      "description": "Capture sessions that contributed images to this reconstruction (D-CRM-12). Supports multi-session SLAM and future map-merging."
+    },
+    "coordinate_frame": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Reconstruction-local coordinate frame name, assigned by the adapter, prefixed with 'reconstruction_' (D-CRM-06). NOT 'project_world' unless alignment has been performed."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["reconstructing", "succeeded", "failed", "superseded"],
+      "description": "Document-level status (D-CRM-19). For a finalized CAS payload this should be 'succeeded'. Lifecycle transitions are managed by the DB ReconstructionRow."
+    },
+    "created_at_ns": {
+      "type": "integer",
+      "description": "Creation timestamp in nanoseconds since epoch."
+    },
+    "provenance": { "$ref": "#/definitions/ReconstructionProvenance" },
+    "cameras": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/ReconCamera" },
+      "description": "Camera models used in this reconstruction (D-CRM-04, D-CRM-05)."
+    },
+    "images": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/ReconImage" },
+      "description": "ALL input images, including detected=false for unregistered ones (D-CRM-20). Consumers filter by detected=true when they only want registered images."
+    },
+    "points3D": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/ReconPoint3D" },
+      "description": "Reconstructed 3D points (D-CRM-08). Each point carries its observation track."
+    },
+    "uncertainty": {
+      "$ref": "#/definitions/ReconUncertainty",
+      "description": "Optional reconstruction-level uncertainty (D-CRM-08). Per-point uncertainty may also be present in points3D[]."
+    }
+  },
+
+  "definitions": {
+    "ReconPose": {
+      "type": "object",
+      "description": "SE(3) rigid-body transform: T_reconstruction_camera (D-CRM-01). Maps points from camera frame to the reconstruction's local frame. Quaternion order: (x, y, z, w) scalar-last per ADR-007 (D-CRM-02).",
+      "additionalProperties": false,
+      "required": ["rotation_xyzw", "translation_xyz"],
+      "properties": {
+        "rotation_xyzw": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 4,
+          "maxItems": 4,
+          "description": "Unit quaternion in (x, y, z, w) scalar-last order (D-CRM-02)."
+        },
+        "translation_xyz": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "Translation vector in meters."
+        }
+      }
+    },
+
+    "ReconCamera": {
+      "type": "object",
+      "description": "Camera intrinsics and distortion (D-CRM-04, D-CRM-05). Backend-local camera_id is scoped to this Reconstruction document (D-CRM-03).",
+      "additionalProperties": false,
+      "required": [
+        "camera_id", "width", "height", "intrinsic_model",
+        "fx", "fy", "cx", "cy", "distortion_model"
+      ],
+      "properties": {
+        "camera_id": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Backend-local camera identifier, scoped to this Reconstruction (D-CRM-03)."
+        },
+        "width": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Sensor width in pixels."
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Sensor height in pixels."
+        },
+        "intrinsic_model": {
+          "type": "string",
+          "enum": ["pinhole", "opencv", "opencv_fisheye", "fov", "omnidirectional", "custom"],
+          "description": "Canonical camera model vocabulary (RFC-0009 §5)."
+        },
+        "fx": {
+          "type": "number",
+          "description": "Focal length x in pixels."
+        },
+        "fy": {
+          "type": "number",
+          "description": "Focal length y in pixels."
+        },
+        "cx": {
+          "type": "number",
+          "description": "Principal point x in pixels."
+        },
+        "cy": {
+          "type": "number",
+          "description": "Principal point y in pixels."
+        },
+        "distortion_model": {
+          "type": "string",
+          "enum": ["none", "opencv_radial", "opencv_fisheye", "equidistant", "custom"],
+          "description": "Distortion model (D-CRM-04). Separate from projection model."
+        },
+        "distortion_coefficients": {
+          "type": "array",
+          "items": { "type": "number" },
+          "description": "Distortion coefficients (model-dependent). Empty array for 'none'."
+        },
+        "calibration_ref": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Optional reference to a CalibrationArtifact (D-CRM-05). For provenance only; does not imply intrinsics are identical."
+        }
+      }
+    },
+
+    "ReconImage": {
+      "type": "object",
+      "description": "One input image and its estimated pose (D-CRM-20). All input images are included, with detected=false for unregistered ones.",
+      "additionalProperties": false,
+      "required": ["image_id", "camera_id", "name", "pose", "detected"],
+      "properties": {
+        "image_id": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Backend-local image identifier, scoped to this Reconstruction (D-CRM-03)."
+        },
+        "camera_id": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Reference to ReconCamera.camera_id."
+        },
+        "frame_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Optional UUID referencing a Frame in the import model. When present, bridges reconstruction images to the scene graph via frame_id → FeatureSet → FeatureArtifact. When absent, downstream resolution is required to establish the linkage."
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Original filename (provenance, not identity)."
+        },
+        "pose": { "$ref": "#/definitions/ReconPose" },
+        "detected": {
+          "type": "boolean",
+          "description": "Whether this image was successfully registered in the reconstruction (D-CRM-20). false for images that were input but not localized."
+        }
+      }
+    },
+
+    "ReconPoint3D": {
+      "type": "object",
+      "description": "Reconstructed 3D point with observation track (D-CRM-08).",
+      "additionalProperties": false,
+      "required": ["point3d_id", "xyz", "color", "error", "track"],
+      "properties": {
+        "point3d_id": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Backend-local 3D point identifier, scoped to this Reconstruction (D-CRM-03)."
+        },
+        "xyz": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "3D position in the reconstruction coordinate frame (meters)."
+        },
+        "color": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 0, "maximum": 255 },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "RGB color [r, g, b], each channel 0–255."
+        },
+        "error": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Mean reprojection error in pixels. Always present (D-CRM-08)."
+        },
+        "track": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/TrackElement" },
+          "description": "Observation history of this point (D-CRM-16). Synthesized track — NOT a separate entity."
+        },
+        "uncertainty": {
+          "$ref": "#/definitions/ReconUncertainty",
+          "description": "Optional per-point uncertainty (D-CRM-08)."
+        }
+      }
+    },
+
+    "TrackElement": {
+      "type": "object",
+      "description": "One observation of a 3D point from a 2D keypoint (D-CRM-09, D-CRM-16).",
+      "additionalProperties": false,
+      "required": ["image_id", "point2d_idx"],
+      "properties": {
+        "image_id": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Reference to ReconImage.image_id."
+        },
+        "point2d_idx": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Index into the FeatureArtifact.keypoints[] array for this image (D-CRM-09, D-CRM-18)."
+        }
+      }
+    },
+
+    "ReconObservation": {
+      "type": "object",
+      "description": "Atomic 2D→3D association (D-CRM-09, D-CRM-18). Carries only the link; 2D coordinates live in the FeatureArtifact referenced via frame_id → FeatureSet chain.",
+      "additionalProperties": false,
+      "required": ["image_id", "point2d_idx"],
+      "properties": {
+        "image_id": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Reference to ReconImage.image_id."
+        },
+        "point2d_idx": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Index into FeatureArtifact.keypoints[] (D-CRM-18)."
+        }
+      }
+    },
+
+    "ReconstructionProvenance": {
+      "type": "object",
+      "description": "Full execution lineage (D-CRM-11). Carries backend identity, configuration, inputs, timing, and arbitrary backend-specific metadata.",
+      "additionalProperties": false,
+      "required": ["backend", "configuration_hash", "input_artifact_hashes", "engine_version", "engine_commit", "started_at_ns", "finished_at_ns", "duration_ns"],
+      "properties": {
+        "backend": {
+          "type": "object",
+          "description": "Backend identity.",
+          "additionalProperties": false,
+          "required": ["name", "version", "adapter_version"],
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Backend name, e.g. 'colmap', 'orbslam', 'hybrid'."
+            },
+            "version": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Backend version string."
+            },
+            "adapter_version": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Our adapter version."
+            }
+          }
+        },
+        "configuration_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA-256 of the effective reconstruction configuration."
+        },
+        "input_artifact_hashes": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "description": "CAS hashes of input artifacts consumed by this reconstruction."
+        },
+        "engine_version": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Spatial platform engine version."
+        },
+        "engine_commit": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Spatial platform engine git commit."
+        },
+        "git_commit": {
+          "type": "string",
+          "description": "Adapter git commit."
+        },
+        "started_at_ns": {
+          "type": "integer",
+          "description": "Execution start timestamp (nanoseconds since epoch)."
+        },
+        "finished_at_ns": {
+          "type": "integer",
+          "description": "Execution finish timestamp (nanoseconds since epoch)."
+        },
+        "duration_ns": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Wall-clock execution duration (nanoseconds)."
+        },
+        "backend_specific_json": {
+          "type": "string",
+          "description": "Arbitrary backend metadata as a JSON string (D-CRM-11). Prevents backend-specific fields from polluting the canonical model."
+        }
+      }
+    },
+
+    "ReconUncertainty": {
+      "type": "object",
+      "description": "Optional uncertainty block (D-CRM-08). Per-point or reconstruction-level.",
+      "additionalProperties": false,
+      "required": ["covariance_xyz", "confidence", "source_count"],
+      "properties": {
+        "covariance_xyz": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 6,
+          "maxItems": 6,
+          "description": "3×3 symmetric covariance matrix, flattened row-major (6 unique values)."
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Posterior confidence [0, 1]."
+        },
+        "source_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of images observing this point (or contributing to the reconstruction-level estimate)."
+        }
+      }
+    }
+  },
+
+  "examples": [
+    {
+      "schema_version": 2,
+      "reconstruction_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+      "scene_id": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+      "session_ids": ["6ba7b811-9dad-11d1-80b4-00c04fd430c8"],
+      "coordinate_frame": "reconstruction_0",
+      "provenance": {
+        "backend": {
+          "name": "colmap",
+          "version": "3.13",
+          "adapter_version": "0.2.0"
+        },
+        "configuration_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+        "input_artifact_hashes": [
+          "2222222222222222222222222222222222222222222222222222222222222222"
+        ],
+        "engine_version": "0.2.0",
+        "engine_commit": "abc1234",
+        "git_commit": "def5678",
+        "started_at_ns": 1783123200000000000,
+        "finished_at_ns": 1783123260000000000,
+        "duration_ns": 60000000000
+      },
+      "cameras": [
+        {
+          "camera_id": 1,
+          "width": 1920,
+          "height": 1080,
+          "intrinsic_model": "pinhole",
+          "fx": 1458.0,
+          "fy": 1458.0,
+          "cx": 960.0,
+          "cy": 540.0,
+          "distortion_model": "none",
+          "distortion_coefficients": []
+        }
+      ],
+      "images": [
+        {
+          "image_id": 1,
+          "camera_id": 1,
+          "frame_id": "6ba7b812-9dad-11d1-80b4-00c04fd430c8",
+          "name": "frame001.jpg",
+          "pose": {
+            "rotation_xyzw": [0.0, 0.0, 0.0, 1.0],
+            "translation_xyz": [0.0, 0.0, 0.0]
+          },
+          "detected": true
+        },
+        {
+          "image_id": 2,
+          "camera_id": 1,
+          "frame_id": "6ba7b813-9dad-11d1-80b4-00c04fd430c8",
+          "name": "frame002.jpg",
+          "pose": {
+            "rotation_xyzw": [0.01, 0.02, 0.03, 0.999],
+            "translation_xyz": [0.1, -0.05, 0.02]
+          },
+          "detected": false
+        }
+      ],
+      "points3D": [
+        {
+          "point3d_id": 100,
+          "xyz": [1.234, 5.678, 9.012],
+          "color": [128, 200, 64],
+          "error": 0.42,
+          "track": [
+            { "image_id": 1, "point2d_idx": 5 },
+            { "image_id": 2, "point2d_idx": 12 }
+          ]
+        }
+      ]
+    }
+  ]
+}

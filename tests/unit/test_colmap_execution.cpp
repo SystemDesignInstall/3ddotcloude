@@ -170,7 +170,7 @@ TEST_F(ColmapExecutionTest, EndToEndRunsStagesAndEmitsSparseModelArtifact) {
   EXPECT_EQ(sink.percents_, (std::vector<int>{33, 66, 100}));
   ASSERT_EQ(sink.artifacts_.size(), 1u);
   EXPECT_EQ(std::filesystem::path(sink.artifacts_.front()),
-            workspace_ / "sparse" / "0" / "sparse_model.json");
+            workspace_ / "sparse" / "0" / "reconstruction.json");
   EXPECT_TRUE(std::filesystem::exists(sink.artifacts_.front()));
 
   // Workspace layout + input materialization.
@@ -194,21 +194,31 @@ TEST_F(ColmapExecutionTest, EndToEndRunsStagesAndEmitsSparseModelArtifact) {
   EXPECT_TRUE(std::filesystem::exists(workspace_ / "sparse" / "0" /
                                       "points3D.bin"));
 
-  // The canonical payload is the provisional SparseModel document.
+  // The canonical payload is the Reconstruction v2 document.
   const nlohmann::json payload = nlohmann::json::parse(
       spatial::core::fs::ReadText(sink.artifacts_.front()));
-  EXPECT_EQ(payload["schema_version"].get<int>(), 1);
+  EXPECT_EQ(payload["schema_version"].get<int>(), 2);
+  EXPECT_TRUE(payload.contains("reconstruction_id"));
+  EXPECT_TRUE(payload["session_ids"].is_array());
+  EXPECT_EQ(payload["coordinate_frame"].get<std::string>(),
+            "reconstruction_0");
+  EXPECT_EQ(payload["status"].get<std::string>(), "succeeded");
   ASSERT_EQ(payload["cameras"].size(), 1u);
   EXPECT_EQ(payload["cameras"][0]["intrinsic_model"].get<std::string>(),
             "pinhole");
-  EXPECT_EQ(payload["images"].size(), 2u);
+  EXPECT_EQ(payload["cameras"][0]["distortion_model"].get<std::string>(),
+            "none");
+  ASSERT_EQ(payload["images"].size(), 2u);
+  EXPECT_EQ(payload["images"][0]["detected"].get<bool>(), true);
+  EXPECT_TRUE(payload["images"][0]["pose"].contains("rotation_xyzw"));
+  EXPECT_TRUE(payload["images"][0]["pose"].contains("translation_xyz"));
   EXPECT_EQ(payload["points3D"].size(), 1u);
 
   // Provenance manifest.
   ASSERT_EQ(sink.manifests_.size(), 1u);
   const ArtifactManifest& m = sink.manifests_.front();
-  EXPECT_EQ(m.type, "sparse_model");
-  EXPECT_EQ(m.schema_version, 1);
+  EXPECT_EQ(m.type, "reconstruction");
+  EXPECT_EQ(m.schema_version, 2);
   EXPECT_EQ(m.producer.id, "colmap");
   EXPECT_EQ(m.producer.version, kColmapAdapterVersion);
   EXPECT_EQ(m.producer.git_commit, kColmapAdapterGitCommit);

@@ -32,6 +32,8 @@ set(SPATIAL_UNIT_TESTS
   unit/test_feature_artifact.cpp
   unit/test_feature_extraction_runner.cpp
   unit/test_calibration_artifact.cpp
+  unit/test_reconstruction.cpp
+  unit/test_reconstruction_schema.cpp
   unit/test_cli_import.cpp
   unit/test_cli_feature_extraction.cpp
 )
@@ -66,6 +68,7 @@ target_compile_definitions(spatial_unit_tests PRIVATE
   SPATIAL_IMAGE_SCHEMA_JSON="${CMAKE_SOURCE_DIR}/schemas/json/image.schema.json"
   SPATIAL_FEATURE_SCHEMA_JSON="${CMAKE_SOURCE_DIR}/schemas/json/feature.schema.json"
   SPATIAL_CALIBRATION_SCHEMA_JSON="${CMAKE_SOURCE_DIR}/schemas/json/calibration.schema.json"
+  SPATIAL_RECONSTRUCTION_SCHEMA_JSON="${CMAKE_SOURCE_DIR}/schemas/json/reconstruction.schema.json"
 )
 
 include(GoogleTest)
@@ -92,6 +95,7 @@ add_dependencies(spatial_adapter_tests spatial_colmap_probe_shim)
 target_include_directories(spatial_adapter_tests PRIVATE ${CMAKE_SOURCE_DIR})
 target_compile_definitions(spatial_adapter_tests PRIVATE
   SPATIAL_COLMAP_PROBE_SHIM_EXECUTABLE="$<TARGET_FILE:spatial_colmap_probe_shim>"
+  SPATIAL_RECONSTRUCTION_SCHEMA_JSON="${CMAKE_SOURCE_DIR}/schemas/json/reconstruction.schema.json"
 )
 gtest_discover_tests(spatial_adapter_tests)
 

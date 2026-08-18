@@ -161,6 +161,8 @@ std::size_t MetadataDb::ApplyMigrations() {
       std::find(applied.begin(), applied.end(), "5") != applied.end();
   const bool has_0006 =
       std::find(applied.begin(), applied.end(), "6") != applied.end();
+  const bool has_0007 =
+      std::find(applied.begin(), applied.end(), "7") != applied.end();
   std::size_t count = 0;
 
   // Migration 0001 (initial schema, ratified; identical to HEAD schema.sql).
@@ -241,6 +243,23 @@ std::size_t MetadataDb::ApplyMigrations() {
       Exec("COMMIT;", "commit migration 0006");
     } catch (...) {
       Exec("ROLLBACK;", "rollback migration 0006");
+      throw;
+    }
+    ++count;
+  }
+
+  // Migration 0007 (P2.5, D-CRM-15): canonical reconstruction scene entity.
+  // Stores reconstruction metadata for query access; the full Reconstruction
+  // document lives in the CAS payload.
+  if (!has_0007) {
+    Exec("BEGIN IMMEDIATE TRANSACTION;", "begin migration 0007");
+    try {
+      Exec(generated::kMigration0007Sql, "apply migration 0007");
+      Exec("INSERT INTO schema_meta (version) VALUES (7);",
+           "record schema version 7");
+      Exec("COMMIT;", "commit migration 0007");
+    } catch (...) {
+      Exec("ROLLBACK;", "rollback migration 0007");
       throw;
     }
     ++count;
@@ -1782,6 +1801,110 @@ std::vector<ImportRejectionRow> MetadataDb::FindImportRejectionsBySession(
       row.diagnostic = reinterpret_cast<const char*>(t);
     }
     row.rejected_at_ns = sqlite3_column_int64(stmt, 10);
+    out.push_back(row);
+  }
+  sqlite3_finalize(stmt);
+  return out;
+}
+
+// --- P2.5 reconstruction (migration 0007, D-CRM-15) ---
+
+void MetadataDb::AddReconstruction(const ReconstructionRow& row) {
+  if (read_only_) {
+    throw StorageError(ErrorCode::kStorageReadOnly,
+                       "cannot write to a read-only project", {}, false,
+                       "Open the project for writing to modify it.");
+  }
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "INSERT INTO reconstructions (reconstruction_id, scene_id,"
+      " coordinate_frame, status, created_at_ns, document_json)"
+      " VALUES (?, ?, ?, ?, ?, ?)";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare insert reconstruction");
+  }
+  sqlite3_bind_blob(stmt, 1, row.reconstruction_id.data(),
+                    static_cast<int>(row.reconstruction_id.size()),
+                    SQLITE_TRANSIENT);
+  sqlite3_bind_blob(stmt, 2, row.scene_id.data(),
+                    static_cast<int>(row.scene_id.size()), SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 3, row.coordinate_frame.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 4, row.status.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_int64(stmt, 5, row.created_at_ns);
+  sqlite3_bind_text(stmt, 6, row.document_json.c_str(), -1, SQLITE_TRANSIENT);
+  if (sqlite3_step(stmt) != SQLITE_DONE) {
+    const std::string msg = sqlite3_errmsg(db_);
+    sqlite3_finalize(stmt);
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot insert reconstruction row: " + msg);
+  }
+  sqlite3_finalize(stmt);
+}
+
+std::optional<ReconstructionRow> MetadataDb::QueryLatestReconstructionByScene(
+    const Uuid& scene_id) const {
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "SELECT reconstruction_id, scene_id, coordinate_frame, status,"
+      " created_at_ns, document_json FROM reconstructions"
+      " WHERE scene_id = ? AND status = 'succeeded'"
+      " ORDER BY created_at_ns DESC LIMIT 1";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare query latest reconstruction");
+  }
+  sqlite3_bind_blob(stmt, 1, scene_id.data(),
+                    static_cast<int>(scene_id.size()), SQLITE_TRANSIENT);
+  std::optional<ReconstructionRow> result;
+  if (sqlite3_step(stmt) == SQLITE_ROW) {
+    ReconstructionRow row;
+    if (const auto u = ColumnUuid(stmt, 0)) row.reconstruction_id = *u;
+    if (const auto u = ColumnUuid(stmt, 1)) row.scene_id = *u;
+    if (const auto* t = sqlite3_column_text(stmt, 2)) {
+      row.coordinate_frame = reinterpret_cast<const char*>(t);
+    }
+    if (const auto* t = sqlite3_column_text(stmt, 3)) {
+      row.status = reinterpret_cast<const char*>(t);
+    }
+    row.created_at_ns = sqlite3_column_int64(stmt, 4);
+    if (const auto* t = sqlite3_column_text(stmt, 5)) {
+      row.document_json = reinterpret_cast<const char*>(t);
+    }
+    result = std::move(row);
+  }
+  sqlite3_finalize(stmt);
+  return result;
+}
+
+std::vector<ReconstructionRow> MetadataDb::FindReconstructionsByScene(
+    const Uuid& scene_id) const {
+  std::vector<ReconstructionRow> out;
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "SELECT reconstruction_id, scene_id, coordinate_frame, status,"
+      " created_at_ns, document_json FROM reconstructions"
+      " WHERE scene_id = ? ORDER BY created_at_ns";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare find reconstructions by scene");
+  }
+  sqlite3_bind_blob(stmt, 1, scene_id.data(),
+                    static_cast<int>(scene_id.size()), SQLITE_TRANSIENT);
+  while (sqlite3_step(stmt) == SQLITE_ROW) {
+    ReconstructionRow row;
+    if (const auto u = ColumnUuid(stmt, 0)) row.reconstruction_id = *u;
+    if (const auto u = ColumnUuid(stmt, 1)) row.scene_id = *u;
+    if (const auto* t = sqlite3_column_text(stmt, 2)) {
+      row.coordinate_frame = reinterpret_cast<const char*>(t);
+    }
+    if (const auto* t = sqlite3_column_text(stmt, 3)) {
+      row.status = reinterpret_cast<const char*>(t);
+    }
+    row.created_at_ns = sqlite3_column_int64(stmt, 4);
+    if (const auto* t = sqlite3_column_text(stmt, 5)) {
+      row.document_json = reinterpret_cast<const char*>(t);
+    }
     out.push_back(row);
   }
   sqlite3_finalize(stmt);

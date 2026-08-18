@@ -31,6 +31,10 @@ string(REPLACE "PRAGMA foreign_keys = ON;" "" SPATIAL_MIGRATION_0005 "${SPATIAL_
 # likewise written without BEGIN/COMMIT; the runner records schema version 6.
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/../schemas/database/migrations/0006_sensor_calibration_validity.sql" SPATIAL_MIGRATION_0006)
 string(REPLACE "PRAGMA foreign_keys = ON;" "" SPATIAL_MIGRATION_0006 "${SPATIAL_MIGRATION_0006}")
+# 0007_reconstruction.sql (P2.5, D-CRM-15): canonical reconstruction scene
+# entity. Written without BEGIN/COMMIT; the runner records schema version 7.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/../schemas/database/migrations/0007_reconstruction.sql" SPATIAL_MIGRATION_0007)
+string(REPLACE "PRAGMA foreign_keys = ON;" "" SPATIAL_MIGRATION_0007 "${SPATIAL_MIGRATION_0007}")
 configure_file("${CMAKE_CURRENT_SOURCE_DIR}/storage/migrations_generated.h.in"
                "${CMAKE_CURRENT_BINARY_DIR}/storage/migrations_generated.h" @ONLY)
 

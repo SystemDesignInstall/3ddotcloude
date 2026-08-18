@@ -2,9 +2,9 @@
 
 // Generated at configure time by CMake from
 // schemas/database/migrations/0001_init.sql, 0003_scheduler.sql,
-// 0004_execution_manifest.sql, 0005_import_rejections.sql and
-// 0006_sensor_calibration_validity.sql (single source of truth).
-// DO NOT EDIT BY HAND.
+// 0004_execution_manifest.sql, 0005_import_rejections.sql,
+// 0006_sensor_calibration_validity.sql and 0007_reconstruction.sql
+// (single source of truth). DO NOT EDIT BY HAND.
 
 namespace spatial::generated {
 
@@ -22,5 +22,8 @@ inline constexpr const char* kMigration0005Sql =
 
 inline constexpr const char* kMigration0006Sql =
     R"SPATIALMIGRATION(@SPATIAL_MIGRATION_0006@)SPATIALMIGRATION";
+
+inline constexpr const char* kMigration0007Sql =
+    R"SPATIALMIGRATION(@SPATIAL_MIGRATION_0007@)SPATIALMIGRATION";
 
 }  // namespace spatial::generated

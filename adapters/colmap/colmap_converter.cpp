@@ -12,7 +12,10 @@
 
 #include <nlohmann/json.hpp>
 
+#include <map>
+
 #include "core/errors/project_error.h"
+#include "core/reconstruction/reconstruction.h"
 #include "core/utils/fs.h"
 
 namespace spatial::adapters::colmap {
@@ -166,12 +169,14 @@ SparseModelCamera ParseCamera(BinaryReader& reader) {
   }
   camera.model = info->name;
   camera.intrinsic_model = info->intrinsic_model;
+  camera.model_id = model_id;
   camera.width = static_cast<std::int64_t>(reader.U64());
   camera.height = static_cast<std::int64_t>(reader.U64());
   std::vector<double> params(static_cast<std::size_t>(info->num_params));
   for (double& param : params) {
     param = reader.F64();
   }
+  camera.raw_params = params;
   if (info->single_focal) {
     camera.intrinsics.fx = params[0];
     camera.intrinsics.fy = params[0];
@@ -351,6 +356,343 @@ std::string SparseModelToJson(const SparseModel& model) {
   document["points3D"] = std::move(points);
 
   return document.dump();
+}
+
+// ---------------------------------------------------------------------------
+// P2.5: Canonical Reconstruction v2
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// COLMAP camera model id → distortion model string (RFC-0009 §5).
+const char* DistortionModelForId(int model_id) {
+  switch (model_id) {
+    case 0:  // SIMPLE_PINHOLE
+    case 1:  // PINHOLE
+      return "none";
+    case 2:  // SIMPLE_RADIAL
+    case 3:  // RADIAL
+    case 4:  // OPENCV
+      return "opencv_radial";
+    case 5:  // OPENCV_FISHEYE
+    case 8:  // SIMPLE_RADIAL_FISHEYE
+    case 9:  // RADIAL_FISHEYE
+      return "opencv_fisheye";
+    case 6:   // FULL_OPENCV
+    case 7:   // FOV
+    case 10:  // THIN_PRISM_FISHEYE
+    default:
+      return "custom";
+  }
+}
+
+// Extract distortion coefficients from the raw COLMAP parameter vector.
+std::vector<double> ExtractDistortion(const SparseModelCamera& cam) {
+  const int mid = cam.model_id;
+  const auto& p = cam.raw_params;
+  const CameraModelInfo* info = ModelInfo(mid);
+  if (info == nullptr) return {};
+  const bool sf = info->single_focal;
+
+  if (sf) {
+    // single_focal: p[0]=f, p[1]=cx, p[2]=cy, distortion at [3..]
+    switch (mid) {
+      case 2:  // SIMPLE_RADIAL: k1
+        if (p.size() > 3) return {p[3]};
+        return {};
+      case 3:  // RADIAL: k1, k2
+        if (p.size() > 4) return {p[3], p[4]};
+        return {};
+      case 8:  // SIMPLE_RADIAL_FISHEYE: k1
+        if (p.size() > 3) return {p[3]};
+        return {};
+      case 9:  // RADIAL_FISHEYE: k1, k2
+        if (p.size() > 4) return {p[3], p[4]};
+        return {};
+      default:
+        return {};
+    }
+  }
+  // non-single_focal: p[0]=fx, [1]=fy, [2]=cx, [3]=cy, distortion at [4..]
+  switch (mid) {
+    case 1:  // PINHOLE: none
+      return {};
+    case 4: {  // OPENCV: k1, k2, p1, p2
+      if (p.size() >= 8) return {p[4], p[5], p[6], p[7]};
+      return {};
+    }
+    case 5: {  // OPENCV_FISHEYE: k1, k2, k3, k4
+      if (p.size() >= 8) return {p[4], p[5], p[6], p[7]};
+      return {};
+    }
+    case 7: {  // FOV: omega
+      if (p.size() > 4) return {p[4]};
+      return {};
+    }
+    default:
+      return {};
+  }
+}
+
+// Conjugate of a unit quaternion: q* = (-x, -y, -z, w).
+void ConjugateQuaternion(const std::array<double, 4>& q,
+                         std::array<double, 4>& out) {
+  out[0] = -q[0];
+  out[1] = -q[1];
+  out[2] = -q[2];
+  out[3] =  q[3];
+}
+
+// Multiply two quaternions: result = a * b (scalar-last convention).
+void MultiplyQuaternion(const std::array<double, 4>& a,
+                        const std::array<double, 4>& b,
+                        std::array<double, 4>& out) {
+  out[0] = a[3]*b[0] + a[0]*b[3] + a[1]*b[2] - a[2]*b[1];
+  out[1] = a[3]*b[1] - a[0]*b[2] + a[1]*b[3] + a[2]*b[0];
+  out[2] = a[3]*b[2] + a[0]*b[1] - a[1]*b[0] + a[2]*b[3];
+  out[3] = a[3]*b[3] - a[0]*b[0] - a[1]*b[1] - a[2]*b[2];
+}
+
+// Rotate a 3D vector by a unit quaternion: v' = q * v * q*.
+void RotateVectorByQuaternion(const std::array<double, 4>& q,
+                              const std::array<double, 3>& v,
+                              std::array<double, 3>& out) {
+  // q = (x, y, z, w)
+  double qx = q[0], qy = q[1], qz = q[2], qw = q[3];
+  double vx = v[0], vy = v[1], vz = v[2];
+
+  // t = 2 * cross(q_xyz, v)
+  double tx = 2.0 * (qy*vz - qz*vy);
+  double ty = 2.0 * (qz*vx - qx*vz);
+  double tz = 2.0 * (qx*vy - qy*vx);
+
+  // v' = v + w*t + cross(q_xyz, t)
+  out[0] = vx + qw*tx + (qy*tz - qz*ty);
+  out[1] = vy + qw*ty + (qz*tx - qx*tz);
+  out[2] = vz + qw*tz + (qx*ty - qy*tx);
+}
+
+// Convert COLMAP camera-to-world pose to T_reconstruction_camera
+// (world-to-camera): R_cw = R_wc^T, t_cw = -R_wc^T * t_wc.
+void InvertColmapPose(const std::array<double, 4>& qvec_wxyz,
+                      const std::array<double, 3>& tvec,
+                      std::array<double, 4>& rot_xyzw,
+                      std::array<double, 3>& trans) {
+  // COLMAP qvec is (w, x, y, z). Convert to our (x, y, z, w).
+  std::array<double, 4> q_wxyz = {qvec_wxyz[1], qvec_wxyz[2],
+                                   qvec_wxyz[3], qvec_wxyz[0]};
+  // Conjugate = inverse rotation.
+  std::array<double, 4> q_inv;
+  ConjugateQuaternion(q_wxyz, q_inv);
+  // t_cw = -R_wc^T * t_wc = -R_wc^{-1} * t_wc = -(q_inv * t_wc * q_inv*).
+  std::array<double, 3> neg_t = {-tvec[0], -tvec[1], -tvec[2]};
+  std::array<double, 3> rotated;
+  RotateVectorByQuaternion(q_inv, neg_t, rotated);
+  // Output.
+  rot_xyzw = q_inv;  // already (x, y, z, w)
+  trans = rotated;
+}
+
+}  // namespace
+
+using core::Reconstruction;
+using core::ReconCamera;
+using core::ReconImage;
+using core::ReconPoint3D;
+using core::ReconstructionProvenance;
+
+spatial::core::Reconstruction SparseModelToReconstruction(
+    const SparseModel& model,
+    const std::string& reconstruction_id,
+    const std::string& scene_id,
+    const std::vector<std::string>& session_ids,
+    const std::string& coordinate_frame,
+    const ReconstructionProvenanceInfo& prov_info,
+    const std::map<std::string, std::string>& frame_id_map) {
+
+  Reconstruction rec;
+  rec.reconstruction_id = reconstruction_id;
+  rec.scene_id = scene_id;
+  rec.session_ids = session_ids;
+  rec.coordinate_frame = coordinate_frame;
+  rec.status = "succeeded";
+
+  // Provenance (D-CRM-11).
+  ReconstructionProvenance& prov = rec.provenance;
+  prov.backend.name = prov_info.backend_name;
+  prov.backend.version = prov_info.backend_version;
+  prov.backend.adapter_version = prov_info.adapter_version;
+  prov.configuration_hash = prov_info.configuration_hash;
+  prov.input_artifact_hashes = prov_info.input_artifact_hashes;
+  prov.engine_version = prov_info.engine_version;
+  prov.engine_commit = prov_info.engine_commit;
+  prov.git_commit = prov_info.git_commit;
+  prov.started_at_ns = prov_info.started_at_ns;
+  prov.finished_at_ns = prov_info.finished_at_ns;
+  prov.duration_ns = prov_info.duration_ns;
+
+  // Cameras (D-CRM-04, D-CRM-05).
+  rec.cameras.reserve(model.cameras.size());
+  for (const SparseModelCamera& src : model.cameras) {
+    ReconCamera cam;
+    cam.camera_id = src.camera_id;
+    cam.width = src.width;
+    cam.height = src.height;
+    cam.intrinsic_model = src.intrinsic_model;
+    cam.fx = src.intrinsics.fx;
+    cam.fy = src.intrinsics.fy;
+    cam.cx = src.intrinsics.cx;
+    cam.cy = src.intrinsics.cy;
+    cam.distortion_model = DistortionModelForId(src.model_id);
+    cam.distortion_coefficients = ExtractDistortion(src);
+    rec.cameras.push_back(std::move(cam));
+  }
+
+  // Images (D-CRM-20). COLMAP outputs only registered images; all are
+  // detected=true. frame_id is resolved from the optional frame_id_map.
+  rec.images.reserve(model.images.size());
+  for (const SparseModelImage& src : model.images) {
+    ReconImage img;
+    img.image_id = src.image_id;
+    img.camera_id = src.camera_id;
+    img.name = src.name;
+    img.detected = true;
+
+    // Frame UUID mapping.
+    auto it = frame_id_map.find(src.name);
+    if (it != frame_id_map.end()) {
+      img.frame_id = it->second;
+    }
+    // If not found, frame_id remains empty (caller resolves later).
+
+    // COLMAP qvec (w,x,y,z) → canonical (x,y,z,w), then invert for
+    // T_reconstruction_camera (D-CRM-01, D-CRM-02).
+    InvertColmapPose(src.qvec, src.tvec,
+                     img.pose.rotation_xyzw,
+                     img.pose.translation_xyz);
+
+    rec.images.push_back(std::move(img));
+  }
+
+  // 3D Points (D-CRM-08, D-CRM-16).
+  rec.points3D.reserve(model.points3d.size());
+  for (const SparseModelPoint& src : model.points3d) {
+    ReconPoint3D pt;
+    pt.point3d_id = src.point3d_id;
+    pt.xyz = src.xyz;
+    pt.color = src.rgb;
+    pt.error = src.error;
+    pt.track.reserve(src.track.size());
+    for (const SparseModelTrackElement& te : src.track) {
+      ReconPoint3D::TrackElement out_te;
+      out_te.image_id = te.image_id;
+      out_te.point2d_idx = static_cast<std::int32_t>(te.point2d_idx);
+      pt.track.push_back(out_te);
+    }
+    rec.points3D.push_back(std::move(pt));
+  }
+
+  return rec;
+}
+
+// ---------------------------------------------------------------------------
+// ReconstructionToJson: canonical JSON serialization (ADR-020).
+// ---------------------------------------------------------------------------
+
+std::string ReconstructionToJson(const spatial::core::Reconstruction& rec) {
+  json doc;
+
+  doc["schema_version"] = 2;
+  doc["reconstruction_id"] = rec.reconstruction_id;
+  doc["scene_id"] = rec.scene_id;
+
+  json sids = json::array();
+  for (const auto& sid : rec.session_ids) sids.push_back(sid);
+  doc["session_ids"] = std::move(sids);
+
+  doc["coordinate_frame"] = rec.coordinate_frame;
+  if (!rec.status.empty()) doc["status"] = rec.status;
+  doc["created_at_ns"] = rec.created_at_ns;
+
+  // Provenance.
+  json prov;
+  json backend;
+  backend["name"] = rec.provenance.backend.name;
+  backend["version"] = rec.provenance.backend.version;
+  backend["adapter_version"] = rec.provenance.backend.adapter_version;
+  prov["backend"] = std::move(backend);
+  prov["configuration_hash"] = rec.provenance.configuration_hash;
+  json iah = json::array();
+  for (const auto& h : rec.provenance.input_artifact_hashes) iah.push_back(h);
+  prov["input_artifact_hashes"] = std::move(iah);
+  prov["engine_version"] = rec.provenance.engine_version;
+  prov["engine_commit"] = rec.provenance.engine_commit;
+  prov["git_commit"] = rec.provenance.git_commit;
+  prov["started_at_ns"] = rec.provenance.started_at_ns;
+  prov["finished_at_ns"] = rec.provenance.finished_at_ns;
+  prov["duration_ns"] = rec.provenance.duration_ns;
+  doc["provenance"] = std::move(prov);
+
+  // Cameras.
+  json cameras = json::array();
+  for (const ReconCamera& c : rec.cameras) {
+    json entry;
+    entry["camera_id"] = c.camera_id;
+    entry["width"] = c.width;
+    entry["height"] = c.height;
+    entry["intrinsic_model"] = c.intrinsic_model;
+    entry["fx"] = c.fx;
+    entry["fy"] = c.fy;
+    entry["cx"] = c.cx;
+    entry["cy"] = c.cy;
+    entry["distortion_model"] = c.distortion_model;
+    entry["distortion_coefficients"] = c.distortion_coefficients;
+    if (!c.calibration_ref.empty()) entry["calibration_ref"] = c.calibration_ref;
+    cameras.push_back(std::move(entry));
+  }
+  doc["cameras"] = std::move(cameras);
+
+  // Images.
+  json images = json::array();
+  for (const ReconImage& img : rec.images) {
+    json entry;
+    entry["image_id"] = img.image_id;
+    entry["camera_id"] = img.camera_id;
+    if (!img.frame_id.empty()) entry["frame_id"] = img.frame_id;
+    entry["name"] = img.name;
+    json pose;
+    pose["rotation_xyzw"] = {img.pose.rotation_xyzw[0],
+                             img.pose.rotation_xyzw[1],
+                             img.pose.rotation_xyzw[2],
+                             img.pose.rotation_xyzw[3]};
+    pose["translation_xyz"] = {img.pose.translation_xyz[0],
+                               img.pose.translation_xyz[1],
+                               img.pose.translation_xyz[2]};
+    entry["pose"] = std::move(pose);
+    entry["detected"] = img.detected;
+    images.push_back(std::move(entry));
+  }
+  doc["images"] = std::move(images);
+
+  // Points3D.
+  json points = json::array();
+  for (const ReconPoint3D& pt : rec.points3D) {
+    json entry;
+    entry["point3d_id"] = pt.point3d_id;
+    entry["xyz"] = {pt.xyz[0], pt.xyz[1], pt.xyz[2]};
+    entry["color"] = {pt.color[0], pt.color[1], pt.color[2]};
+    entry["error"] = pt.error;
+    json track = json::array();
+    for (const ReconPoint3D::TrackElement& te : pt.track) {
+      track.push_back({{"image_id", te.image_id},
+                       {"point2d_idx", te.point2d_idx}});
+    }
+    entry["track"] = std::move(track);
+    points.push_back(std::move(entry));
+  }
+  doc["points3D"] = std::move(points);
+
+  return doc.dump();
 }
 
 }  // namespace spatial::adapters::colmap

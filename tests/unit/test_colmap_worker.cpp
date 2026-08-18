@@ -162,13 +162,14 @@ TEST_F(ColmapWorkerTest, EndToEndProducesCasSparseModelArtifact) {
   EXPECT_TRUE(std::filesystem::exists(std::filesystem::path(request.workspace) /
                                       "images" / image2));
 
-  // Fail-closed CAS ingest: the produced payload is the canonical SparseModel.
+  // Fail-closed CAS ingest: the produced payload is the canonical Reconstruction v2.
   EXPECT_TRUE(store_->Has(events.back().artifact_ref));
   const auto payload = store_->Get(events.back().artifact_ref);
   ASSERT_TRUE(payload.has_value());
   const nlohmann::json document = nlohmann::json::parse(
       std::string(payload->begin(), payload->end()));
-  EXPECT_EQ(document["schema_version"].get<int>(), 1);
+  EXPECT_EQ(document["schema_version"].get<int>(), 2);
+  EXPECT_TRUE(document.contains("reconstruction_id"));
   ASSERT_EQ(document["cameras"].size(), 1u);
   EXPECT_EQ(document["cameras"][0]["intrinsic_model"].get<std::string>(),
             "pinhole");
