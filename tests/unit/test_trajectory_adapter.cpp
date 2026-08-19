@@ -18,6 +18,23 @@
 namespace spatial::adapters::colmap {
 namespace {
 
+// Env lookup that avoids the MSVC C4996 deprecation warning for getenv.
+const char* GetEnv(const char* name) {
+#if defined(_WIN32)
+  char* value = nullptr;
+  size_t len = 0;
+  if (_dupenv_s(&value, &len, name) == 0 && value != nullptr) {
+    static thread_local std::string storage;
+    storage = value;
+    free(value);
+    return storage.c_str();
+  }
+  return nullptr;
+#else
+  return std::getenv(name);
+#endif
+}
+
 // Test fixture with standard metadata.
 class ColmapTrajectoryAdapterTest : public ::testing::Test {
  protected:
@@ -516,7 +533,7 @@ TEST_F(ColmapTrajectoryAdapterTest, EmptyModelThrows) {
 class TrajectorySchemaValidationTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    const char* schema_path = std::getenv("SPATIAL_TRAJECTORY_SCHEMA_JSON");
+    const char* schema_path = GetEnv("SPATIAL_TRAJECTORY_SCHEMA_JSON");
     ASSERT_NE(schema_path, nullptr)
         << "SPATIAL_TRAJECTORY_SCHEMA_JSON not set";
     std::ifstream ifs(schema_path);
