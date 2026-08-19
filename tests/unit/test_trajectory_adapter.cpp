@@ -11,6 +11,7 @@
 
 #include "adapters/colmap/colmap_converter.h"
 #include "adapters/colmap/colmap_trajectory_adapter.h"
+#include "core/errors/project_error.h"
 #include "core/trajectory/trajectory.h"
 #include "tests/unit/schema_check.h"
 
