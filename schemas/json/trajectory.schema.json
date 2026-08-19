@@ -1,0 +1,77 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://spatial-platform.dev/schemas/json/trajectory.schema.json",
+  "title": "Canonical Trajectory Payload (P3)",
+  "description": "Backend-independent trajectory pose payload stored in CAS. Contains ordered pose nodes with optional per-pose covariance. Every trajectory backend (ORB-SLAM, KISS-ICP, COLMAP, future AI systems) produces this document through its adapter. The trajectory metadata (scene_id, session_id, kind, status, aggregate uncertainty) lives in the MetadataDb row, not this payload.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "trajectory_id", "nodes"],
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "description": "Document schema version (P3 design §14.1)."
+    },
+    "trajectory_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Instance-scoped UUIDv4 identity matching the MetadataDb trajectory row (D-TRJ-02)."
+    },
+    "nodes": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/PoseNode" },
+      "description": "Ordered pose nodes (D-TRJ-07). Ordered by sequence_index; gaps are allowed for dropped frames."
+    }
+  },
+  "definitions": {
+    "PoseNode": {
+      "type": "object",
+      "description": "A single pose in the trajectory (D-TRJ-07…D-TRJ-09). Position and rotation are T_trajectory_camera (D-TRJ-08): the transform mapping a point from the camera/body frame into the trajectory's local coordinate frame. Quaternion order: (x, y, z, w) scalar-last per ADR-007.",
+      "additionalProperties": false,
+      "required": ["frame_id", "timestamp_ns", "sequence_index", "position_xyz", "rotation_xyzw"],
+      "properties": {
+        "frame_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "UUID referencing a Frame in the import model (D-TRJ-10, bridge reference)."
+        },
+        "timestamp_ns": {
+          "type": "integer",
+          "description": "Exposure timestamp in nanoseconds since epoch. Must match the referenced Frame.timestamp_ns."
+        },
+        "sequence_index": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Monotonically increasing ordinal; gaps are allowed for dropped frames (D-TRJ-07)."
+        },
+        "position_xyz": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "Translation of T_trajectory_camera in meters."
+        },
+        "rotation_xyzw": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 4,
+          "maxItems": 4,
+          "description": "Unit quaternion in (x, y, z, w) scalar-last order (ADR-007)."
+        },
+        "covariance_position": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 6,
+          "maxItems": 6,
+          "description": "Optional 3×3 position covariance, upper triangle flattened row-major (xx, xy, xz, yy, yz, zz). Translation-then-rotation ordering (ADR-007). When absent or zero-filled, uncertainty is unknown (D-TRJ-09)."
+        },
+        "covariance_rotation": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 6,
+          "maxItems": 6,
+          "description": "Optional 3×3 rotation covariance, upper triangle flattened row-major. Same ordering as covariance_position."
+        }
+      }
+    }
+  }
+}

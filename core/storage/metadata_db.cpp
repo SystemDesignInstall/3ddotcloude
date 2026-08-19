@@ -163,6 +163,8 @@ std::size_t MetadataDb::ApplyMigrations() {
       std::find(applied.begin(), applied.end(), "6") != applied.end();
   const bool has_0007 =
       std::find(applied.begin(), applied.end(), "7") != applied.end();
+  const bool has_0008 =
+      std::find(applied.begin(), applied.end(), "8") != applied.end();
   std::size_t count = 0;
 
   // Migration 0001 (initial schema, ratified; identical to HEAD schema.sql).
@@ -260,6 +262,22 @@ std::size_t MetadataDb::ApplyMigrations() {
       Exec("COMMIT;", "commit migration 0007");
     } catch (...) {
       Exec("ROLLBACK;", "rollback migration 0007");
+      throw;
+    }
+    ++count;
+  }
+
+  // Migration 0008 (P3-impl-1): canonical trajectory / pose graph / loop
+  // closure / optimization result tables.
+  if (!has_0008) {
+    Exec("BEGIN IMMEDIATE TRANSACTION;", "begin migration 0008");
+    try {
+      Exec(generated::kMigration0008Sql, "apply migration 0008");
+      Exec("INSERT INTO schema_meta (version) VALUES (8);",
+           "record schema version 8");
+      Exec("COMMIT;", "commit migration 0008");
+    } catch (...) {
+      Exec("ROLLBACK;", "rollback migration 0008");
       throw;
     }
     ++count;
@@ -1905,6 +1923,592 @@ std::vector<ReconstructionRow> MetadataDb::FindReconstructionsByScene(
     if (const auto* t = sqlite3_column_text(stmt, 5)) {
       row.document_json = reinterpret_cast<const char*>(t);
     }
+    out.push_back(row);
+  }
+  sqlite3_finalize(stmt);
+  return out;
+}
+
+// --- P3-impl-1 trajectory / pose graph / loop closure / optimization (migration 0008) ---
+
+void MetadataDb::AddTrajectory(const TrajectoryRow& row) {
+  if (read_only_) {
+    throw StorageError(ErrorCode::kStorageReadOnly,
+                       "cannot write to a read-only project", {}, false,
+                       "Open the project for writing to modify it.");
+  }
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "INSERT INTO trajectories (trajectory_id, scene_id, session_id,"
+      " kind, coordinate_frame, status, node_count, total_distance_m,"
+      " total_duration_ns, created_at_ns, document_json)"
+      " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare insert trajectory");
+  }
+  sqlite3_bind_blob(stmt, 1, row.trajectory_id.data(),
+                    static_cast<int>(row.trajectory_id.size()),
+                    SQLITE_TRANSIENT);
+  sqlite3_bind_blob(stmt, 2, row.scene_id.data(),
+                    static_cast<int>(row.scene_id.size()), SQLITE_TRANSIENT);
+  sqlite3_bind_blob(stmt, 3, row.session_id.data(),
+                    static_cast<int>(row.session_id.size()), SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 4, row.kind.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 5, row.coordinate_frame.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 6, row.status.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_int64(stmt, 7, row.node_count);
+  sqlite3_bind_double(stmt, 8, row.total_distance_m);
+  sqlite3_bind_int64(stmt, 9, row.total_duration_ns);
+  sqlite3_bind_int64(stmt, 10, row.created_at_ns);
+  sqlite3_bind_text(stmt, 11, row.document_json.c_str(), -1, SQLITE_TRANSIENT);
+  if (sqlite3_step(stmt) != SQLITE_DONE) {
+    const std::string msg = sqlite3_errmsg(db_);
+    sqlite3_finalize(stmt);
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot insert trajectory row: " + msg);
+  }
+  sqlite3_finalize(stmt);
+}
+
+std::optional<TrajectoryRow> MetadataDb::QueryLatestTrajectoryBySession(
+    const Uuid& session_id) const {
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "SELECT trajectory_id, scene_id, session_id, kind, coordinate_frame,"
+      " status, node_count, total_distance_m, total_duration_ns,"
+      " created_at_ns, document_json FROM trajectories"
+      " WHERE session_id = ? AND status != 'superseded'"
+      " ORDER BY created_at_ns DESC LIMIT 1";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare query latest trajectory");
+  }
+  sqlite3_bind_blob(stmt, 1, session_id.data(),
+                    static_cast<int>(session_id.size()), SQLITE_TRANSIENT);
+  std::optional<TrajectoryRow> result;
+  if (sqlite3_step(stmt) == SQLITE_ROW) {
+    TrajectoryRow row;
+    if (const auto u = ColumnUuid(stmt, 0)) row.trajectory_id = *u;
+    if (const auto u = ColumnUuid(stmt, 1)) row.scene_id = *u;
+    if (const auto u = ColumnUuid(stmt, 2)) row.session_id = *u;
+    if (const auto* t = sqlite3_column_text(stmt, 3))
+      row.kind = reinterpret_cast<const char*>(t);
+    if (const auto* t = sqlite3_column_text(stmt, 4))
+      row.coordinate_frame = reinterpret_cast<const char*>(t);
+    if (const auto* t = sqlite3_column_text(stmt, 5))
+      row.status = reinterpret_cast<const char*>(t);
+    row.node_count = sqlite3_column_int64(stmt, 6);
+    row.total_distance_m = sqlite3_column_double(stmt, 7);
+    row.total_duration_ns = sqlite3_column_int64(stmt, 8);
+    row.created_at_ns = sqlite3_column_int64(stmt, 9);
+    if (const auto* t = sqlite3_column_text(stmt, 10))
+      row.document_json = reinterpret_cast<const char*>(t);
+    result = std::move(row);
+  }
+  sqlite3_finalize(stmt);
+  return result;
+}
+
+std::vector<TrajectoryRow> MetadataDb::FindTrajectoriesByScene(
+    const Uuid& scene_id) const {
+  std::vector<TrajectoryRow> out;
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "SELECT trajectory_id, scene_id, session_id, kind, coordinate_frame,"
+      " status, node_count, total_distance_m, total_duration_ns,"
+      " created_at_ns, document_json FROM trajectories"
+      " WHERE scene_id = ? ORDER BY created_at_ns";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare find trajectories by scene");
+  }
+  sqlite3_bind_blob(stmt, 1, scene_id.data(),
+                    static_cast<int>(scene_id.size()), SQLITE_TRANSIENT);
+  while (sqlite3_step(stmt) == SQLITE_ROW) {
+    TrajectoryRow row;
+    if (const auto u = ColumnUuid(stmt, 0)) row.trajectory_id = *u;
+    if (const auto u = ColumnUuid(stmt, 1)) row.scene_id = *u;
+    if (const auto u = ColumnUuid(stmt, 2)) row.session_id = *u;
+    if (const auto* t = sqlite3_column_text(stmt, 3))
+      row.kind = reinterpret_cast<const char*>(t);
+    if (const auto* t = sqlite3_column_text(stmt, 4))
+      row.coordinate_frame = reinterpret_cast<const char*>(t);
+    if (const auto* t = sqlite3_column_text(stmt, 5))
+      row.status = reinterpret_cast<const char*>(t);
+    row.node_count = sqlite3_column_int64(stmt, 6);
+    row.total_distance_m = sqlite3_column_double(stmt, 7);
+    row.total_duration_ns = sqlite3_column_int64(stmt, 8);
+    row.created_at_ns = sqlite3_column_int64(stmt, 9);
+    if (const auto* t = sqlite3_column_text(stmt, 10))
+      row.document_json = reinterpret_cast<const char*>(t);
+    out.push_back(row);
+  }
+  sqlite3_finalize(stmt);
+  return out;
+}
+
+std::vector<TrajectoryRow> MetadataDb::FindTrajectoriesBySession(
+    const Uuid& session_id) const {
+  std::vector<TrajectoryRow> out;
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "SELECT trajectory_id, scene_id, session_id, kind, coordinate_frame,"
+      " status, node_count, total_distance_m, total_duration_ns,"
+      " created_at_ns, document_json FROM trajectories"
+      " WHERE session_id = ? ORDER BY created_at_ns";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare find trajectories by session");
+  }
+  sqlite3_bind_blob(stmt, 1, session_id.data(),
+                    static_cast<int>(session_id.size()), SQLITE_TRANSIENT);
+  while (sqlite3_step(stmt) == SQLITE_ROW) {
+    TrajectoryRow row;
+    if (const auto u = ColumnUuid(stmt, 0)) row.trajectory_id = *u;
+    if (const auto u = ColumnUuid(stmt, 1)) row.scene_id = *u;
+    if (const auto u = ColumnUuid(stmt, 2)) row.session_id = *u;
+    if (const auto* t = sqlite3_column_text(stmt, 3))
+      row.kind = reinterpret_cast<const char*>(t);
+    if (const auto* t = sqlite3_column_text(stmt, 4))
+      row.coordinate_frame = reinterpret_cast<const char*>(t);
+    if (const auto* t = sqlite3_column_text(stmt, 5))
+      row.status = reinterpret_cast<const char*>(t);
+    row.node_count = sqlite3_column_int64(stmt, 6);
+    row.total_distance_m = sqlite3_column_double(stmt, 7);
+    row.total_duration_ns = sqlite3_column_int64(stmt, 8);
+    row.created_at_ns = sqlite3_column_int64(stmt, 9);
+    if (const auto* t = sqlite3_column_text(stmt, 10))
+      row.document_json = reinterpret_cast<const char*>(t);
+    out.push_back(row);
+  }
+  sqlite3_finalize(stmt);
+  return out;
+}
+
+void MetadataDb::AddPoseGraph(const PoseGraphRow& row) {
+  if (read_only_) {
+    throw StorageError(ErrorCode::kStorageReadOnly,
+                       "cannot write to a read-only project", {}, false,
+                       "Open the project for writing to modify it.");
+  }
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "INSERT INTO pose_graphs (graph_id, trajectory_id, scene_id,"
+      " status, node_count, edge_count, odometry_edge_count,"
+      " loop_closure_edge_count, prior_edge_count, created_at_ns,"
+      " document_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare insert pose graph");
+  }
+  sqlite3_bind_blob(stmt, 1, row.graph_id.data(),
+                    static_cast<int>(row.graph_id.size()), SQLITE_TRANSIENT);
+  sqlite3_bind_blob(stmt, 2, row.trajectory_id.data(),
+                    static_cast<int>(row.trajectory_id.size()),
+                    SQLITE_TRANSIENT);
+  sqlite3_bind_blob(stmt, 3, row.scene_id.data(),
+                    static_cast<int>(row.scene_id.size()), SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 4, row.status.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_int64(stmt, 5, row.node_count);
+  sqlite3_bind_int64(stmt, 6, row.edge_count);
+  sqlite3_bind_int64(stmt, 7, row.odometry_edge_count);
+  sqlite3_bind_int64(stmt, 8, row.loop_closure_edge_count);
+  sqlite3_bind_int64(stmt, 9, row.prior_edge_count);
+  sqlite3_bind_int64(stmt, 10, row.created_at_ns);
+  sqlite3_bind_text(stmt, 11, row.document_json.c_str(), -1, SQLITE_TRANSIENT);
+  if (sqlite3_step(stmt) != SQLITE_DONE) {
+    const std::string msg = sqlite3_errmsg(db_);
+    sqlite3_finalize(stmt);
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot insert pose graph row: " + msg);
+  }
+  sqlite3_finalize(stmt);
+}
+
+namespace {
+
+PoseGraphRow ReadPoseGraphRow(sqlite3_stmt* stmt) {
+  PoseGraphRow row;
+  if (const auto u = ColumnUuid(stmt, 0)) row.graph_id = *u;
+  if (const auto u = ColumnUuid(stmt, 1)) row.trajectory_id = *u;
+  if (const auto u = ColumnUuid(stmt, 2)) row.scene_id = *u;
+  if (const auto* t = sqlite3_column_text(stmt, 3))
+    row.status = reinterpret_cast<const char*>(t);
+  row.node_count = sqlite3_column_int64(stmt, 4);
+  row.edge_count = sqlite3_column_int64(stmt, 5);
+  row.odometry_edge_count = sqlite3_column_int64(stmt, 6);
+  row.loop_closure_edge_count = sqlite3_column_int64(stmt, 7);
+  row.prior_edge_count = sqlite3_column_int64(stmt, 8);
+  row.created_at_ns = sqlite3_column_int64(stmt, 9);
+  if (const auto* t = sqlite3_column_text(stmt, 10))
+    row.document_json = reinterpret_cast<const char*>(t);
+  return row;
+}
+
+}  // namespace
+
+std::optional<PoseGraphRow> MetadataDb::QueryLatestPoseGraphByTrajectory(
+    const Uuid& trajectory_id) const {
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "SELECT graph_id, trajectory_id, scene_id, status, node_count,"
+      " edge_count, odometry_edge_count, loop_closure_edge_count,"
+      " prior_edge_count, created_at_ns, document_json FROM pose_graphs"
+      " WHERE trajectory_id = ? ORDER BY created_at_ns DESC LIMIT 1";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare query latest pose graph");
+  }
+  sqlite3_bind_blob(stmt, 1, trajectory_id.data(),
+                    static_cast<int>(trajectory_id.size()), SQLITE_TRANSIENT);
+  std::optional<PoseGraphRow> result;
+  if (sqlite3_step(stmt) == SQLITE_ROW) {
+    result = ReadPoseGraphRow(stmt);
+  }
+  sqlite3_finalize(stmt);
+  return result;
+}
+
+std::vector<PoseGraphRow> MetadataDb::FindPoseGraphsByTrajectory(
+    const Uuid& trajectory_id) const {
+  std::vector<PoseGraphRow> out;
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "SELECT graph_id, trajectory_id, scene_id, status, node_count,"
+      " edge_count, odometry_edge_count, loop_closure_edge_count,"
+      " prior_edge_count, created_at_ns, document_json FROM pose_graphs"
+      " WHERE trajectory_id = ? ORDER BY created_at_ns";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare find pose graphs by trajectory");
+  }
+  sqlite3_bind_blob(stmt, 1, trajectory_id.data(),
+                    static_cast<int>(trajectory_id.size()), SQLITE_TRANSIENT);
+  while (sqlite3_step(stmt) == SQLITE_ROW) {
+    out.push_back(ReadPoseGraphRow(stmt));
+  }
+  sqlite3_finalize(stmt);
+  return out;
+}
+
+std::vector<PoseGraphRow> MetadataDb::FindPoseGraphsByScene(
+    const Uuid& scene_id) const {
+  std::vector<PoseGraphRow> out;
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "SELECT graph_id, trajectory_id, scene_id, status, node_count,"
+      " edge_count, odometry_edge_count, loop_closure_edge_count,"
+      " prior_edge_count, created_at_ns, document_json FROM pose_graphs"
+      " WHERE scene_id = ? ORDER BY created_at_ns";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare find pose graphs by scene");
+  }
+  sqlite3_bind_blob(stmt, 1, scene_id.data(),
+                    static_cast<int>(scene_id.size()), SQLITE_TRANSIENT);
+  while (sqlite3_step(stmt) == SQLITE_ROW) {
+    out.push_back(ReadPoseGraphRow(stmt));
+  }
+  sqlite3_finalize(stmt);
+  return out;
+}
+
+void MetadataDb::AddLoopClosureCandidate(const LoopClosureCandidateRow& row) {
+  if (read_only_) {
+    throw StorageError(ErrorCode::kStorageReadOnly,
+                       "cannot write to a read-only project", {}, false,
+                       "Open the project for writing to modify it.");
+  }
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "INSERT INTO loop_closure_candidates (candidate_id, trajectory_id,"
+      " source_frame_id, target_frame_id, feature_match_score, matcher,"
+      " created_at_ns) VALUES (?, ?, ?, ?, ?, ?, ?)";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare insert loop closure candidate");
+  }
+  sqlite3_bind_blob(stmt, 1, row.candidate_id.data(),
+                    static_cast<int>(row.candidate_id.size()),
+                    SQLITE_TRANSIENT);
+  sqlite3_bind_blob(stmt, 2, row.trajectory_id.data(),
+                    static_cast<int>(row.trajectory_id.size()),
+                    SQLITE_TRANSIENT);
+  sqlite3_bind_blob(stmt, 3, row.source_frame_id.data(),
+                    static_cast<int>(row.source_frame_id.size()),
+                    SQLITE_TRANSIENT);
+  sqlite3_bind_blob(stmt, 4, row.target_frame_id.data(),
+                    static_cast<int>(row.target_frame_id.size()),
+                    SQLITE_TRANSIENT);
+  sqlite3_bind_double(stmt, 5, row.feature_match_score);
+  sqlite3_bind_text(stmt, 6, row.matcher.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_int64(stmt, 7, row.created_at_ns);
+  if (sqlite3_step(stmt) != SQLITE_DONE) {
+    const std::string msg = sqlite3_errmsg(db_);
+    sqlite3_finalize(stmt);
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot insert loop closure candidate row: " + msg);
+  }
+  sqlite3_finalize(stmt);
+}
+
+std::vector<LoopClosureCandidateRow>
+MetadataDb::FindLoopClosureCandidatesByTrajectory(
+    const Uuid& trajectory_id) const {
+  std::vector<LoopClosureCandidateRow> out;
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "SELECT candidate_id, trajectory_id, source_frame_id, target_frame_id,"
+      " feature_match_score, matcher, created_at_ns"
+      " FROM loop_closure_candidates WHERE trajectory_id = ?"
+      " ORDER BY created_at_ns";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare find loop closure candidates");
+  }
+  sqlite3_bind_blob(stmt, 1, trajectory_id.data(),
+                    static_cast<int>(trajectory_id.size()), SQLITE_TRANSIENT);
+  while (sqlite3_step(stmt) == SQLITE_ROW) {
+    LoopClosureCandidateRow row;
+    if (const auto u = ColumnUuid(stmt, 0)) row.candidate_id = *u;
+    if (const auto u = ColumnUuid(stmt, 1)) row.trajectory_id = *u;
+    if (const auto u = ColumnUuid(stmt, 2)) row.source_frame_id = *u;
+    if (const auto u = ColumnUuid(stmt, 3)) row.target_frame_id = *u;
+    row.feature_match_score = sqlite3_column_double(stmt, 4);
+    if (const auto* t = sqlite3_column_text(stmt, 5))
+      row.matcher = reinterpret_cast<const char*>(t);
+    row.created_at_ns = sqlite3_column_int64(stmt, 6);
+    out.push_back(row);
+  }
+  sqlite3_finalize(stmt);
+  return out;
+}
+
+void MetadataDb::AddLoopClosure(const LoopClosureRow& row) {
+  if (read_only_) {
+    throw StorageError(ErrorCode::kStorageReadOnly,
+                       "cannot write to a read-only project", {}, false,
+                       "Open the project for writing to modify it.");
+  }
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "INSERT INTO loop_closures (closure_id, trajectory_id, candidate_id,"
+      " source_frame_id, target_frame_id, status, inlier_ratio,"
+      " inlier_count, confidence, temporal_separation_ns,"
+      " spatial_separation_m, created_at_ns)"
+      " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare insert loop closure");
+  }
+  sqlite3_bind_blob(stmt, 1, row.closure_id.data(),
+                    static_cast<int>(row.closure_id.size()), SQLITE_TRANSIENT);
+  sqlite3_bind_blob(stmt, 2, row.trajectory_id.data(),
+                    static_cast<int>(row.trajectory_id.size()),
+                    SQLITE_TRANSIENT);
+  BindUuidOrNull(stmt, 3, row.candidate_id);
+  sqlite3_bind_blob(stmt, 4, row.source_frame_id.data(),
+                    static_cast<int>(row.source_frame_id.size()),
+                    SQLITE_TRANSIENT);
+  sqlite3_bind_blob(stmt, 5, row.target_frame_id.data(),
+                    static_cast<int>(row.target_frame_id.size()),
+                    SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 6, row.status.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_double(stmt, 7, row.inlier_ratio);
+  sqlite3_bind_int64(stmt, 8, row.inlier_count);
+  sqlite3_bind_double(stmt, 9, row.confidence);
+  sqlite3_bind_int64(stmt, 10, row.temporal_separation_ns);
+  sqlite3_bind_double(stmt, 11, row.spatial_separation_m);
+  sqlite3_bind_int64(stmt, 12, row.created_at_ns);
+  if (sqlite3_step(stmt) != SQLITE_DONE) {
+    const std::string msg = sqlite3_errmsg(db_);
+    sqlite3_finalize(stmt);
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot insert loop closure row: " + msg);
+  }
+  sqlite3_finalize(stmt);
+}
+
+std::vector<LoopClosureRow> MetadataDb::FindLoopClosuresByTrajectory(
+    const Uuid& trajectory_id) const {
+  std::vector<LoopClosureRow> out;
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "SELECT closure_id, trajectory_id, candidate_id, source_frame_id,"
+      " target_frame_id, status, inlier_ratio, inlier_count, confidence,"
+      " temporal_separation_ns, spatial_separation_m, created_at_ns"
+      " FROM loop_closures WHERE trajectory_id = ?"
+      " ORDER BY created_at_ns";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare find loop closures");
+  }
+  sqlite3_bind_blob(stmt, 1, trajectory_id.data(),
+                    static_cast<int>(trajectory_id.size()), SQLITE_TRANSIENT);
+  while (sqlite3_step(stmt) == SQLITE_ROW) {
+    LoopClosureRow row;
+    if (const auto u = ColumnUuid(stmt, 0)) row.closure_id = *u;
+    if (const auto u = ColumnUuid(stmt, 1)) row.trajectory_id = *u;
+    if (const auto u = ColumnUuid(stmt, 2)) row.candidate_id = *u;
+    if (const auto u = ColumnUuid(stmt, 3)) row.source_frame_id = *u;
+    if (const auto u = ColumnUuid(stmt, 4)) row.target_frame_id = *u;
+    if (const auto* t = sqlite3_column_text(stmt, 5))
+      row.status = reinterpret_cast<const char*>(t);
+    row.inlier_ratio = sqlite3_column_double(stmt, 6);
+    row.inlier_count = sqlite3_column_int64(stmt, 7);
+    row.confidence = sqlite3_column_double(stmt, 8);
+    row.temporal_separation_ns = sqlite3_column_int64(stmt, 9);
+    row.spatial_separation_m = sqlite3_column_double(stmt, 10);
+    row.created_at_ns = sqlite3_column_int64(stmt, 11);
+    out.push_back(row);
+  }
+  sqlite3_finalize(stmt);
+  return out;
+}
+
+std::vector<LoopClosureRow> MetadataDb::FindAcceptedLoopClosuresByTrajectory(
+    const Uuid& trajectory_id) const {
+  std::vector<LoopClosureRow> out;
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "SELECT closure_id, trajectory_id, candidate_id, source_frame_id,"
+      " target_frame_id, status, inlier_ratio, inlier_count, confidence,"
+      " temporal_separation_ns, spatial_separation_m, created_at_ns"
+      " FROM loop_closures WHERE trajectory_id = ? AND status = 'accepted'"
+      " ORDER BY created_at_ns";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare find accepted loop closures");
+  }
+  sqlite3_bind_blob(stmt, 1, trajectory_id.data(),
+                    static_cast<int>(trajectory_id.size()), SQLITE_TRANSIENT);
+  while (sqlite3_step(stmt) == SQLITE_ROW) {
+    LoopClosureRow row;
+    if (const auto u = ColumnUuid(stmt, 0)) row.closure_id = *u;
+    if (const auto u = ColumnUuid(stmt, 1)) row.trajectory_id = *u;
+    if (const auto u = ColumnUuid(stmt, 2)) row.candidate_id = *u;
+    if (const auto u = ColumnUuid(stmt, 3)) row.source_frame_id = *u;
+    if (const auto u = ColumnUuid(stmt, 4)) row.target_frame_id = *u;
+    if (const auto* t = sqlite3_column_text(stmt, 5))
+      row.status = reinterpret_cast<const char*>(t);
+    row.inlier_ratio = sqlite3_column_double(stmt, 6);
+    row.inlier_count = sqlite3_column_int64(stmt, 7);
+    row.confidence = sqlite3_column_double(stmt, 8);
+    row.temporal_separation_ns = sqlite3_column_int64(stmt, 9);
+    row.spatial_separation_m = sqlite3_column_double(stmt, 10);
+    row.created_at_ns = sqlite3_column_int64(stmt, 11);
+    out.push_back(row);
+  }
+  sqlite3_finalize(stmt);
+  return out;
+}
+
+void MetadataDb::AddOptimizationResult(const OptimizationResultRow& row) {
+  if (read_only_) {
+    throw StorageError(ErrorCode::kStorageReadOnly,
+                       "cannot write to a read-only project", {}, false,
+                       "Open the project for writing to modify it.");
+  }
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "INSERT INTO optimization_results (result_id, graph_id, trajectory_id,"
+      " status, iterations, initial_error, final_error, error_reduction,"
+      " created_at_ns, document_json)"
+      " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare insert optimization result");
+  }
+  sqlite3_bind_blob(stmt, 1, row.result_id.data(),
+                    static_cast<int>(row.result_id.size()), SQLITE_TRANSIENT);
+  sqlite3_bind_blob(stmt, 2, row.graph_id.data(),
+                    static_cast<int>(row.graph_id.size()), SQLITE_TRANSIENT);
+  sqlite3_bind_blob(stmt, 3, row.trajectory_id.data(),
+                    static_cast<int>(row.trajectory_id.size()),
+                    SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 4, row.status.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_int64(stmt, 5, row.iterations);
+  sqlite3_bind_double(stmt, 6, row.initial_error);
+  sqlite3_bind_double(stmt, 7, row.final_error);
+  sqlite3_bind_double(stmt, 8, row.error_reduction);
+  sqlite3_bind_int64(stmt, 9, row.created_at_ns);
+  sqlite3_bind_text(stmt, 10, row.document_json.c_str(), -1, SQLITE_TRANSIENT);
+  if (sqlite3_step(stmt) != SQLITE_DONE) {
+    const std::string msg = sqlite3_errmsg(db_);
+    sqlite3_finalize(stmt);
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot insert optimization result row: " + msg);
+  }
+  sqlite3_finalize(stmt);
+}
+
+std::optional<OptimizationResultRow>
+MetadataDb::QueryLatestOptimizationResultByTrajectory(
+    const Uuid& trajectory_id) const {
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "SELECT result_id, graph_id, trajectory_id, status, iterations,"
+      " initial_error, final_error, error_reduction, created_at_ns,"
+      " document_json FROM optimization_results"
+      " WHERE trajectory_id = ? ORDER BY created_at_ns DESC LIMIT 1";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare query latest optimization result");
+  }
+  sqlite3_bind_blob(stmt, 1, trajectory_id.data(),
+                    static_cast<int>(trajectory_id.size()), SQLITE_TRANSIENT);
+  std::optional<OptimizationResultRow> result;
+  if (sqlite3_step(stmt) == SQLITE_ROW) {
+    OptimizationResultRow row;
+    if (const auto u = ColumnUuid(stmt, 0)) row.result_id = *u;
+    if (const auto u = ColumnUuid(stmt, 1)) row.graph_id = *u;
+    if (const auto u = ColumnUuid(stmt, 2)) row.trajectory_id = *u;
+    if (const auto* t = sqlite3_column_text(stmt, 3))
+      row.status = reinterpret_cast<const char*>(t);
+    row.iterations = sqlite3_column_int64(stmt, 4);
+    row.initial_error = sqlite3_column_double(stmt, 5);
+    row.final_error = sqlite3_column_double(stmt, 6);
+    row.error_reduction = sqlite3_column_double(stmt, 7);
+    row.created_at_ns = sqlite3_column_int64(stmt, 8);
+    if (const auto* t = sqlite3_column_text(stmt, 9))
+      row.document_json = reinterpret_cast<const char*>(t);
+    result = std::move(row);
+  }
+  sqlite3_finalize(stmt);
+  return result;
+}
+
+std::vector<OptimizationResultRow>
+MetadataDb::FindOptimizationResultsByTrajectory(
+    const Uuid& trajectory_id) const {
+  std::vector<OptimizationResultRow> out;
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "SELECT result_id, graph_id, trajectory_id, status, iterations,"
+      " initial_error, final_error, error_reduction, created_at_ns,"
+      " document_json FROM optimization_results"
+      " WHERE trajectory_id = ? ORDER BY created_at_ns";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare find optimization results");
+  }
+  sqlite3_bind_blob(stmt, 1, trajectory_id.data(),
+                    static_cast<int>(trajectory_id.size()), SQLITE_TRANSIENT);
+  while (sqlite3_step(stmt) == SQLITE_ROW) {
+    OptimizationResultRow row;
+    if (const auto u = ColumnUuid(stmt, 0)) row.result_id = *u;
+    if (const auto u = ColumnUuid(stmt, 1)) row.graph_id = *u;
+    if (const auto u = ColumnUuid(stmt, 2)) row.trajectory_id = *u;
+    if (const auto* t = sqlite3_column_text(stmt, 3))
+      row.status = reinterpret_cast<const char*>(t);
+    row.iterations = sqlite3_column_int64(stmt, 4);
+    row.initial_error = sqlite3_column_double(stmt, 5);
+    row.final_error = sqlite3_column_double(stmt, 6);
+    row.error_reduction = sqlite3_column_double(stmt, 7);
+    row.created_at_ns = sqlite3_column_int64(stmt, 8);
+    if (const auto* t = sqlite3_column_text(stmt, 9))
+      row.document_json = reinterpret_cast<const char*>(t);
     out.push_back(row);
   }
   sqlite3_finalize(stmt);

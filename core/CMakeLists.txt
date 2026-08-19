@@ -35,6 +35,11 @@ string(REPLACE "PRAGMA foreign_keys = ON;" "" SPATIAL_MIGRATION_0006 "${SPATIAL_
 # entity. Written without BEGIN/COMMIT; the runner records schema version 7.
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/../schemas/database/migrations/0007_reconstruction.sql" SPATIAL_MIGRATION_0007)
 string(REPLACE "PRAGMA foreign_keys = ON;" "" SPATIAL_MIGRATION_0007 "${SPATIAL_MIGRATION_0007}")
+# 0008_trajectory_pose_graph.sql (P3-impl-1): canonical trajectory / pose
+# graph / loop closure / optimization result tables. Written without
+# BEGIN/COMMIT; the runner records schema version 8.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/../schemas/database/migrations/0008_trajectory_pose_graph.sql" SPATIAL_MIGRATION_0008)
+string(REPLACE "PRAGMA foreign_keys = ON;" "" SPATIAL_MIGRATION_0008 "${SPATIAL_MIGRATION_0008}")
 configure_file("${CMAKE_CURRENT_SOURCE_DIR}/storage/migrations_generated.h.in"
                "${CMAKE_CURRENT_BINARY_DIR}/storage/migrations_generated.h" @ONLY)
 

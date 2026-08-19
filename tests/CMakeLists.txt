@@ -34,6 +34,8 @@ set(SPATIAL_UNIT_TESTS
   unit/test_calibration_artifact.cpp
   unit/test_reconstruction.cpp
   unit/test_reconstruction_schema.cpp
+  unit/test_trajectory.cpp
+  unit/test_p3_schema.cpp
   unit/test_cli_import.cpp
   unit/test_cli_feature_extraction.cpp
 )
@@ -69,6 +71,9 @@ target_compile_definitions(spatial_unit_tests PRIVATE
   SPATIAL_FEATURE_SCHEMA_JSON="${CMAKE_SOURCE_DIR}/schemas/json/feature.schema.json"
   SPATIAL_CALIBRATION_SCHEMA_JSON="${CMAKE_SOURCE_DIR}/schemas/json/calibration.schema.json"
   SPATIAL_RECONSTRUCTION_SCHEMA_JSON="${CMAKE_SOURCE_DIR}/schemas/json/reconstruction.schema.json"
+  SPATIAL_TRAJECTORY_SCHEMA_JSON="${CMAKE_SOURCE_DIR}/schemas/json/trajectory.schema.json"
+  SPATIAL_POSEGRAPH_SCHEMA_JSON="${CMAKE_SOURCE_DIR}/schemas/json/pose-graph.schema.json"
+  SPATIAL_LOOPCLOSURE_SCHEMA_JSON="${CMAKE_SOURCE_DIR}/schemas/json/loop-closure.schema.json"
 )
 
 include(GoogleTest)
@@ -85,6 +90,7 @@ add_executable(spatial_adapter_tests
   unit/test_colmap_adapter.cpp
   unit/test_colmap_converter.cpp
   unit/test_colmap_execution.cpp
+  unit/test_trajectory_adapter.cpp
 )
 target_link_libraries(spatial_adapter_tests PRIVATE
   spatial_colmap_adapter
@@ -96,6 +102,7 @@ target_include_directories(spatial_adapter_tests PRIVATE ${CMAKE_SOURCE_DIR})
 target_compile_definitions(spatial_adapter_tests PRIVATE
   SPATIAL_COLMAP_PROBE_SHIM_EXECUTABLE="$<TARGET_FILE:spatial_colmap_probe_shim>"
   SPATIAL_RECONSTRUCTION_SCHEMA_JSON="${CMAKE_SOURCE_DIR}/schemas/json/reconstruction.schema.json"
+  SPATIAL_TRAJECTORY_SCHEMA_JSON="${CMAKE_SOURCE_DIR}/schemas/json/trajectory.schema.json"
 )
 gtest_discover_tests(spatial_adapter_tests)
 

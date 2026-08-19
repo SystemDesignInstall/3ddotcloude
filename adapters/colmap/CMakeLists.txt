@@ -31,6 +31,7 @@ add_library(spatial_colmap_adapter STATIC
   colmap_cli.cpp
   colmap_config.cpp
   colmap_converter.cpp
+  colmap_trajectory_adapter.cpp
 )
 
 target_include_directories(spatial_colmap_adapter PUBLIC

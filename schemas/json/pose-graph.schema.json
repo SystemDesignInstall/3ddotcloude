@@ -1,0 +1,123 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://spatial-platform.dev/schemas/json/pose-graph.schema.json",
+  "title": "Canonical Pose Graph Payload (P3)",
+  "description": "Backend-independent pose-graph payload stored in CAS. Contains graph nodes (timestamps + frame references) and edges (relative transforms + information matrices). Every pose-graph backend (GTSAM, g2o, custom) reads and writes this format through its adapter. The graph metadata (status, edge counts, aggregate provenance) lives in the MetadataDb row, not this payload.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "graph_id", "trajectory_id", "nodes", "edges"],
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "description": "Document schema version (P3 design §14.1)."
+    },
+    "graph_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Instance-scoped UUIDv4 identity matching the MetadataDb pose_graphs row."
+    },
+    "trajectory_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "The trajectory this pose graph was built from."
+    },
+    "nodes": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/GraphNode" },
+      "description": "Pose graph nodes. Each node carries only an integer id, a frame reference, and a timestamp (D-PG-03). Pose data is NOT duplicated here — it lives in the Trajectory payload."
+    },
+    "edges": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/GraphEdge" },
+      "description": "Pose graph edges/constraints (D-PG-04…D-PG-07). Each edge is a relative measurement between two nodes."
+    }
+  },
+  "definitions": {
+    "GraphNode": {
+      "type": "object",
+      "description": "A pose-graph node (D-PG-03). Carries connectivity metadata only — pose data is in the Trajectory payload.",
+      "additionalProperties": false,
+      "required": ["node_id", "frame_id", "timestamp_ns"],
+      "properties": {
+        "node_id": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Integer node identifier, ordered by sequence_index within the trajectory."
+        },
+        "frame_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "UUID referencing a Frame in the import model (bridge, D-TRJ-10)."
+        },
+        "timestamp_ns": {
+          "type": "integer",
+          "description": "Exposure timestamp in nanoseconds since epoch."
+        }
+      }
+    },
+    "GraphEdge": {
+      "type": "object",
+      "description": "A relative constraint between two pose-graph nodes (D-PG-04…D-PG-07). The relative transform is T_source_target: maps a point from target frame into source frame. Quaternion order: (x, y, z, w) scalar-last per ADR-007.",
+      "additionalProperties": false,
+      "required": ["edge_id", "type", "source_node_id", "target_node_id", "relative_position_xyz", "relative_rotation_xyzw", "information_matrix_6x6", "confidence"],
+      "properties": {
+        "edge_id": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Integer edge identifier, assigned during graph assembly."
+        },
+        "type": {
+          "type": "string",
+          "enum": ["odometry", "loop_closure", "prior", "gps", "imu_preintegration", "lidar_odometry"],
+          "description": "Edge/constraint type vocabulary (D-PG-04)."
+        },
+        "source_node_id": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Reference to GraphNode.node_id (source frame of the constraint)."
+        },
+        "target_node_id": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Reference to GraphNode.node_id (target frame of the constraint)."
+        },
+        "relative_position_xyz": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "Translation component of T_source_target in meters."
+        },
+        "relative_rotation_xyzw": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 4,
+          "maxItems": 4,
+          "description": "Rotation component of T_source_target as a unit quaternion in (x, y, z, w) scalar-last order (ADR-007)."
+        },
+        "information_matrix_6x6": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 36,
+          "maxItems": 36,
+          "description": "6×6 information matrix (inverse of covariance), flattened row-major in translation-then-rotation ordering (ADR-007, D-PG-05). High value = high confidence = tight constraint."
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Informational quality score [0, 1] for human-facing assessment (D-PG-06). The information matrix is the mathematical weight used by the optimizer."
+        },
+        "source": {
+          "type": "string",
+          "description": "Which algorithm produced this edge (e.g. 'visual_odometry', 'bow_matcher'). Provenance, not identity (D-PG-07)."
+        },
+        "configuration_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA-256 hash of the effective configuration that produced this edge (D-PG-07). For reproducibility and debugging."
+        }
+      }
+    }
+  }
+}

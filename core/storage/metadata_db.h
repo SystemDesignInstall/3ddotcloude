@@ -192,6 +192,84 @@ struct ReconstructionRow {
   std::string document_json;               // full Reconstruction serialized as JSON (CAS payload content)
 };
 
+// P3-impl-1 (D-TRJ-01): Canonical trajectory scene entity. The full
+// Trajectory document (pose nodes) lives in the CAS payload; this row
+// stores metadata for query access.
+struct TrajectoryRow {
+  Uuid trajectory_id{};
+  Uuid scene_id{};
+  Uuid session_id{};
+  std::string kind;                        // "odometry" | "slam" | "sfm" | "survey"
+  std::string coordinate_frame;
+  std::string status;                      // "building" | "optimized" | "superseded"
+  std::int64_t node_count = 0;
+  double total_distance_m = 0.0;
+  std::int64_t total_duration_ns = 0;
+  std::int64_t created_at_ns = 0;
+  std::string document_json;               // full Trajectory as JSON
+};
+
+// P3-impl-1 (D-PG-01): Canonical pose graph entity. The full PoseGraph
+// document (nodes, edges) lives in the CAS payload; this row stores
+// metadata for query access.
+struct PoseGraphRow {
+  Uuid graph_id{};
+  Uuid trajectory_id{};
+  Uuid scene_id{};
+  std::string status;                      // "building" | "ready" | "optimizing" | "optimized" | "failed"
+  std::int64_t node_count = 0;
+  std::int64_t edge_count = 0;
+  std::int64_t odometry_edge_count = 0;
+  std::int64_t loop_closure_edge_count = 0;
+  std::int64_t prior_edge_count = 0;
+  std::int64_t created_at_ns = 0;
+  std::string document_json;               // full PoseGraph as JSON
+};
+
+// P3-impl-1 (D-LC-02, D-LC-03): Loop closure candidate — persisted for
+// audit trail (debugging, re-evaluation).
+struct LoopClosureCandidateRow {
+  Uuid candidate_id{};
+  Uuid trajectory_id{};
+  Uuid source_frame_id{};
+  Uuid target_frame_id{};
+  double feature_match_score = 0.0;
+  std::string matcher;
+  std::int64_t created_at_ns = 0;
+};
+
+// P3-impl-1 (D-LC-05): Loop closure — accepted or rejected, both persisted
+// for audit.
+struct LoopClosureRow {
+  Uuid closure_id{};
+  Uuid trajectory_id{};
+  Uuid candidate_id{};
+  Uuid source_frame_id{};
+  Uuid target_frame_id{};
+  std::string status;                      // "accepted" | "rejected"
+  double inlier_ratio = 0.0;
+  std::int64_t inlier_count = 0;
+  double confidence = 0.0;
+  std::int64_t temporal_separation_ns = 0;
+  double spatial_separation_m = 0.0;
+  std::int64_t created_at_ns = 0;
+};
+
+// P3-impl-1 (D-OPT-01): Optimization result — clean input/output contract
+// for pose graph optimization.
+struct OptimizationResultRow {
+  Uuid result_id{};
+  Uuid graph_id{};
+  Uuid trajectory_id{};
+  std::string status;                      // "converged" | "failed" | "diverged"
+  std::int64_t iterations = 0;
+  double initial_error = 0.0;
+  double final_error = 0.0;
+  double error_reduction = 0.0;
+  std::int64_t created_at_ns = 0;
+  std::string document_json;               // full OptimizationResult as JSON
+};
+
 // Mutable (non-identity) sensor attributes (sensor-model.md §1). sensor_id is
 // immutable; edits are new sensors or new versions, never in-place mutation.
 // Empty strings clear the underlying column to NULL.
@@ -374,6 +452,43 @@ class MetadataDb {
       const Uuid& scene_id) const;
   std::vector<ReconstructionRow> FindReconstructionsByScene(
       const Uuid& scene_id) const;
+
+  // P3-impl-1 (D-TRJ-01): canonical trajectory entity (migration 0008).
+  void AddTrajectory(const TrajectoryRow& row);
+  std::optional<TrajectoryRow> QueryLatestTrajectoryBySession(
+      const Uuid& session_id) const;
+  std::vector<TrajectoryRow> FindTrajectoriesByScene(
+      const Uuid& scene_id) const;
+  std::vector<TrajectoryRow> FindTrajectoriesBySession(
+      const Uuid& session_id) const;
+
+  // P3-impl-1 (D-PG-01): canonical pose graph entity (migration 0008).
+  void AddPoseGraph(const PoseGraphRow& row);
+  std::optional<PoseGraphRow> QueryLatestPoseGraphByTrajectory(
+      const Uuid& trajectory_id) const;
+  std::vector<PoseGraphRow> FindPoseGraphsByTrajectory(
+      const Uuid& trajectory_id) const;
+  std::vector<PoseGraphRow> FindPoseGraphsByScene(
+      const Uuid& scene_id) const;
+
+  // P3-impl-1 (D-LC-02, D-LC-03): loop closure candidates (migration 0008).
+  void AddLoopClosureCandidate(const LoopClosureCandidateRow& row);
+  std::vector<LoopClosureCandidateRow> FindLoopClosureCandidatesByTrajectory(
+      const Uuid& trajectory_id) const;
+
+  // P3-impl-1 (D-LC-05): loop closures (migration 0008).
+  void AddLoopClosure(const LoopClosureRow& row);
+  std::vector<LoopClosureRow> FindLoopClosuresByTrajectory(
+      const Uuid& trajectory_id) const;
+  std::vector<LoopClosureRow> FindAcceptedLoopClosuresByTrajectory(
+      const Uuid& trajectory_id) const;
+
+  // P3-impl-1 (D-OPT-01): optimization results (migration 0008).
+  void AddOptimizationResult(const OptimizationResultRow& row);
+  std::optional<OptimizationResultRow> QueryLatestOptimizationResultByTrajectory(
+      const Uuid& trajectory_id) const;
+  std::vector<OptimizationResultRow> FindOptimizationResultsByTrajectory(
+      const Uuid& trajectory_id) const;
 
   // Closes the connection.
   void Close();
