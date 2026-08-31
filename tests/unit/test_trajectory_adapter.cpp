@@ -220,10 +220,11 @@ TEST_F(ColmapTrajectoryAdapterTest, Rotation180DegreesAroundZ) {
   EXPECT_NEAR(node.position_xyz[1], -2.0, 1e-10);
   EXPECT_NEAR(node.position_xyz[2], -3.0, 1e-10);
 
-  // Rotation: (x,y,z,w) = (0, 0, 1, 0)
+  // Rotation: (x,y,z,w) = (0, 0, -1, 0)
+  // Conjugate of (0,0,1,0) is (0,0,-1,0)
   EXPECT_NEAR(node.rotation_xyzw[0], 0.0, 1e-10);
   EXPECT_NEAR(node.rotation_xyzw[1], 0.0, 1e-10);
-  EXPECT_NEAR(node.rotation_xyzw[2], 1.0, 1e-10);
+  EXPECT_NEAR(node.rotation_xyzw[2], -1.0, 1e-10);
   EXPECT_NEAR(node.rotation_xyzw[3], 0.0, 1e-10);
 }
 
@@ -533,9 +534,11 @@ TEST_F(ColmapTrajectoryAdapterTest, EmptyModelThrows) {
 class TrajectorySchemaValidationTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    const char* schema_path = GetEnv("SPATIAL_TRAJECTORY_SCHEMA_JSON");
-    ASSERT_NE(schema_path, nullptr)
-        << "SPATIAL_TRAJECTORY_SCHEMA_JSON not set";
+    // SPATIAL_TRAJECTORY_SCHEMA_JSON is a compile-time string literal define
+    // from CMakeLists.txt (already quoted).
+    std::string schema_path = SPATIAL_TRAJECTORY_SCHEMA_JSON;
+    ASSERT_TRUE(std::filesystem::exists(schema_path))
+        << "Schema file not found: " << schema_path;
     std::ifstream ifs(schema_path);
     ASSERT_TRUE(ifs.is_open()) << "Cannot open " << schema_path;
     schema_ = nlohmann::json::parse(ifs);

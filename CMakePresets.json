@@ -13,7 +13,8 @@
       "binaryDir": "${sourceDir}/build/default",
       "cacheVariables": {
         "SPATIAL_ENABLE_TESTS": "ON",
-        "SPATIAL_WARNINGS_AS_ERRORS": "ON"
+        "SPATIAL_WARNINGS_AS_ERRORS": "ON",
+        "SPATIAL_HAS_GTSAM": "ON"
       }
     },
     {
@@ -27,7 +28,8 @@
       "binaryDir": "${sourceDir}/build/release",
       "cacheVariables": {
         "SPATIAL_ENABLE_TESTS": "ON",
-        "SPATIAL_WARNINGS_AS_ERRORS": "ON"
+        "SPATIAL_WARNINGS_AS_ERRORS": "ON",
+        "SPATIAL_HAS_GTSAM": "ON"
       }
     }
   ],

@@ -1,0 +1,12 @@
+#pragma once
+
+// Configure-time build identity embedded into the GTSAM adapter. The git
+// commit is part of the artifact provenance (RFC-0008 §8). Generated from
+// gtsam_adapter_build_info.h.in; do not edit by hand.
+
+namespace spatial::adapters::gtsam {
+
+inline constexpr const char* kGtsamAdapterVersion = "@SPATIAL_GTSAM_ADAPTER_VERSION@";
+inline constexpr const char* kGtsamAdapterGitCommit = "@SPATIAL_GTSAM_ADAPTER_GIT_COMMIT@";
+
+}  // namespace spatial::adapters::gtsam

@@ -8,3 +8,7 @@
 add_subdirectory(interfaces)
 add_subdirectory(process)
 add_subdirectory(colmap)
+# P3-impl-6a: GTSAM adapter — gated by option, isolated from core.
+if(SPATIAL_HAS_GTSAM)
+  add_subdirectory(gtsam)
+endif()

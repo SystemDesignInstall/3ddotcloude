@@ -74,6 +74,7 @@ target_compile_definitions(spatial_unit_tests PRIVATE
   SPATIAL_TRAJECTORY_SCHEMA_JSON="${CMAKE_SOURCE_DIR}/schemas/json/trajectory.schema.json"
   SPATIAL_POSEGRAPH_SCHEMA_JSON="${CMAKE_SOURCE_DIR}/schemas/json/pose-graph.schema.json"
   SPATIAL_LOOPCLOSURE_SCHEMA_JSON="${CMAKE_SOURCE_DIR}/schemas/json/loop-closure.schema.json"
+  SPATIAL_OPTIMIZATION_RESULT_SCHEMA_JSON="${CMAKE_SOURCE_DIR}/schemas/json/optimization-result.schema.json"
 )
 
 include(GoogleTest)
@@ -145,3 +146,58 @@ target_compile_definitions(spatial_colmap_worker_tests PRIVATE
   SPATIAL_COLMAP_PROBE_SHIM_EXECUTABLE="$<TARGET_FILE:spatial_colmap_probe_shim>"
 )
 gtest_discover_tests(spatial_colmap_worker_tests)
+
+# P3-impl-6a: GTSAM adapter tests — gated, never part of core test suite.
+if(SPATIAL_HAS_GTSAM)
+  add_executable(spatial_gtsam_tests
+    unit/test_gtsam_adapter.cpp
+  )
+  target_link_libraries(spatial_gtsam_tests PRIVATE
+    spatial_gtsam_adapter
+    GTest::gtest
+    # Intentionally omit gtest_main: GTSAM's transitive boost_test_exec_monitor
+    # defines its own main() which conflicts. We provide main() in the test
+    # source along with the test_main stub the boost lib requires.
+  )
+  # GTSAM's transitive Boost dependency auto-links boost_test_exec_monitor,
+  # which expects a test_main() symbol. Suppress Boost auto-linking since we
+  # use GTest, not Boost.Test.
+  target_compile_definitions(spatial_gtsam_tests PRIVATE
+    BOOST_ALL_NO_LIB
+    SPATIAL_OPTIMIZATION_RESULT_SCHEMA_JSON="${CMAKE_SOURCE_DIR}/schemas/json/optimization-result.schema.json"
+    SPATIAL_POSE_GRAPH_SCHEMA_JSON="${CMAKE_SOURCE_DIR}/schemas/json/pose-graph.schema.json"
+    SPATIAL_LOOP_CLOSURE_SCHEMA_JSON="${CMAKE_SOURCE_DIR}/schemas/json/loop-closure.schema.json"
+  )
+  # GTest discovery cannot be used because GTSAM's transitive boost_test_exec_monitor
+  # intercepts --gtest_list_tests. Use manual test registration instead.
+  add_test(NAME spatial_gtsam_tests COMMAND spatial_gtsam_tests)
+
+  # GTSAM links as a static library, but its transitive runtime deps (TBB /
+  # oneTBB and hwloc) are shared libraries that must be on PATH for the test
+  # executable to load. Conan's CMakeDeps generator records their bin dirs as
+  # <pkg>_BIN_DIRS_<CONFIG> variables (exactly one config suffix is populated
+  # per preset). Propagate those dirs into the test's runtime PATH so plain
+  # `ctest --test-dir build/<preset>` works without any manual PATH step or
+  # committing third-party DLLs. See P3-impl-6b finding #1.
+  set(SPATIAL_GTSAM_RUNTIME_BIN_DIRS "")
+  foreach(_pkg IN ITEMS onetbb hwloc)
+    foreach(_cfg IN ITEMS DEBUG RELEASE)
+      if(DEFINED ${_pkg}_BIN_DIRS_${_cfg} AND NOT "${${_pkg}_BIN_DIRS_${_cfg}}" STREQUAL "")
+        list(APPEND SPATIAL_GTSAM_RUNTIME_BIN_DIRS "${${_pkg}_BIN_DIRS_${_cfg}}")
+      endif()
+    endforeach()
+  endforeach()
+  list(REMOVE_DUPLICATES SPATIAL_GTSAM_RUNTIME_BIN_DIRS)
+  if(SPATIAL_GTSAM_RUNTIME_BIN_DIRS)
+    # Each ENVIRONMENT_MODIFICATION entry is "VAR=op:VALUE" (singular VALUE,
+    # ; separates entries). Prepend each runtime bin dir to PATH in order.
+    set(SPATIAL_GTSAM_ENV_LIST "")
+    foreach(_dir IN LISTS SPATIAL_GTSAM_RUNTIME_BIN_DIRS)
+      list(APPEND SPATIAL_GTSAM_ENV_LIST "PATH=path_list_prepend:${_dir}")
+    endforeach()
+    string(JOIN ";" SPATIAL_GTSAM_ENV_STR ${SPATIAL_GTSAM_ENV_LIST})
+    set_tests_properties(spatial_gtsam_tests PROPERTIES
+      ENVIRONMENT_MODIFICATION "${SPATIAL_GTSAM_ENV_STR}"
+    )
+  endif()
+endif()

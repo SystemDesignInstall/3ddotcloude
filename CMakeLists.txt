@@ -11,6 +11,9 @@ project(spatial_platform
 # ---------------------------------------------------------------------------
 option(SPATIAL_ENABLE_TESTS "Build the unit/integration test suites" ON)
 option(SPATIAL_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ON)
+# P3-impl-6a: GTSAM optimizer backend. Gated — core and existing adapters
+# never depend on GTSAM; only adapters/gtsam/ links it.
+option(SPATIAL_HAS_GTSAM "Build the GTSAM optimizer adapter (P3-impl-6a)" OFF)
 
 if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
   message(FATAL_ERROR "Configure via a CMake preset only (ADR-022). "
@@ -42,6 +45,11 @@ endif()
 find_package(Eigen3 CONFIG REQUIRED)
 find_package(SQLite3 CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
+
+# P3-impl-6a: GTSAM is optional and isolated to adapters/gtsam/.
+if(SPATIAL_HAS_GTSAM)
+  find_package(gtsam CONFIG REQUIRED)
+endif()
 
 add_subdirectory(core)
 add_subdirectory(engine)

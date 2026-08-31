@@ -1,0 +1,168 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://spatial-platform.dev/schemas/json/optimization-result.schema.json",
+  "title": "Canonical Optimization Result (P3)",
+  "description": "Backend-independent optimization result payload stored in CAS. Contains optimized poses with post-optimization covariances and optimization metadata. Every optimizer backend (GTSAM, Ceres, custom) produces this document through its adapter.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "result_id", "graph_id", "trajectory_id", "status", "iterations", "initial_error", "final_error", "error_reduction", "created_at_ns", "provenance", "nodes"],
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "description": "Document schema version."
+    },
+    "result_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Instance-scoped UUIDv4 identity for this optimization result."
+    },
+    "graph_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Reference to the PoseGraph that was optimized."
+    },
+    "trajectory_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Reference to the original Trajectory."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["converged", "failed", "diverged"],
+      "description": "Optimization outcome (D-OPT-02)."
+    },
+    "iterations": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Actual iterations performed by the optimizer."
+    },
+    "initial_error": {
+      "type": "number",
+      "description": "Total squared error before optimization."
+    },
+    "final_error": {
+      "type": "number",
+      "description": "Total squared error after optimization."
+    },
+    "error_reduction": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Relative error reduction: (initial - final) / initial."
+    },
+    "created_at_ns": {
+      "type": "integer",
+      "description": "Epoch nanoseconds when optimization completed."
+    },
+    "provenance": {
+      "$ref": "#/definitions/OptimizationProvenance",
+      "description": "Optimization provenance metadata."
+    },
+    "nodes": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/OptimizedPoseNode" },
+      "description": "Optimized pose nodes, ordered by sequence_index."
+    }
+  },
+  "definitions": {
+    "OptimizationProvenance": {
+      "type": "object",
+      "description": "Provenance metadata for the optimization run.",
+      "additionalProperties": false,
+      "required": ["optimizer", "configuration_hash", "input_artifact_hashes", "adapter_version"],
+      "properties": {
+        "optimizer": {
+          "$ref": "#/definitions/OptimizerInfo",
+          "description": "Backend optimizer information."
+        },
+        "configuration_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA-256 hash of effective configuration."
+        },
+        "input_artifact_hashes": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "description": "CAS hashes of input artifacts (trajectory, pose graph)."
+        },
+        "adapter_version": {
+          "type": "string",
+          "description": "Version of the adapter that produced this result."
+        },
+        "git_commit": {
+          "type": "string",
+          "description": "Git commit of the adapter."
+        },
+        "backend_specific_json": {
+          "type": "string",
+          "description": "Arbitrary optimizer metadata as JSON string."
+        }
+      }
+    },
+    "OptimizerInfo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Optimizer name (e.g. 'gtsam', 'ceres', 'custom')."
+        },
+        "version": {
+          "type": "string",
+          "description": "Optimizer version."
+        }
+      }
+    },
+    "OptimizedPoseNode": {
+      "type": "object",
+      "description": "Post-optimization corrected pose (D-OPT-03, D-OPT-04).",
+      "additionalProperties": false,
+      "required": ["frame_id", "timestamp_ns", "sequence_index", "position_xyz", "rotation_xyzw"],
+      "properties": {
+        "frame_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "UUID referencing a Frame in the import model."
+        },
+        "timestamp_ns": {
+          "type": "integer",
+          "description": "Exposure timestamp in nanoseconds since epoch."
+        },
+        "sequence_index": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Monotonically increasing ordinal."
+        },
+        "position_xyz": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "Corrected translation of T_trajectory_camera in meters."
+        },
+        "rotation_xyzw": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 4,
+          "maxItems": 4,
+          "description": "Corrected unit quaternion in (x, y, z, w) scalar-last order."
+        },
+        "covariance_position": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 6,
+          "maxItems": 6,
+          "description": "Optional post-optimization 3x3 position covariance, upper triangle flattened row-major."
+        },
+        "covariance_rotation": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 6,
+          "maxItems": 6,
+          "description": "Optional post-optimization 3x3 rotation covariance, upper triangle flattened row-major."
+        }
+      }
+    }
+  }
+}
