@@ -19,7 +19,9 @@ its verification report passes in both Debug and Release.
 | P3-impl-6b GTSAM optimizer adapter | ✅ COMPLETE | `P3-impl-6b-verification-report.md` (537/537) |
 | ADR-P3-GTSAM-001 GTSAM acceptance | ✅ ACCEPTED | `docs/architecture/ADR-P3-GTSAM-001.md` |
 | **P3-impl-6c synthetic loop-closure → GTSAM E2E** | ✅ **ACCEPTED/COMPLETE** | `P3-impl-6c-verification-report.md` (537/537) |
-| **P3-impl-7a visual loop candidate generation** | **← next** | — |
+| **P3-impl-7a visual loop candidate generation** | ✅ **ACCEPTED/COMPLETE** | `P3-impl-7a-verification-report.md` (549/549) |
+| **7a.1 loop-closure capability executor integration** | ⏳ **DEFERRED debt** (not 7a defect) | — |
+| **P3-impl-7b geometric loop verification** | **← next** | — |
 | P3-impl-7b geometric loop verification | ⏳ | — |
 | P3-impl-7c visual loop → GTSAM E2E | ⏳ | — |
 | Multi-session registration | ⏳ | — |
@@ -66,10 +68,54 @@ CAS + Provenance
 
 ---
 
+## P3-impl-7a — Acceptance Record
+
+- **Verdict:** PASS / ACCEPTED / COMPLETE (2026-08-31).
+- **Deliverables:**
+  - `core/loop_closure/feature_matcher.h` (backend-independent matching contract).
+  - `core/loop_closure/loop_closure_candidate_gen.{h,cpp}` (windowed candidate generation +
+    FeatureArtifact→canonical-set loading).
+  - `adapters/visual_matching/` (`L2NearestMatcher`, classical deterministic matcher; std-only,
+    no OpenCV/FLANN).
+  - `engine/pipeline/loop_closure_detection.{h,cpp}` (candidate producer + capability registration).
+  - `tests/unit/test_loop_closure_detection.cpp` (12 tests).
+  - `docs/architecture/P3-impl-7a-verification-report.md`.
+- **Proved:** FeatureArtifact → descriptor matching → score → ranking → temporal exclusion →
+  `LoopClosureCandidate` → CAS + provenance. **Debug 549/549 · Release 549/549**;
+  `spatial_gtsam_tests` unchanged at 39/39.
+- **Boundary preserved:** `mock_16` is for deterministic tests only, NOT a production descriptor.
+  Loop closure stays an observation/constraint, never a direct pose mutation. Matcher behind the
+  adapter boundary; Core backend-free; GTSAM boundary unchanged (no GTSAM includes/uses in 7a code).
+
+> **Stated capability consequence (correct, not overstated):** "Visual loop-closure **candidate-
+> generation contract** implemented and verified" — NOT "production visual loop closure". Real
+> descriptor quality on real images is unproven.
+
+---
+
+## Deferred debt — P3-impl-7a.1 Loop Closure Capability Executor Integration (OPEN)
+
+Deliberately deferred, NOT a defect of P3-impl-7a:
+
+- `"loop_closure"` is registered as a **declarative** pipeline stage and the producer
+  (`DetectLoopClosureCandidates`) is tested and callable, but the full `Engine::RunPipeline`
+  executor path is **not bound** to the capability.
+- Why: the in-process executor dispatches a single worker `task_type` per stage over a single
+  input ref, and `DemoWorkerProfile().capabilities` lists only
+  `feature_extraction, reconstruction, validation`. Candidate generation consumes **multiple**
+  FeatureArtifacts per run, requiring a new worker `task_type` + capability-profile wiring +
+  multi-input handling — a separate integration increment touching protected worker/task
+  infrastructure.
+- Target (do NOT implement automatically):
+  `Engine → Scheduler → Worker → loop_closure capability → FeatureArtifacts → candidate generator
+  → LoopClosureCandidate → ArtifactStore`.
+
+---
+
 ## Next step
 
-**P3-impl-7a — Visual Loop Closure Candidate Generation** (see
-`P3-impl-7a-implementation-readiness.md`). Do **not** start automatically; requires explicit
-authorization. 7a builds a real classical visual candidate generator over the existing
-FeatureArtifact pipeline — no new repository research, and no TEASER++, Open3D, AI, or multi-session
-increment at this step.
+**P3-impl-7b — Geometric Loop Verification** — see `P3-impl-7b-implementation-readiness.md`.
+Consumes 7a's `LoopClosureCandidate`s and produces accepted/rejected `LoopClosure` geometric
+constraints. Do **not** start automatically; requires explicit authorization after the readiness
+report is reviewed.
+

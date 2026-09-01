@@ -57,6 +57,7 @@ add_library(spatial_core STATIC
   project/project.cpp
   scene/query/scene_query.cpp
   scene/query/calibration_materializer.cpp
+  loop_closure/loop_closure_candidate_gen.cpp
 )
 
 target_include_directories(spatial_core PUBLIC

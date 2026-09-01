@@ -94,15 +94,88 @@ the **matching algorithm itself** plus the adapter boundary that produces
 
 ---
 
-## 4. Open design questions for 7a (resolve before implementation)
+## 4. Resolved decisions for 7a (AUTHORIZED, 2026-08-31)
 
-| # | Question | Proposed default |
-|---|----------|------------------|
-| Q1 | Where does the matcher backend live? | New `adapters/<matcher>/` following the adapter-seam pattern; core holds only the contract + candidate vector. |
-| Q2 | Does 7a need a new capability `"loop_closure"` registered in a pipeline, or is it a library/CLI step for now? | Mirror the feature-extraction single-stage pipeline pattern; register a `loop_closure` capability producing candidates (no PoseGraph/GTSAM yet — that is 7b/7c). |
-| Q3 | Which descriptor/detector for the first classical proof? | Whatever existing P2.3 produces (`mock_16` rows), decided with the user before locking a detector name in the schema vocabulary. |
-| Q4 | Candidate output: standalone CAS artifacts + DB rows, consistent with LoopClosureCandidate persistence? | Yes — follow the artifact + metadata-row pattern used by trajectory/pose-graph. |
-| Q5 | Scope of temporally-rich sessions (large N): brute-force O(N²) or windowed/sequence-based search? | Start windowed (bounded lookback) to keep the first proof deterministic and cheap; document the full-search option for later. |
+> These replace the earlier open questions. A single source of truth; do not re-open unless new
+> protected-contract impact is discovered (then report `ARCHITECTURE CHANGE REQUIRED`).
+
+**Q1 — matcher location → adapter.**
+Core holds only a backend-independent matching **contract** and the canonical candidate-generation
+logic (`core/loop_closure/`). The concrete matching implementation lives behind an adapter boundary
+(`adapters/visual_matching/`) exactly as GTSAM is an adapter. Core says "I need a visual descriptor
+matcher"; it never names OpenCV / FLANN / BFMatcher / a specific algorithm.
+
+```
+Core
+  │
+  ▼
+FeatureMatcher contract (interface)
+  │
+  ▼
+Visual Matching Adapter
+  │
+  ▼
+classical matcher
+```
+
+**Q2 — capability vs library → capability.**
+7a is a real single-stage pipeline stage (not bare helpers), registered with the **existing** capability
+name from `worker-capabilities.schema.json`: **`"loop_closure"`**. Its contract is **candidate
+generation only**:
+
+```
+Frame/FeatureArtifact → descriptor matching → candidate ranking → temporal exclusion →
+LoopClosureCandidate[] → CAS + metadata rows
+```
+
+It SHALL NOT produce PoseGraph/GTSAM work at this stage (that is 7b/7c).
+
+**Q3 — descriptor → existing FeatureArtifact contract; `mock_16` for tests only.**
+The matcher operates against `FeatureArtifact.descriptors[rows]` (feature.schema.json) and is
+independent of any specific detector/descriptor. The existing `mock_16` (16-dim float rows) is used for the
+**deterministic integration tests**. It is **NOT** declared a production visual descriptor — a production
+descriptor is a separate, later stage.
+
+**Q4 — persistence → yes, existing pattern.**
+Candidates are NOT a transient helper. Use the existing ArtifactStore / canonical IDs / provenance /
+metadata-row pattern (the `loop_closure_candidates` metadata table already exists — migration 0008 —
+and `loop-closure.schema.json` already defines the candidates CAS payload). No new storage subsystem.
+
+**Q5 — search scope → bounded/windowed.**
+For 7a use a **bounded/windowed** candidate search: each source frame is matched only against target
+frames within a configured lookback window that also satisfies `minimum_temporal_separation_ns`.
+Deterministic, bounded, configurable, testable. No large-scale global retrieval/indexing
+(e.g. vocab trees) in 7a.
+
+---
+
+## 6. AUTHORIZATION — P3-impl-7a (2026-08-31)
+
+> **AUTHORIZE P3-impl-7a.** Implement only P3-impl-7a. Reuse existing canonical types and the existing
+> adapter/capability architecture.
+>
+> - Q1: matcher implementation SHALL live behind an adapter boundary. Core contains only the
+>   backend-independent matching contract and canonical candidate-generation logic.
+> - Q2: implement 7a as a capability/pipeline stage for visual loop-closure **candidate generation
+>   only**. Output `LoopClosureCandidate` records; SHALL NOT perform geometric verification,
+>   PoseGraph construction, or GTSAM optimization.
+> - Q3: matcher SHALL operate against the existing `FeatureArtifact` descriptor contract. Existing
+>   `mock_16` MAY be used for deterministic integration tests, but SHALL NOT be declared a production
+>   visual descriptor.
+> - Q4: candidates SHALL follow the existing ArtifactStore / provenance / metadata-row persistence
+>   pattern. Do not create a new storage subsystem.
+> - Q5: use bounded/windowed candidate search with configurable temporal exclusion. Do not implement
+>   large-scale global retrieval/indexing in 7a.
+>
+> Do not perform new repository research. Do not implement TEASER++, Open3D, AI/neural methods,
+> multi-session registration, geometric verification, or GTSAM integration.
+>
+> If implementation requires changing a protected canonical contract, STOP and report
+> `ARCHITECTURE CHANGE REQUIRED`.
+>
+> At completion provide: Debug/Release test counts, modified files, candidate-generation examples,
+> deterministic-test evidence, schema validation, provenance/CAS evidence, and explicit confirmation
+> that the GTSAM/Core boundaries remain unchanged.
 
 ---
 

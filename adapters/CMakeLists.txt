@@ -8,6 +8,8 @@
 add_subdirectory(interfaces)
 add_subdirectory(process)
 add_subdirectory(colmap)
+# P3-impl-7a: classical visual matcher adapter (core-only, no heavy deps).
+add_subdirectory(visual_matching)
 # P3-impl-6a: GTSAM adapter — gated by option, isolated from core.
 if(SPATIAL_HAS_GTSAM)
   add_subdirectory(gtsam)

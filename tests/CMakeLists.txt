@@ -147,6 +147,27 @@ target_compile_definitions(spatial_colmap_worker_tests PRIVATE
 )
 gtest_discover_tests(spatial_colmap_worker_tests)
 
+# P3-impl-7a: Visual loop-closure candidate generation tests. Link core +
+# engine (for WriteFeatureArtifactPayload / DetectLoopClosureCandidates) and the
+# classical visual matcher adapter, which proves the candidate path from real
+# FeatureArtifacts to persisted LoopClosureCandidates + a loop-closure CAS
+# payload. Unconditioned (no GTSAM); the adapter is core-only (RFC-0008 §5).
+add_executable(spatial_loop_closure_tests
+  unit/test_loop_closure_detection.cpp
+)
+target_link_libraries(spatial_loop_closure_tests PRIVATE
+  spatial_core
+  spatial_engine
+  spatial_visual_matching_adapter
+  GTest::gtest
+  GTest::gtest_main
+)
+target_include_directories(spatial_loop_closure_tests PRIVATE ${CMAKE_SOURCE_DIR})
+target_compile_definitions(spatial_loop_closure_tests PRIVATE
+  SPATIAL_LOOPCLOSURE_SCHEMA_JSON="${CMAKE_SOURCE_DIR}/schemas/json/loop-closure.schema.json"
+)
+gtest_discover_tests(spatial_loop_closure_tests)
+
 # P3-impl-6a: GTSAM adapter tests — gated, never part of core test suite.
 if(SPATIAL_HAS_GTSAM)
   add_executable(spatial_gtsam_tests
