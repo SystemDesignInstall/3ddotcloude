@@ -21,9 +21,8 @@ its verification report passes in both Debug and Release.
 | **P3-impl-6c synthetic loop-closure → GTSAM E2E** | ✅ **ACCEPTED/COMPLETE** | `P3-impl-6c-verification-report.md` (537/537) |
 | **P3-impl-7a visual loop candidate generation** | ✅ **ACCEPTED/COMPLETE** | `P3-impl-7a-verification-report.md` (549/549) |
 | **7a.1 loop-closure capability executor integration** | ⏳ **DEFERRED debt** (not 7a defect) | — |
-| **P3-impl-7b geometric loop verification** | **← next** | — |
-| P3-impl-7b geometric loop verification | ⏳ | — |
-| P3-impl-7c visual loop → GTSAM E2E | ⏳ | — |
+| **P3-impl-7b geometric loop verification** | ✅ **ACCEPTED/COMPLETE** | `P3-impl-7b-verification-report.md` (564/564) |
+| P3-impl-7c visual loop → GTSAM E2E | ⏳ **← next** | — |
 | Multi-session registration | ⏳ | — |
 | LiDAR fusion | ⏳ | — |
 | Dense reconstruction | ⏳ | — |
@@ -93,6 +92,34 @@ CAS + Provenance
 
 ---
 
+## P3-impl-7b — Acceptance Record
+
+- **Verdict:** PASS / ACCEPTED / COMPLETE (2026-09-01).
+- **Deliverables:**
+  - `core/loop_closure/geometric_verifier.h`, `verification_options.h`,
+    `correspondence_reconstruction.h` (backend-independent verification contract + configurable
+    acceptance thresholds).
+  - `core/loop_closure/feature_matcher.h` (additive: keypoints + `MatchCorrespondences` seam —
+    no existing signature changed).
+  - `adapters/visual_geometry/fundamental_verifier.{h,cpp}` (deterministic uncalibrated Fundamental
+    F + RANSAC; fixed seed; no metric pose fabricated — `has_relative_pose` always false).
+  - `engine/pipeline/loop_closure_verification.{h,cpp}` (orchestration: resolve artifacts →
+    correspondences → verify → persist accepted AND rejected `LoopClosure` rows + CAS payload +
+    manifest provenance).
+  - `tests/unit/test_loop_closure_verification.cpp` (15 tests, incl. the two golden safety proofs).
+  - `docs/architecture/P3-impl-7b-verification-report.md`.
+- **Proved:** `Candidate ≠ LoopClosure` — a visually-similar but geometrically-wrong candidate is
+  REJECTED; RANSAC recovers the true model under 70% outlier contamination; identical inputs give
+  identical results; missing/malformed input fails closed with a typed error. The 6c synthetic
+  verification stand-in is replaced with genuine geometric verification.
+  **Debug 564/564 · Release 564/564**; `spatial_gtsam_tests` unchanged at 39/39.
+- **Governance:** 6/7 gates PASS; `check_domain_types` FAIL is pre-existing 6c debt
+  (`pose_graph_helpers.h:48,69`), documented in the report and not modified in 7b scope.
+- **Boundary preserved:** no GTSAM/PoseGraph/7c work; `LoopClosure` stays an observation (no
+  transform/covariance); Core backend-free; schemas/protected contracts untouched.
+
+---
+
 ## Deferred debt — P3-impl-7a.1 Loop Closure Capability Executor Integration (OPEN)
 
 Deliberately deferred, NOT a defect of P3-impl-7a:
@@ -114,8 +141,8 @@ Deliberately deferred, NOT a defect of P3-impl-7a:
 
 ## Next step
 
-**P3-impl-7b — Geometric Loop Verification** — see `P3-impl-7b-implementation-readiness.md`.
-Consumes 7a's `LoopClosureCandidate`s and produces accepted/rejected `LoopClosure` geometric
-constraints. Do **not** start automatically; requires explicit authorization after the readiness
-report is reviewed.
+**P3-impl-7c — Visual Loop → GTSAM E2E.** Consume 7b's **accepted** `LoopClosure` records and
+produce `PoseGraphEdge` constraints (`BuildLoopClosureEdge`, 6c scaffolding) into a PoseGraph, then
+optimize via the existing GTSAM adapter. Do **not** start automatically; requires explicit
+authorization.
 

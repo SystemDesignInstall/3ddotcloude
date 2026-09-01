@@ -91,6 +91,7 @@ add_library(spatial_engine STATIC
   pipeline/feature_extraction.cpp
   pipeline/mock_photogrammetry.cpp
   pipeline/loop_closure_detection.cpp
+  pipeline/loop_closure_verification.cpp
   workers/protocol_framing.cpp
   workers/in_process_executor.cpp
   workers/process_executor.cpp

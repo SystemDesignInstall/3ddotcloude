@@ -47,6 +47,16 @@ MatchingFrameDescriptors ParseFeaturePayload(
   out.frame_id = frame_id;
   out.timestamp_ns = timestamp_ns;
   out.descriptor_type = payload.value("descriptor_type", std::string{});
+  // P3-impl-7b: capture image-space keypoint coordinates too (additive field),
+  // so geometric verification can reconstruct (x,y) correspondences. The
+  // count == keypoints == descriptors guarantee is already enforced above.
+  out.keypoints.reserve(keypoints.size());
+  for (const auto& kp : keypoints) {
+    FeatureKeypoint p;
+    p.x = kp.value("x", 0.0);
+    p.y = kp.value("y", 0.0);
+    out.keypoints.push_back(p);
+  }
   out.descriptors.reserve(descriptors.size());
   for (const auto& row : descriptors) {
     std::vector<double> d;

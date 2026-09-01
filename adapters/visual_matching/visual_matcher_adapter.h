@@ -90,6 +90,67 @@ class L2NearestMatcher : public spatial::core::LoopClosureFeatureMatcher {
     return static_cast<double>(matches);
   }
 
+  // P3-impl-7b (G1): the additive correspondence seam. Returns exactly the
+  // reciprocal nearest-neighbour pairs counted by MatchScore(): source_index
+  // in `a` matched to target_index in `b`, each with its L2 descriptor
+  // distance (when within distance_threshold_ and, by default, mutual).
+  // Deterministic for identical inputs and consistent with MatchScore().
+  std::vector<spatial::core::FeatureCorrespondence> MatchCorrespondences(
+      const spatial::core::MatchingFrameDescriptors& a,
+      const spatial::core::MatchingFrameDescriptors& b) const override {
+    std::vector<spatial::core::FeatureCorrespondence> out;
+    if (a.descriptors.empty() || b.descriptors.empty()) return out;
+    const std::size_t dim = a.descriptors[0].size();
+    if (dim == 0) return out;
+
+    for (const auto& row : a.descriptors)
+      if (row.size() != dim) return out;
+    for (const auto& row : b.descriptors)
+      if (row.size() != dim) return out;
+
+    std::vector<std::size_t> a_to_b(a.descriptors.size(), SIZE_MAX);
+    std::vector<std::size_t> b_to_a(b.descriptors.size(), SIZE_MAX);
+    std::vector<double> a_to_b_dist(a.descriptors.size(), 0.0);
+    for (std::size_t i = 0; i < a.descriptors.size(); ++i) {
+      std::size_t best = 0;
+      double best_d = std::numeric_limits<double>::infinity();
+      for (std::size_t j = 0; j < b.descriptors.size(); ++j) {
+        const double d = L2(a.descriptors[i], b.descriptors[j]);
+        if (d < best_d) {
+          best_d = d;
+          best = j;
+        }
+      }
+      if (best_d <= distance_threshold_) {
+        a_to_b[i] = best;
+        a_to_b_dist[i] = best_d;
+      }
+    }
+    for (std::size_t j = 0; j < b.descriptors.size(); ++j) {
+      std::size_t best = 0;
+      double best_d = std::numeric_limits<double>::infinity();
+      for (std::size_t i = 0; i < a.descriptors.size(); ++i) {
+        const double d = L2(b.descriptors[j], a.descriptors[i]);
+        if (d < best_d) {
+          best_d = d;
+          best = i;
+        }
+      }
+      if (best_d <= distance_threshold_) b_to_a[j] = best;
+    }
+
+    for (std::size_t i = 0; i < a_to_b.size(); ++i) {
+      if (a_to_b[i] == SIZE_MAX) continue;
+      if (mutual_only_ && b_to_a[a_to_b[i]] != i) continue;
+      spatial::core::FeatureCorrespondence c;
+      c.source_index = static_cast<std::uint32_t>(i);
+      c.target_index = static_cast<std::uint32_t>(a_to_b[i]);
+      c.descriptor_distance = a_to_b_dist[i];
+      out.push_back(c);
+    }
+    return out;
+  }
+
  private:
   static double L2(const std::vector<double>& x,
                    const std::vector<double>& y) {

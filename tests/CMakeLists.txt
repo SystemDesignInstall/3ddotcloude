@@ -168,6 +168,29 @@ target_compile_definitions(spatial_loop_closure_tests PRIVATE
 )
 gtest_discover_tests(spatial_loop_closure_tests)
 
+# P3-impl-7b: Geometric loop-closure verification tests. Link core + engine (for
+# VerifyLoopClosureGeometry / WriteFeatureArtifactPayload), the classical visual
+# matcher adapter (correspondence seam), and the classical geometric verifier
+# adapter (F + RANSAC). Proves candidate -> geometric verification -> canonical
+# accepted/rejected LoopClosure, incl. the two mandatory golden tests and the
+# false-positive / degenerate / determinism / boundary / provenance cases.
+add_executable(spatial_loop_closure_verification_tests
+  unit/test_loop_closure_verification.cpp
+)
+target_link_libraries(spatial_loop_closure_verification_tests PRIVATE
+  spatial_core
+  spatial_engine
+  spatial_visual_matching_adapter
+  spatial_visual_geometry_adapter
+  GTest::gtest
+  GTest::gtest_main
+)
+target_include_directories(spatial_loop_closure_verification_tests PRIVATE ${CMAKE_SOURCE_DIR})
+target_compile_definitions(spatial_loop_closure_verification_tests PRIVATE
+  SPATIAL_LOOPCLOSURE_SCHEMA_JSON="${CMAKE_SOURCE_DIR}/schemas/json/loop-closure.schema.json"
+)
+gtest_discover_tests(spatial_loop_closure_verification_tests)
+
 # P3-impl-6a: GTSAM adapter tests — gated, never part of core test suite.
 if(SPATIAL_HAS_GTSAM)
   add_executable(spatial_gtsam_tests
