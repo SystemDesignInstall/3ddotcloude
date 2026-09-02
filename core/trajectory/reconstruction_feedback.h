@@ -75,21 +75,14 @@ struct PoseFeedbackDetail {
 
 // --- Construction helpers ---
 
-// Builds an SE3 "world-from-body" pose from position + scalar-last quaternion.
-inline geometry::SE3 MakePoseSe3(const std::array<double, 3>& position_xyz,
-                                 const std::array<double, 4>& rotation_xyzw) {
-  const Eigen::Vector3d t(position_xyz[0], position_xyz[1], position_xyz[2]);
-  const geometry::Quaternion q(rotation_xyzw[0], rotation_xyzw[1],
-                               rotation_xyzw[2], rotation_xyzw[3]);
-  return geometry::SE3(q.Normalized(), t);
-}
-
 // Writes an SE3 back into a ReconPose (position + scalar-last quaternion).
+// Reads translation/rotation components without spelling raw Eigen types
+// (check_domain_types keeps raw Eigen inside core/geometry/ and adapters/).
 inline ReconPose MakeReconPose(const geometry::SE3& pose) {
   const auto q = pose.rotation();
+  const auto& t = pose.translation();
   ReconPose rp;
   rp.rotation_xyzw = {q.x(), q.y(), q.z(), q.w()};
-  const Eigen::Vector3d& t = pose.translation();
   rp.translation_xyz = {t.x(), t.y(), t.z()};
   return rp;
 }
@@ -216,8 +209,9 @@ inline ReconstructionFeedbackResult ApplyOptimizedTrajectory(
     }
     d.matched_node = true;
     const OptimizedPoseNode& node = input.optimized_nodes[it->second];
-    // T_rc = T_rt * T_tc (Mapping §4.6).
-    const geometry::SE3 T_tc = MakePoseSe3(node.position_xyz, node.rotation_xyzw);
+    // T_rc = T_rt * T_tc (Mapping §4.6). MakeCameraPose builds the
+    // T_trajectory_camera SE3 from canonical fields (pose_graph_helpers.h).
+    const geometry::SE3 T_tc = MakeCameraPose(node.position_xyz, node.rotation_xyzw);
     const geometry::SE3 T_rc = input.reconstruction_from_trajectory * T_tc;
     r.images[i].pose = MakeReconPose(T_rc);
     d.updated = true;
@@ -239,9 +233,8 @@ inline bool ValidateOptimizedReconstruction(const Reconstruction& r) {
   if (r.status != "succeeded") return false;
   if (r.provenance.backend.name.empty()) return false;
   if (r.coordinate_frame.empty()) return false;
-  // Every image must carry a valid, non-identity pose and a frame_id bridge
-  // when it was updated; the seam always tags updated poses' quaternion to
-  // unit norm (MakePoseSe3 normalizes).
+  // Every image must carry a valid, non-degenerate pose (the seam normalizes
+  // updated quaternions to unit norm via MakeCameraPose).
   for (const ReconImage& img : r.images) {
     double n = 0.0;
     for (double c : img.pose.rotation_xyzw) n += c * c;
