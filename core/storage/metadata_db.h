@@ -453,6 +453,17 @@ class MetadataDb {
   std::vector<ReconstructionRow> FindReconstructionsByScene(
       const Uuid& scene_id) const;
 
+  // P3-impl-7 (LC-1): transitions an existing reconstruction row's status
+  // (e.g. "succeeded" -> "superseded"). Reuses the existing ReconstructionRow
+  // status column and vocabulary; requires no migration. Valid transitions:
+  //   "reconstructing" -> "succeeded" | "failed" | "superseded"
+  //   "succeeded"      -> "superseded"
+  //   "superseded"/"failed" are terminal (no outgoing transitions).
+  // Throws StorageError when the row does not exist or the transition is
+  // invalid, and on read-only databases.
+  void SetReconstructionStatus(const Uuid& reconstruction_id,
+                               const std::string& new_status);
+
   // P3-impl-1 (D-TRJ-01): canonical trajectory entity (migration 0008).
   void AddTrajectory(const TrajectoryRow& row);
   std::optional<TrajectoryRow> QueryLatestTrajectoryBySession(

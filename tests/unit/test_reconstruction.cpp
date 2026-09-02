@@ -455,5 +455,113 @@ TEST_F(ReconstructionDbTest, DifferentScenesAreIsolated) {
   EXPECT_EQ(all_a.size(), 1u);
 }
 
+// --- P3-impl-7 (LC-1): SetReconstructionStatus lifecycle ---
+
+TEST_F(ReconstructionDbTest, SetStatusSucceededToSuperseded) {
+  ReconstructionRow r;
+  r.reconstruction_id = GenerateUuid();
+  r.scene_id = scene_.scene_id;
+  r.coordinate_frame = "reconstruction_0";
+  r.status = "succeeded";
+  r.created_at_ns = 1000;
+  r.document_json = "{}";
+  db_.AddReconstruction(r);
+
+  EXPECT_NO_THROW(db_.SetReconstructionStatus(r.reconstruction_id, "superseded"));
+
+  const auto latest = db_.QueryLatestReconstructionByScene(scene_.scene_id);
+  EXPECT_FALSE(latest.has_value());  // superseded is no longer "latest"
+  const auto all = db_.FindReconstructionsByScene(scene_.scene_id);
+  ASSERT_EQ(all.size(), 1u);
+  EXPECT_EQ(all[0].status, "superseded");
+}
+
+TEST_F(ReconstructionDbTest, SetStatusReconstructingToSucceeded) {
+  ReconstructionRow r;
+  r.reconstruction_id = GenerateUuid();
+  r.scene_id = scene_.scene_id;
+  r.coordinate_frame = "reconstruction_0";
+  r.status = "reconstructing";
+  r.created_at_ns = 1000;
+  r.document_json = "{}";
+  db_.AddReconstruction(r);
+
+  EXPECT_NO_THROW(db_.SetReconstructionStatus(r.reconstruction_id, "succeeded"));
+  const auto all = db_.FindReconstructionsByScene(scene_.scene_id);
+  ASSERT_EQ(all.size(), 1u);
+  EXPECT_EQ(all[0].status, "succeeded");
+}
+
+TEST_F(ReconstructionDbTest, SetStatusUnknownIdThrows) {
+  EXPECT_THROW(db_.SetReconstructionStatus(GenerateUuid(), "superseded"),
+               StorageError);
+}
+
+TEST_F(ReconstructionDbTest, SetStatusTerminalTransitionThrows) {
+  ReconstructionRow r;
+  r.reconstruction_id = GenerateUuid();
+  r.scene_id = scene_.scene_id;
+  r.coordinate_frame = "reconstruction_0";
+  r.status = "superseded";
+  r.created_at_ns = 1000;
+  r.document_json = "{}";
+  db_.AddReconstruction(r);
+
+  EXPECT_THROW(db_.SetReconstructionStatus(r.reconstruction_id, "succeeded"),
+               StorageError);
+}
+
+TEST_F(ReconstructionDbTest, SetStatusFailedToSucceededThrows) {
+  ReconstructionRow r;
+  r.reconstruction_id = GenerateUuid();
+  r.scene_id = scene_.scene_id;
+  r.coordinate_frame = "reconstruction_0";
+  r.status = "failed";
+  r.created_at_ns = 1000;
+  r.document_json = "{}";
+  db_.AddReconstruction(r);
+
+  EXPECT_THROW(db_.SetReconstructionStatus(r.reconstruction_id, "succeeded"),
+               StorageError);
+}
+
+TEST_F(ReconstructionDbTest, SetStatusReadOnlyThrows) {
+  ReconstructionRow r;
+  r.reconstruction_id = GenerateUuid();
+  r.scene_id = scene_.scene_id;
+  r.coordinate_frame = "reconstruction_0";
+  r.status = "succeeded";
+  r.created_at_ns = 1000;
+  r.document_json = "{}";
+  db_.AddReconstruction(r);
+
+  db_.Close();
+  auto ro = MetadataDb::OpenReadOnly(path_);
+  EXPECT_THROW(ro.SetReconstructionStatus(r.reconstruction_id, "superseded"),
+               StorageError);
+}
+
+TEST_F(ReconstructionDbTest, SetStatusPersistsAfterReopen) {
+  ReconstructionRow r;
+  r.reconstruction_id = GenerateUuid();
+  r.scene_id = scene_.scene_id;
+  r.coordinate_frame = "reconstruction_0";
+  r.status = "succeeded";
+  r.created_at_ns = 1000;
+  r.document_json = "{}";
+  db_.AddReconstruction(r);
+
+  db_.SetReconstructionStatus(r.reconstruction_id, "superseded");
+
+  // Reopen and verify the status persisted and other statuses are unaffected.
+  db_.Close();
+  db_ = MetadataDb::Create(path_);
+  const auto all = db_.FindReconstructionsByScene(scene_.scene_id);
+  ASSERT_EQ(all.size(), 1u);
+  EXPECT_EQ(all[0].status, "superseded");
+  EXPECT_EQ(all[0].document_json, "{}");
+  EXPECT_EQ(all[0].coordinate_frame, "reconstruction_0");
+}
+
 }  // namespace
 }  // namespace spatial::core

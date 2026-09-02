@@ -1929,6 +1929,79 @@ std::vector<ReconstructionRow> MetadataDb::FindReconstructionsByScene(
   return out;
 }
 
+void MetadataDb::SetReconstructionStatus(const Uuid& reconstruction_id,
+                                         const std::string& new_status) {
+  if (read_only_) {
+    throw StorageError(ErrorCode::kStorageReadOnly,
+                       "cannot write to a read-only project", {}, false,
+                       "Open the project for writing to modify it.");
+  }
+
+  // Read the current status first so we can gate invalid transitions.
+  std::string current;
+  {
+    sqlite3_stmt* stmt = nullptr;
+    const char* sql =
+        "SELECT status FROM reconstructions WHERE reconstruction_id = ?";
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+      throw SchemaError(ErrorCode::kSchemaInvalid,
+                        "cannot prepare query reconstruction status");
+    }
+    sqlite3_bind_blob(stmt, 1, reconstruction_id.data(),
+                      static_cast<int>(reconstruction_id.size()),
+                      SQLITE_TRANSIENT);
+    const int rc = sqlite3_step(stmt);
+    if (rc == SQLITE_ROW) {
+      if (const auto* t = sqlite3_column_text(stmt, 0)) {
+        current = reinterpret_cast<const char*>(t);
+      }
+    } else {
+      const std::string msg = sqlite3_errmsg(db_);
+      sqlite3_finalize(stmt);
+      throw StorageError(ErrorCode::kStorageIo,
+                         "reconstruction row not found for status update: " +
+                             FormatUuid(reconstruction_id) +
+                             (rc == SQLITE_DONE ? "" : ": " + msg));
+    }
+    sqlite3_finalize(stmt);
+  }
+
+  // Allowed transition table (terminal states have no outgoing edges).
+  const auto can_transition = [](const std::string& from,
+                                 const std::string& to) {
+    if (from == "reconstructing") {
+      return to == "succeeded" || to == "failed" || to == "superseded";
+    }
+    if (from == "succeeded") return to == "superseded";
+    return false;  // "failed"/"superseded" are terminal; unknown from rejected
+  };
+  if (!can_transition(current, new_status)) {
+    throw StorageError(ErrorCode::kStorageIo,
+                       "invalid reconstruction status transition '" + current +
+                           "' -> '" + new_status + "' for " +
+                           FormatUuid(reconstruction_id));
+  }
+
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "UPDATE reconstructions SET status = ? WHERE reconstruction_id = ?";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare update reconstruction status");
+  }
+  sqlite3_bind_text(stmt, 1, new_status.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_blob(stmt, 2, reconstruction_id.data(),
+                    static_cast<int>(reconstruction_id.size()),
+                    SQLITE_TRANSIENT);
+  if (sqlite3_step(stmt) != SQLITE_DONE) {
+    const std::string msg = sqlite3_errmsg(db_);
+    sqlite3_finalize(stmt);
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot update reconstruction status: " + msg);
+  }
+  sqlite3_finalize(stmt);
+}
+
 // --- P3-impl-1 trajectory / pose graph / loop closure / optimization (migration 0008) ---
 
 void MetadataDb::AddTrajectory(const TrajectoryRow& row) {
