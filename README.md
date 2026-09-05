@@ -51,8 +51,8 @@ treats every reconstruction engine as a swappable worker behind an adapter.
 - [Geometry model](docs/specifications/geometry-model.md) — `GeometryElement` types.
 - [Worker protocol](docs/specifications/worker-protocol.md) — process isolation and IPC.
 - [Build guide](docs/development/build.md) — Conan/CMake presets and toolchain policy.
-- [Architecture Decision Records](https://github.com/spatial-platform/spatial-rfcs/tree/main/adr) — ADR-001..ADR-037 in the governance repo.
-- [Architecture Constitution](https://github.com/spatial-platform/spatial-rfcs/blob/main/CONSTITUTION.md) — supreme governing document.
+- [Architecture Decision Records](https://github.com/SystemDesignInstall/spatial-rfcs/tree/main/adr) — ADR-001..ADR-037 in the governance repo.
+- [Architecture Constitution](https://github.com/SystemDesignInstall/spatial-rfcs/blob/main/CONSTITUTION.md) — supreme governing document.
 
 ## M0 status
 
