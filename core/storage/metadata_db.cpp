@@ -2199,6 +2199,46 @@ void MetadataDb::AddPoseGraph(const PoseGraphRow& row) {
   sqlite3_finalize(stmt);
 }
 
+void MetadataDb::UpsertPoseGraph(const PoseGraphRow& row) {
+  if (read_only_) {
+    throw StorageError(ErrorCode::kStorageReadOnly,
+                       "cannot write to a read-only project", {}, false,
+                       "Open the project for writing to modify it.");
+  }
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "INSERT OR REPLACE INTO pose_graphs (graph_id, trajectory_id, scene_id,"
+      " status, node_count, edge_count, odometry_edge_count,"
+      " loop_closure_edge_count, prior_edge_count, created_at_ns,"
+      " document_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare upsert pose graph");
+  }
+  sqlite3_bind_blob(stmt, 1, row.graph_id.data(),
+                    static_cast<int>(row.graph_id.size()), SQLITE_TRANSIENT);
+  sqlite3_bind_blob(stmt, 2, row.trajectory_id.data(),
+                    static_cast<int>(row.trajectory_id.size()),
+                    SQLITE_TRANSIENT);
+  sqlite3_bind_blob(stmt, 3, row.scene_id.data(),
+                    static_cast<int>(row.scene_id.size()), SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 4, row.status.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_int64(stmt, 5, row.node_count);
+  sqlite3_bind_int64(stmt, 6, row.edge_count);
+  sqlite3_bind_int64(stmt, 7, row.odometry_edge_count);
+  sqlite3_bind_int64(stmt, 8, row.loop_closure_edge_count);
+  sqlite3_bind_int64(stmt, 9, row.prior_edge_count);
+  sqlite3_bind_int64(stmt, 10, row.created_at_ns);
+  sqlite3_bind_text(stmt, 11, row.document_json.c_str(), -1, SQLITE_TRANSIENT);
+  if (sqlite3_step(stmt) != SQLITE_DONE) {
+    const std::string msg = sqlite3_errmsg(db_);
+    sqlite3_finalize(stmt);
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot upsert pose graph row: " + msg);
+  }
+  sqlite3_finalize(stmt);
+}
+
 namespace {
 
 PoseGraphRow ReadPoseGraphRow(sqlite3_stmt* stmt) {
@@ -2403,6 +2443,51 @@ void MetadataDb::AddLoopClosure(const LoopClosureRow& row) {
   sqlite3_finalize(stmt);
 }
 
+void MetadataDb::UpsertLoopClosure(const LoopClosureRow& row) {
+  if (read_only_) {
+    throw StorageError(ErrorCode::kStorageReadOnly,
+                       "cannot write to a read-only project", {}, false,
+                       "Open the project for writing to modify it.");
+  }
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "INSERT OR REPLACE INTO loop_closures (closure_id, trajectory_id,"
+      " candidate_id, source_frame_id, target_frame_id, status, inlier_ratio,"
+      " inlier_count, confidence, temporal_separation_ns,"
+      " spatial_separation_m, created_at_ns)"
+      " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare upsert loop closure");
+  }
+  sqlite3_bind_blob(stmt, 1, row.closure_id.data(),
+                    static_cast<int>(row.closure_id.size()), SQLITE_TRANSIENT);
+  sqlite3_bind_blob(stmt, 2, row.trajectory_id.data(),
+                    static_cast<int>(row.trajectory_id.size()),
+                    SQLITE_TRANSIENT);
+  BindUuidOrNull(stmt, 3, row.candidate_id);
+  sqlite3_bind_blob(stmt, 4, row.source_frame_id.data(),
+                    static_cast<int>(row.source_frame_id.size()),
+                    SQLITE_TRANSIENT);
+  sqlite3_bind_blob(stmt, 5, row.target_frame_id.data(),
+                    static_cast<int>(row.target_frame_id.size()),
+                    SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 6, row.status.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_double(stmt, 7, row.inlier_ratio);
+  sqlite3_bind_int64(stmt, 8, row.inlier_count);
+  sqlite3_bind_double(stmt, 9, row.confidence);
+  sqlite3_bind_int64(stmt, 10, row.temporal_separation_ns);
+  sqlite3_bind_double(stmt, 11, row.spatial_separation_m);
+  sqlite3_bind_int64(stmt, 12, row.created_at_ns);
+  if (sqlite3_step(stmt) != SQLITE_DONE) {
+    const std::string msg = sqlite3_errmsg(db_);
+    sqlite3_finalize(stmt);
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot upsert loop closure row: " + msg);
+  }
+  sqlite3_finalize(stmt);
+}
+
 std::vector<LoopClosureRow> MetadataDb::FindLoopClosuresByTrajectory(
     const Uuid& trajectory_id) const {
   std::vector<LoopClosureRow> out;
@@ -2512,6 +2597,45 @@ void MetadataDb::AddOptimizationResult(const OptimizationResultRow& row) {
     sqlite3_finalize(stmt);
     throw SchemaError(ErrorCode::kSchemaInvalid,
                       "cannot insert optimization result row: " + msg);
+  }
+  sqlite3_finalize(stmt);
+}
+
+void MetadataDb::UpsertOptimizationResult(const OptimizationResultRow& row) {
+  if (read_only_) {
+    throw StorageError(ErrorCode::kStorageReadOnly,
+                       "cannot write to a read-only project", {}, false,
+                       "Open the project for writing to modify it.");
+  }
+  sqlite3_stmt* stmt = nullptr;
+  const char* sql =
+      "INSERT OR REPLACE INTO optimization_results (result_id, graph_id,"
+      " trajectory_id, status, iterations, initial_error, final_error,"
+      " error_reduction, created_at_ns, document_json)"
+      " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot prepare upsert optimization result");
+  }
+  sqlite3_bind_blob(stmt, 1, row.result_id.data(),
+                    static_cast<int>(row.result_id.size()), SQLITE_TRANSIENT);
+  sqlite3_bind_blob(stmt, 2, row.graph_id.data(),
+                    static_cast<int>(row.graph_id.size()), SQLITE_TRANSIENT);
+  sqlite3_bind_blob(stmt, 3, row.trajectory_id.data(),
+                    static_cast<int>(row.trajectory_id.size()),
+                    SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 4, row.status.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_int64(stmt, 5, row.iterations);
+  sqlite3_bind_double(stmt, 6, row.initial_error);
+  sqlite3_bind_double(stmt, 7, row.final_error);
+  sqlite3_bind_double(stmt, 8, row.error_reduction);
+  sqlite3_bind_int64(stmt, 9, row.created_at_ns);
+  sqlite3_bind_text(stmt, 10, row.document_json.c_str(), -1, SQLITE_TRANSIENT);
+  if (sqlite3_step(stmt) != SQLITE_DONE) {
+    const std::string msg = sqlite3_errmsg(db_);
+    sqlite3_finalize(stmt);
+    throw SchemaError(ErrorCode::kSchemaInvalid,
+                      "cannot upsert optimization result row: " + msg);
   }
   sqlite3_finalize(stmt);
 }

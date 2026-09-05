@@ -34,6 +34,7 @@ set(SPATIAL_UNIT_TESTS
   unit/test_calibration_artifact.cpp
   unit/test_reconstruction.cpp
   unit/test_reconstruction_schema.cpp
+  unit/test_reconstruction_feedback.cpp
   unit/test_trajectory.cpp
   unit/test_p3_schema.cpp
   unit/test_cli_import.cpp
@@ -191,6 +192,21 @@ target_compile_definitions(spatial_loop_closure_verification_tests PRIVATE
 )
 gtest_discover_tests(spatial_loop_closure_verification_tests)
 
+# P3-impl-7 Phase 3: LoopClosure -> PoseGraph stage tests (core + engine only,
+# no GTSAM/adapter). Covers D2 spatial_separation_m, INV-3 metric-eligibility
+# gate, INV-1 no-measurement, D4 basis validation, and the T4/T5 matrix.
+add_executable(spatial_loop_closure_stage_tests
+  unit/test_loop_closure_to_pose_graph.cpp
+)
+target_link_libraries(spatial_loop_closure_stage_tests PRIVATE
+  spatial_core
+  spatial_engine
+  GTest::gtest
+  GTest::gtest_main
+)
+target_include_directories(spatial_loop_closure_stage_tests PRIVATE ${CMAKE_SOURCE_DIR})
+gtest_discover_tests(spatial_loop_closure_stage_tests)
+
 # P3-impl-6a: GTSAM adapter tests — gated, never part of core test suite.
 if(SPATIAL_HAS_GTSAM)
   add_executable(spatial_gtsam_tests
@@ -241,6 +257,33 @@ if(SPATIAL_HAS_GTSAM)
     endforeach()
     string(JOIN ";" SPATIAL_GTSAM_ENV_STR ${SPATIAL_GTSAM_ENV_LIST})
     set_tests_properties(spatial_gtsam_tests PROPERTIES
+      ENVIRONMENT_MODIFICATION "${SPATIAL_GTSAM_ENV_STR}"
+    )
+  endif()
+
+  # P3-impl-7 Phase 3 persistence increment: orchestration-runner stage tests.
+  # Links core + engine (for the orchestration stage) + the GTSAM adapter (the
+  # real seam implementation injected into the engine stage by value). Same
+  # GTSAM/Boost manual-test-registration constraints as spatial_gtsam_tests.
+  add_executable(spatial_loop_closure_optimize_pipeline_tests
+    unit/test_loop_closure_optimize_pipeline.cpp
+  )
+  target_link_libraries(spatial_loop_closure_optimize_pipeline_tests PRIVATE
+    spatial_core
+    spatial_engine
+    spatial_gtsam_adapter
+    GTest::gtest
+  )
+  target_compile_definitions(spatial_loop_closure_optimize_pipeline_tests PRIVATE
+    BOOST_ALL_NO_LIB
+  )
+  target_include_directories(spatial_loop_closure_optimize_pipeline_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}
+  )
+  add_test(NAME spatial_loop_closure_optimize_pipeline_tests
+           COMMAND spatial_loop_closure_optimize_pipeline_tests)
+  if(SPATIAL_GTSAM_ENV_STR)
+    set_tests_properties(spatial_loop_closure_optimize_pipeline_tests PROPERTIES
       ENVIRONMENT_MODIFICATION "${SPATIAL_GTSAM_ENV_STR}"
     )
   endif()

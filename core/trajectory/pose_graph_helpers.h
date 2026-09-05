@@ -28,6 +28,7 @@
 
 #include <Eigen/Dense>
 
+#include "core/geometry/direction_math.h"
 #include "core/geometry/se3.h"
 #include "core/trajectory/loop_closure.h"
 #include "core/trajectory/pose_graph.h"
@@ -296,6 +297,252 @@ inline LoopClosure VerifyCandidate(
   }
   lc.status = "accepted";
   return lc;
+}
+
+// Deterministic confidence-derived information matrix for a metric loop
+// closure (P3 D3 / P3-impl-7c §9 [NORM]). A documented engineering
+// approximation, NOT a physically-derived covariance. Pure function of the
+// five verifier-quality inputs => every run is reproducible. Returns a
+// diagonal 6x6 (translation block then rotation block). The caller gates the
+// result with ValidateInformationMatrix before admitting the edge.
+//
+// Formula (frozen defaults):
+//   confidence_c     = clamp(inlier_ratio / 0.6, 0, 1)
+//   confidence_n     = clamp((inlier_count - 15) / 25.0, 0, 1)
+//   confidence_res   = clamp(1 - geometric_residual / 2.0, 0, 1)
+//   confidence_align = clamp(cos_theta / 0.5, 0, 1)
+//   Q = conf_c * conf_n * conf_res * conf_align
+//   Q = max(Q, 0.01)            // floor: never zero/identity/uninvertible
+//   sigma_t = baseline_m * (0.25 / Q)     // conservative, scale-proportional
+//   sigma_r = 0.05 * (1.0 / Q)            // conservative rotation std
+//   diag: 1/sigma_t^2 (x3), 1/sigma_r^2 (x3)
+inline std::array<double, 36> MakeDeterministicLoopInfo6(
+    double inlier_ratio, std::int64_t inlier_count, double geometric_residual,
+    double cos_theta, double baseline_m) {
+  auto clamp01 = [](double v) {
+    return v < 0.0 ? 0.0 : (v > 1.0 ? 1.0 : v);
+  };
+  const double confidence_c = clamp01(inlier_ratio / 0.6);
+  const double confidence_n =
+      clamp01(static_cast<double>(inlier_count - 15) / 25.0);
+  const double confidence_res = clamp01(1.0 - geometric_residual / 2.0);
+  const double confidence_align = clamp01(cos_theta / 0.5);
+  double Q = confidence_c * confidence_n * confidence_res * confidence_align;
+  Q = Q < 0.01 ? 0.01 : Q;
+  const double sigma_t = baseline_m * (0.25 / Q);
+  const double sigma_r = 0.05 * (1.0 / Q);
+  const double info_t = 1.0 / (sigma_t * sigma_t);
+  const double info_r = 1.0 / (sigma_r * sigma_r);
+  std::array<double, 36> info{};
+  for (int i = 0; i < 3; ++i) info[i * 6 + i] = info_t;
+  for (int i = 3; i < 6; ++i) info[i * 6 + i] = info_r;
+  return info;
+}
+
+// The measured metric geometry associated with an ACCEPTED, calibrated loop
+// closure (P3 D5). position_cs is the RESOLVED metric translation T_source_target
+// expressed in the source camera frame C_s (m); rotation_cst is the
+// cheirality-resolved rotation R_ess mapping C_s -> C_t (scalar-last).
+// geometric_residual is the mean reprojection residual in px of the accepted
+// inliers (verifier output) and feeds the D3 information model.
+//
+// These fields mirror the production verifier output
+// GeometricVerificationResult.relative_position_xyz / .relative_rotation_xyzw
+// (P3-impl-7b): when has_relative_pose is true the camera backend has already
+// resolved metric scale from calibrated geometry, so position_cs IS the metric
+// translation -- no unit-direction / scale step is needed at the edge builder.
+// A zero position_cs means "no metric measurement" (verified-visual-only), which
+// must never produce an edge (INV-1).
+struct MetricLoopClosureMeasurement {
+  std::array<double, 3> position_cs{};          // resolved metric t (C_s)
+  std::array<double, 4> rotation_cst{0, 0, 0, 1};  // R_ess (C_s -> C_t)
+  double geometric_residual = 0.0;              // px
+};
+
+// Builds a canonical PoseGraphEdge of type "loop_closure" from an ACCEPTED
+// loop closure and a RESOLVED metric relative-pose measurement (P3 D5). This
+// is the production path (P3-impl-7c §8) and NEVER emits an identity / zero
+// measurement (INV-1). Returns empty optional (no edge) when:
+//   - the closure is not accepted, or
+//   - the source/target frames are absent from `nodes`, or source==target, or
+//   - no metric measurement is present (position_cs is zero)            (INV-1)
+//   - the trajectory baseline is ~0 (exact revisitation, D1), or
+//   - the consistency guard cos_theta < 0.5 fails (D-7c-9), or
+//   - the trajectory is NOT metric-eligible (metric_basis undeclared or
+//     invalid)                                                         (INV-3)
+//   - the D3 information matrix fails ValidateInformationMatrix.
+// On success builds relative_position_xyz = position_cs (C_s) and
+// relative_rotation_xyzw = quat(R_ess), with the D3 information matrix. The
+// measured rotation/translation are used verbatim (never the trajectory prior
+// R_ws^T * R_wt / odometry delta), so a genuine closure that corrects odometry
+// drift produces a real pose-graph correction.
+inline std::optional<PoseGraphEdge> BuildMetricLoopClosureEdge(
+    const LoopClosure& lc,
+    const std::vector<TrajectoryPoseNode>& nodes,
+    const MetricLoopClosureMeasurement& measurement,
+    std::int64_t edge_id,
+    const std::string& configuration_hash = "",
+    const MetricBasis& metric_basis = MetricBasis{}) {
+  if (lc.status != "accepted") return std::nullopt;
+  if (lc.source_frame_id == lc.target_frame_id) return std::nullopt;
+
+  // Metric-eligibility gate from the trajectory's metric_basis declaration
+  // (INV-3, P3-impl-7c §5.1/§8): undeclared or by-fiat basis -> no metric edge,
+  // even though the closure is verified and carries a relative pose. This is
+  // the negative-E2E invariant: verified-visual-only stays persistable but
+  // never becomes a metric constraint.
+  if (!MetricEligibleTrajectoryBasis(metric_basis)) return std::nullopt;
+
+  std::int64_t source_node = -1;
+  std::int64_t target_node = -1;
+  for (std::size_t i = 0; i < nodes.size(); ++i) {
+    if (nodes[i].frame_id == lc.source_frame_id) source_node =
+        static_cast<std::int64_t>(i);
+    if (nodes[i].frame_id == lc.target_frame_id) target_node =
+        static_cast<std::int64_t>(i);
+  }
+  if (source_node < 0 || target_node < 0) return std::nullopt;
+
+  // delta_p_W = p_t_ww - p_s_ww (trajectory prior for the loop's two frames).
+  const std::array<double, 3> delta_p_W = {
+      nodes[target_node].position_xyz[0] - nodes[source_node].position_xyz[0],
+      nodes[target_node].position_xyz[1] - nodes[source_node].position_xyz[1],
+      nodes[target_node].position_xyz[2] - nodes[source_node].position_xyz[2]};
+  const double baseline = geometry::Norm3(delta_p_W);
+
+  // No metric measurement present => verified-visual-only closure -> NO edge
+  // (INV-1). A zero resolved translation is a degenerate/non-metric
+  // measurement.
+  if (geometry::Norm3(measurement.position_cs) <= 1e-9) return std::nullopt;
+
+  // D1: zero baseline (coincident nodes / exact revisitation) -> no metric
+  // constraint (never an identity-edge shortcut).
+  if (baseline <= 1e-9) return std::nullopt;
+
+  // Consistency guard (D-7c-9): the measured metric translation direction
+  // (rotated into W by the source camera) must roughly agree with the
+  // trajectory's frame-to-frame delta direction; an opposite/orthogonal
+  // direction indicates a false or misaligned match. Pure scale drift keeps
+  // directions consistent, so genuine drift-correcting closures still pass.
+  const geometry::Quaternion R_ws =
+      MakeCameraPose(nodes[source_node].position_xyz,
+                     nodes[source_node].rotation_xyzw)
+          .rotation();
+  const std::array<double, 3> t_W =
+      geometry::RotateDirection(R_ws, measurement.position_cs);
+  const double t_W_norm = geometry::Norm3(t_W);
+  const std::array<double, 3> delta_hat_W = {
+      delta_p_W[0] / baseline, delta_p_W[1] / baseline,
+      delta_p_W[2] / baseline};
+  double cos_theta = 0.0;
+  if (t_W_norm > 1e-12) {
+    const std::array<double, 3> t_W_hat = {
+        t_W[0] / t_W_norm, t_W[1] / t_W_norm, t_W[2] / t_W_norm};
+    cos_theta = geometry::Dot3(t_W_hat, delta_hat_W);
+  }
+  if (cos_theta < 0.5) return std::nullopt;
+
+  // Relative position is the resolved metric translation, expressed in C_s.
+  // Rotation is quat(R_ess), never the trajectory prior R_ws^T * R_wt.
+  const std::array<double, 3> rel_pos = measurement.position_cs;
+
+  // D3 information matrix from verifier quality (deterministic).
+  const std::array<double, 36> info = MakeDeterministicLoopInfo6(
+      lc.inlier_ratio, lc.inlier_count, measurement.geometric_residual,
+      cos_theta, baseline);
+  const InfoMatrixCheck check = ValidateInformationMatrix(info);
+  if (!check.ok) return std::nullopt;
+
+  PoseGraphEdge e;
+  e.edge_id = edge_id;
+  e.type = "loop_closure";
+  e.source_node_id = source_node;
+  e.target_node_id = target_node;
+  e.relative_position_xyz = rel_pos;
+  e.relative_rotation_xyzw = measurement.rotation_cst;
+  e.information_matrix_6x6 = info;
+  e.confidence = lc.confidence;
+  e.source = "loop_closure_verifier";   // D-PG-07 producer of this edge
+  e.configuration_hash = configuration_hash;
+  return e;
+}
+
+// D6 instead only names the inverse alignment map R_ws^T (rotation between the
+// source camera frame and world), which the priors use to convert the resolved
+// metric translation into the world frame. There is no explicit translation of
+// a unit direction here: the production verifier already resolves metric scale
+// (calibrated essential geometry), so position_cs is metric by construction.
+// For backends that emit only a UNIT essential translation direction t̂_ess,
+// the orchestrator applies ResolveMetricTranslationFromUnitDirection (below)
+// against the trajectory to obtain a MetricLoopClosureMeasurement first.
+
+// (D6 fallback) Resolves a unit essential translation direction t̂_ess (in C_s)
+// into a metric translation t_metric = lambda * t̂_ess using the trajectory:
+//   t_W = R_ws * t̂_ess ; lambda = dot(t_W, delta_p_W)
+// where delta_p_W is the source->target trajectory delta and R_ws the source
+// camera's world-from-body rotation. Returns an empty optional (no measurement)
+// when the closure is not accepted, frames are absent, baseline ~0, the guard
+// cos_theta < 0.5 fails, t̂_ess is degenerate, or lambda is non-positive
+// (the direction is opposite the drift-correcting one). Only invoked by
+// backends that do NOT already resolve metric scale; the production 7b path
+// feeds BuildMetricLoopClosureEdge directly.
+inline std::optional<MetricLoopClosureMeasurement>
+ResolveMetricTranslationFromUnitDirection(
+    const LoopClosure& lc,
+    const std::vector<TrajectoryPoseNode>& nodes,
+    const std::array<double, 3>& t_direction_cs,   // unit t̂_ess in C_s
+    const std::array<double, 4>& rotation_cst,     // R_ess (C_s -> C_t)
+    double geometric_residual) {
+  if (lc.status != "accepted") return std::nullopt;
+  if (lc.source_frame_id == lc.target_frame_id) return std::nullopt;
+
+  std::int64_t source_node = -1;
+  std::int64_t target_node = -1;
+  for (std::size_t i = 0; i < nodes.size(); ++i) {
+    if (nodes[i].frame_id == lc.source_frame_id) source_node =
+        static_cast<std::int64_t>(i);
+    if (nodes[i].frame_id == lc.target_frame_id) target_node =
+        static_cast<std::int64_t>(i);
+  }
+  if (source_node < 0 || target_node < 0) return std::nullopt;
+
+  const std::array<double, 3> delta_p_W = {
+      nodes[target_node].position_xyz[0] - nodes[source_node].position_xyz[0],
+      nodes[target_node].position_xyz[1] - nodes[source_node].position_xyz[1],
+      nodes[target_node].position_xyz[2] - nodes[source_node].position_xyz[2]};
+  const double baseline = geometry::Norm3(delta_p_W);
+
+  const double t_ess_norm = geometry::Norm3(t_direction_cs);
+  if (t_ess_norm <= 1e-9) return std::nullopt;      // no metric direction
+  if (baseline <= 1e-9) return std::nullopt;        // D1 zero baseline
+
+  const geometry::Quaternion R_ws =
+      MakeCameraPose(nodes[source_node].position_xyz,
+                     nodes[source_node].rotation_xyzw)
+          .rotation();
+  const std::array<double, 3> t_W =
+      geometry::RotateDirection(R_ws, t_direction_cs);
+  const double lambda = geometry::Dot3(t_W, delta_p_W);
+
+  const std::array<double, 3> delta_hat_W = {
+      delta_p_W[0] / baseline, delta_p_W[1] / baseline,
+      delta_p_W[2] / baseline};
+  double cos_theta = 0.0;
+  const double t_W_norm = geometry::Norm3(t_W);
+  if (t_W_norm > 1e-12) {
+    const std::array<double, 3> t_W_hat = {
+        t_W[0] / t_W_norm, t_W[1] / t_W_norm, t_W[2] / t_W_norm};
+    cos_theta = geometry::Dot3(t_W_hat, delta_hat_W);
+  }
+  if (cos_theta < 0.5) return std::nullopt;         // D-7c-9 guard
+  if (!(lambda > 0.0)) return std::nullopt;
+
+  MetricLoopClosureMeasurement m;
+  m.position_cs = {lambda * t_direction_cs[0], lambda * t_direction_cs[1],
+                   lambda * t_direction_cs[2]};
+  m.rotation_cst = rotation_cst;
+  m.geometric_residual = geometric_residual;
+  return m;
 }
 
 // Builds a canonical PoseGraphEdge of type "loop_closure" from an ACCEPTED

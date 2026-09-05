@@ -46,6 +46,10 @@ json ClosureJson(const LoopClosure& lc) {
               {"confidence", lc.confidence},
               {"temporal_separation_ns", lc.temporal_separation_ns},
               {"spatial_separation_m", lc.spatial_separation_m},
+              {"has_relative_pose", lc.has_relative_pose},
+              {"relative_position_xyz", lc.relative_position_xyz},
+              {"relative_rotation_xyzw", lc.relative_rotation_xyzw},
+              {"geometric_residual", lc.geometric_residual},
               {"created_at_ns", lc.created_at_ns}};
 }
 
@@ -98,6 +102,15 @@ LoopClosureVerificationResult VerifyLoopClosureGeometry(
   result.closure.created_at_ns =
       spatial::core::fs::TimestampNsNow();
   result.closure.provenance.configuration_hash = configuration_hash;
+
+  // Forward the verifier's resolved metric relative pose (D5) onto the
+  // canonical LoopClosure. Present ONLY when the calibrated/essential path
+  // produced one (has_relative_pose); the fields are not zero-filled when
+  // absent, so a verified-visual-only closure stays non-metric (INV-1).
+  result.closure.has_relative_pose = result.geo.has_relative_pose;
+  result.closure.relative_position_xyz = result.geo.relative_position_xyz;
+  result.closure.relative_rotation_xyzw = result.geo.relative_rotation_xyzw;
+  result.closure.geometric_residual = result.geo.geometric_residual;
 
   // Persist the closure (accepted OR rejected) to the loop_closures table.
   LoopClosureRow row;

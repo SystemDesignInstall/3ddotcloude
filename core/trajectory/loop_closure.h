@@ -7,6 +7,7 @@
 //
 // Normative decisions: D-LC-01 through D-LC-09 (P3-trajectory-pose-graph-loop-closure.md).
 
+#include <array>
 #include <cstdint>
 #include <string>
 
@@ -45,6 +46,17 @@ struct LoopClosure {
   double confidence = 0.0;                 // combined confidence [0, 1]
   std::int64_t temporal_separation_ns = 0; // |timestamp_source - timestamp_target| (D-LC-06)
   double spatial_separation_m = 0.0;       // Euclidean distance between original poses (D-LC-06)
+  // --- P3 Phase 3 (D5): resolved metric relative pose from the verifier ---
+  // Present ONLY when the geometric verifier produced a calibrated, metric
+  // measurement (has_relative_pose == true, essential/calibrated path). The
+  // fields mirror GeometricVerificationResult.relative_position_xyz /
+  // .relative_rotation_xyzw (T_source_target, expressed in the source frame
+  // C_s). A closure with false has_relative_pose is verified-visual-only and
+  // MUST NOT produce a metric pose-graph edge (INV-1).
+  bool has_relative_pose = false;          // metric-eligible calibration present
+  std::array<double, 3> relative_position_xyz = {0.0, 0.0, 0.0};  // resolved t (C_s), m
+  std::array<double, 4> relative_rotation_xyzw = {0.0, 0.0, 0.0, 1.0};  // R_ess (C_s->C_t)
+  double geometric_residual = 0.0;        // mean inlier reprojection residual, px
   std::int64_t created_at_ns = 0;
   ReconstructionProvenance provenance;
   bool operator==(const LoopClosure&) const = default;

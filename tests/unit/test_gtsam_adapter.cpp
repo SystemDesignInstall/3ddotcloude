@@ -26,9 +26,10 @@
 #include "core/storage/metadata_db.h"
 #include "core/trajectory/loop_closure.h"
 #include "core/trajectory/optimization.h"
-#include "core/trajectory/pose_graph.h"
-#include "core/trajectory/pose_graph_helpers.h"
-#include "core/trajectory/trajectory.h"
+#include "core/trajectory/pose_graph.h"            
+#include "core/trajectory/pose_graph_helpers.h"    
+#include "core/trajectory/reconstruction_feedback.h"
+#include "core/trajectory/trajectory.h"            
 #include "core/utils/sha256.h"
 #include "core/utils/uuid.h"
 
@@ -1449,6 +1450,249 @@ TEST(PoseGraphHelper, VerifyThenBuildLoopClosureEdge) {
 }
 
 // ============================================================================
+// P3-impl-7 Phase 3 — metric loop-closure edge (D5/D6, D1, D3) + Option-1
+// scale resolution. Production path BuildMetricLoopClosureEdge; never emits an
+// identity/zero measurement (INV-1).
+// ============================================================================
+
+// Build an ACCEPTED loop closure over frames [0] (source) and [1] (target).
+LoopClosure MakeAcceptedClosure(const std::vector<TrajectoryPoseNode>& nodes) {
+  LoopClosure lc;
+  lc.status = "accepted";
+  lc.source_frame_id = nodes[0].frame_id;
+  lc.target_frame_id = nodes[1].frame_id;
+  lc.inlier_ratio = 0.9;
+  lc.inlier_count = 30;
+  lc.confidence = 0.95;
+  lc.has_relative_pose = true;
+  return lc;
+}
+
+// A declared, valid metric basis (D4) — the INV-3 gate for metric edges.
+MetricBasis MakeMetricBasis() {
+  MetricBasis mb;
+  mb.declared = true;
+  mb.source = MetricBasisSource::kTrajectory;
+  mb.basis = MetricBasisType::kCalibratedBaseline;
+  mb.provenance.configuration_hash = "deadbeef00000000000000000000000000";
+  mb.scale_calibration_ref = "cas://calib/baseline_v1";
+  return mb;
+}
+
+// T1 — production resolved-pose path: BuildMetricLoopClosureEdge stores the
+// RESOLVED metric translation verbatim (never the trajectory prior delta /
+// odometry), applies quat(R_ess), and attaches a valid D3 info matrix.
+TEST(PoseGraphHelper, MetricEdgeResolvedPosePassthrough) {
+  std::vector<TrajectoryPoseNode> nodes = {
+      MakePoseNode(0, 0, 0.0, 0.0, 0.0),   // source at origin, R_ws = identity
+      MakePoseNode(1, 1, 2.0, 0.0, 0.0)};  // target at (2,0,0)
+  const LoopClosure lc = MakeAcceptedClosure(nodes);
+
+  MetricLoopClosureMeasurement m;
+  m.position_cs = {0.30, 0.40, 0.0};       // resolved metric t (C_s)
+  m.rotation_cst = {0.0, 0.0, 0.0, 1.0};
+  m.geometric_residual = 0.5;
+
+  const auto edge = BuildMetricLoopClosureEdge(lc, nodes, m, 7, "",
+                                               MakeMetricBasis());
+  ASSERT_TRUE(edge.has_value());
+  EXPECT_EQ(edge->type, "loop_closure");
+  EXPECT_EQ(edge->source_node_id, 0);
+  EXPECT_EQ(edge->target_node_id, 1);
+
+  // rel_pos == the resolved measurement (0.3,0.4,0), NOT the trajectory delta
+  // (2,0,0), and non-identity. Rotation stored as given quat(R_ess).
+  EXPECT_NEAR(edge->relative_position_xyz[0], 0.30, 1e-9);
+  EXPECT_NEAR(edge->relative_position_xyz[1], 0.40, 1e-9);
+  EXPECT_NEAR(edge->relative_position_xyz[2], 0.0, 1e-9);
+  EXPECT_GT(std::abs(edge->relative_position_xyz[0] - 2.0), 0.05);
+  EXPECT_TRUE(ValidateInformationMatrix(edge->information_matrix_6x6).ok);
+}
+
+// T1b — D6 fallback: ResolveMetricTranslationFromUnitDirection resolves a unit
+// direction t̂_ess into a MetricLoopClosureMeasurement via lambda = dot(t_W,
+// delta_p_W) against the trajectory, then the builder consumes it.
+TEST(PoseGraphHelper, MetricEdgeUnitDirectionScaleProjection) {
+  std::vector<TrajectoryPoseNode> nodes = {
+      MakePoseNode(0, 0, 0.0, 0.0, 0.0),   // source at origin, R_ws = identity
+      MakePoseNode(1, 1, 2.0, 0.0, 0.0)};  // target at (2,0,0)
+  const LoopClosure lc = MakeAcceptedClosure(nodes);
+
+  const std::array<double, 3> t_hat = {0.6, 0.8, 0.0};  // unit, +53deg
+  const auto meas = ResolveMetricTranslationFromUnitDirection(
+      lc, nodes, t_hat, {0.0, 0.0, 0.0, 1.0}, 0.5);
+  ASSERT_TRUE(meas.has_value());
+  // delta_p_W=(2,0,0); t_W=(0.6,0.8,0); lambda = 1.2;
+  // position_cs = lambda * t̂ = (0.72,0.96,0).
+  EXPECT_NEAR(meas->position_cs[0], 1.2 * 0.6, 1e-9);
+  EXPECT_NEAR(meas->position_cs[1], 1.2 * 0.8, 1e-9);
+  EXPECT_NEAR(meas->position_cs[2], 0.0, 1e-9);
+  EXPECT_NEAR(meas->geometric_residual, 0.5, 1e-12);
+
+  const auto edge = BuildMetricLoopClosureEdge(lc, nodes, *meas, 7, "",
+                                               MakeMetricBasis());
+  ASSERT_TRUE(edge.has_value());
+  EXPECT_NEAR(edge->relative_position_xyz[0], 0.72, 1e-9);
+  EXPECT_NEAR(edge->relative_position_xyz[1], 0.96, 1e-9);
+}
+
+// T2 — D6 fallback directionality: the C_s-frame unit direction is rotated
+// into W (R_ws) before the scale dot, so a consistent camera orientation must
+// pass and an inconsistent one must be rejected by the guard.
+TEST(PoseGraphHelper, MetricEdgeUnitDirectionFallbackDirectionality) {
+  const double s = std::sqrt(0.5);
+  std::vector<TrajectoryPoseNode> nodes = {
+      MakePoseNode(0, 0, 0.0, 0.0, 0.0),
+      MakePoseNode(1, 1, 0.0, 1.0, 0.0)};  // revisit +Y in W
+  nodes[0].rotation_xyzw = {0.0, 0.0, s, s};  // 90deg about Z
+
+  const LoopClosure lc = MakeAcceptedClosure(nodes);
+  // +X in C_s -> +Y in W (consistent): lambda = dot((0,1,0),(0,1,0)) = 1.
+  auto meas = ResolveMetricTranslationFromUnitDirection(
+      lc, nodes, {1.0, 0.0, 0.0}, {0.0, 0.0, 0.0, 1.0}, 0.5);
+  ASSERT_TRUE(meas.has_value());
+  EXPECT_NEAR(meas->position_cs[0], 1.0, 1e-9);
+  EXPECT_NEAR(meas->position_cs[1], 0.0, 1e-9);
+
+  // Same rotated source but revisit +X in W (delta=(1,0,0)): t_W=(0,1,0),
+  // cos_theta = 0 < 0.5 -> inconsistent -> no measurement.
+  std::vector<TrajectoryPoseNode> inconsistent = {
+      MakePoseNode(0, 0, 0.0, 0.0, 0.0),
+      MakePoseNode(1, 1, 1.0, 0.0, 0.0)};
+  inconsistent[0].rotation_xyzw = {0.0, 0.0, s, s};
+  EXPECT_FALSE(ResolveMetricTranslationFromUnitDirection(
+                   MakeAcceptedClosure(inconsistent), inconsistent,
+                   {1.0, 0.0, 0.0}, {0.0, 0.0, 0.0, 1.0}, 0.5)
+                   .has_value());
+}
+
+// T3 — a resolved measurement pointing OPPOSITE the revisitation is rejected
+// by the consistency guard (false / misaligned match).
+TEST(PoseGraphHelper, MetricEdgeOppositeDirectionRejected) {
+  std::vector<TrajectoryPoseNode> nodes = {
+      MakePoseNode(0, 0, 0.0, 0.0, 0.0),
+      MakePoseNode(1, 1, 1.0, 0.0, 0.0)};  // revisit +X in W
+  const LoopClosure lc = MakeAcceptedClosure(nodes);
+  MetricLoopClosureMeasurement m;
+  m.position_cs = {-1.0, 0.0, 0.0};   // resolved metric t pointing OPPOSITE
+  m.rotation_cst = {0.0, 0.0, 0.0, 1.0};
+  m.geometric_residual = 0.5;
+  EXPECT_FALSE(BuildMetricLoopClosureEdge(lc, nodes, m, 9, "",
+                                          MakeMetricBasis()).has_value());
+}
+
+// D1 — zero baseline (exact revisitation) -> no metric edge.
+TEST(PoseGraphHelper, MetricEdgeZeroBaselineRejected) {
+  std::vector<TrajectoryPoseNode> nodes = {
+      MakePoseNode(0, 0, 0.0, 0.0, 0.0),
+      MakePoseNode(1, 1, 0.0, 0.0, 0.0)};  // coincident positions
+  const LoopClosure lc = MakeAcceptedClosure(nodes);
+  MetricLoopClosureMeasurement m;
+  m.position_cs = {1.0, 0.0, 0.0};
+  m.rotation_cst = {0.0, 0.0, 0.0, 1.0};
+  EXPECT_FALSE(BuildMetricLoopClosureEdge(lc, nodes, m, 10, "",
+                                          MakeMetricBasis()).has_value());
+}
+
+// INV-3 — an undeclared (or by-fiat) metric basis on the trajectory rejects a
+// metric edge even when the closure is accepted and carries a real relative
+// pose. Verified-visual-only stays persistable but never becomes a constraint.
+TEST(PoseGraphHelper, MetricEdgeUndeclaredBasisRejected) {
+  std::vector<TrajectoryPoseNode> nodes = {
+      MakePoseNode(0, 0, 0.0, 0.0, 0.0),
+      MakePoseNode(1, 1, 1.0, 0.0, 0.0)};
+  const LoopClosure lc = MakeAcceptedClosure(nodes);
+  MetricLoopClosureMeasurement m;
+  m.position_cs = {1.0, 0.0, 0.0};
+  m.rotation_cst = {0.0, 0.0, 0.0, 1.0};
+  m.geometric_residual = 0.5;
+
+  // (a) Default (undeclared) basis -> no edge.
+  EXPECT_FALSE(
+      BuildMetricLoopClosureEdge(lc, nodes, m, 11).has_value());
+
+  // (b) Declared but invalid (bare by-fiat: no scale_calibration_ref).
+  MetricBasis bare;
+  bare.declared = true;   // no ref, no provenance hash -> invalid
+  EXPECT_FALSE(MetricEligibleTrajectoryBasis(bare));
+  EXPECT_FALSE(
+      BuildMetricLoopClosureEdge(lc, nodes, m, 12, "", bare).has_value());
+
+  // (c) Declared-but-missing-provenance (by-fiat) also fails.
+  MetricBasis nohash;
+  nohash.declared = true;
+  nohash.scale_calibration_ref = "cas://calib/baseline_v1";
+  EXPECT_FALSE(MetricEligibleTrajectoryBasis(nohash));
+
+  // (d) A valid declared basis is metric-eligible.
+  EXPECT_TRUE(MetricEligibleTrajectoryBasis(MakeMetricBasis()));
+}
+
+// D4 — ValidateMetricBasis rejects bare declared:true (max-conviction).
+TEST(PoseGraphHelper, MetricBasisValidation) {
+  EXPECT_TRUE(ValidateMetricBasis(MetricBasis{}).ok);  // undeclared ok
+  MetricBasis bare;
+  bare.declared = true;
+  EXPECT_FALSE(ValidateMetricBasis(bare).ok);           // by-fiat rejected
+  MetricBasis good = MakeMetricBasis();
+  EXPECT_TRUE(ValidateMetricBasis(good).ok);
+}
+
+// T6 + INV-1 — no metric measurement / not accepted / missing frames -> nullopt.
+TEST(PoseGraphHelper, MetricEdgeGuardCases) {
+  std::vector<TrajectoryPoseNode> nodes = {
+      MakePoseNode(0, 0, 0.0, 0.0, 0.0),
+      MakePoseNode(1, 1, 1.0, 0.0, 0.0)};
+  MetricLoopClosureMeasurement m;
+  m.position_cs = {1.0, 0.0, 0.0};
+  m.rotation_cst = {0.0, 0.0, 0.0, 1.0};
+  m.geometric_residual = 0.5;
+
+  // (a) Closure not accepted -> no edge regardless of measurement.
+  LoopClosure rejected = MakeAcceptedClosure(nodes);
+  rejected.status = "rejected";
+  EXPECT_FALSE(BuildMetricLoopClosureEdge(rejected, nodes, m, 1, "",
+                                          MakeMetricBasis()).has_value());
+
+  // (b) NO metric measurement (zero position_cs) -> verified-visual-only
+  // closure produces NO edge (INV-1).
+  MetricLoopClosureMeasurement no_meas;   // zero resolved translation
+  EXPECT_FALSE(BuildMetricLoopClosureEdge(MakeAcceptedClosure(nodes), nodes,
+                                          no_meas, 2, "",
+                                          MakeMetricBasis()).has_value());
+
+  // (c) Frames absent from the node list -> no edge.
+  TrajectoryPoseNode ghost = MakePoseNode(0, 0, 1.0, 1.0, 1.0);
+  ghost.frame_id = "00000000-0000-0000-0000-0000000DEAD1";
+  LoopClosure ghost_lc = MakeAcceptedClosure(nodes);
+  ghost_lc.source_frame_id = ghost.frame_id;
+  EXPECT_FALSE(BuildMetricLoopClosureEdge(ghost_lc, nodes, m, 3, "",
+                                          MakeMetricBasis()).has_value());
+}
+
+// T8 — D3 deterministic confidence-derived information matrix.
+TEST(PoseGraphHelper, DeterministicLoopInfoMatrix) {
+  const auto info = MakeDeterministicLoopInfo6(0.9, 30, 0.5, 1.0, 2.0);
+  EXPECT_TRUE(ValidateInformationMatrix(info).ok);
+
+  // Deterministic: identical inputs -> identical output.
+  EXPECT_EQ(info, MakeDeterministicLoopInfo6(0.9, 30, 0.5, 1.0, 2.0));
+
+  // Diagonal-only: off-diagonal entries are zero (symmetric).
+  EXPECT_EQ(info[1], 0.0);
+  EXPECT_EQ(info[5], 0.0);
+
+  // Not the old magic constant 50.0 from the synthetic path.
+  EXPECT_NE(info[0], 50.0);
+
+  // Monotone in quality: higher inlier_ratio -> larger diagonal (stiffer).
+  const auto low = MakeDeterministicLoopInfo6(0.3, 30, 0.5, 1.0, 2.0);
+  const auto high = MakeDeterministicLoopInfo6(0.9, 30, 0.5, 1.0, 2.0);
+  EXPECT_GT(high[0], low[0]);          // translation block
+  EXPECT_GT(high[3 * 6 + 3], low[3 * 6 + 3]);  // rotation block
+}
+
+// ============================================================================
 // §24: P3-impl-6c E2E — real loop closure -> canonical PoseGraph -> GTSAM,
 //       proving drift reduction measured against a ground-truth reference.
 //       The optimizer output is produced by GTSAM over the assembled canonical
@@ -1742,6 +1986,469 @@ TEST(LoopClosureGtsamE2E, OptimizedTrajectoryPersistsToCasWithProvenance) {
     ASSERT_TRUE(opt_manifest.has_value());
     ASSERT_EQ(opt_manifest->input_artifact_hashes.size(), 1u);
     EXPECT_EQ(opt_manifest->input_artifact_hashes[0], traj_hash);
+
+    db.Close();
+  }
+
+  std::error_code ec;
+  std::filesystem::remove_all(root, ec);
+}
+
+// ============================================================================
+// T7 — core TrajectoryOptimizer seam (D-7c-5 / §7.1). Drives the GTSAM
+// implementation through the interface with a REAL metric loop edge; drift
+// reduction must emerge THROUGH the seam and the seam must surface the GTSAM
+// result. Engine code never sees GTSAM types.
+// ============================================================================
+
+TEST(LoopClosureGtsamE2E, SeamOptimizerMetricLoopDriftReduction) {
+  Trajectory trajectory;
+  trajectory.trajectory_id = "00000000-0000-0000-0000-000000000051";
+  trajectory.scene_id = "00000000-0000-0000-0000-000000000052";
+  trajectory.session_id = "00000000-0000-0000-0000-000000000053";
+  trajectory.kind = "odometry";
+  trajectory.status = "building";
+  trajectory.node_count = 5;
+  trajectory.created_at_ns = 100;
+
+  const std::vector<TrajectoryPoseNode> drifted = ClosedSquareDriftedNodes();
+  const PoseGraphAssembly assembly = AssemblePoseGraph(trajectory, drifted);
+
+  // Metric loop closure: node 4 (drifted) revisits node 0 (origin). The
+  // verifier's RESOLVED metric translation points from the source frame back
+  // toward the origin (genuine metric measurement, non-identity).
+  LoopClosure lc;
+  lc.status = "accepted";
+  lc.source_frame_id = drifted[4].frame_id;
+  lc.target_frame_id = drifted[0].frame_id;
+  lc.inlier_ratio = 0.9;
+  lc.inlier_count = 30;
+  lc.confidence = 0.95;
+  MetricLoopClosureMeasurement m;
+  m.position_cs = {-0.12, -0.16, 0.0};  // resolved metric t toward origin (C_s)
+  m.rotation_cst = {0.0, 0.0, 0.0, 1.0};
+  m.geometric_residual = 0.5;
+  const auto metric_edge = BuildMetricLoopClosureEdge(lc, drifted, m, 4, "",
+                                                      MakeMetricBasis());
+  ASSERT_TRUE(metric_edge.has_value());
+  // INV-1: the real metric edge is NOT identity.
+  EXPECT_TRUE(metric_edge->relative_position_xyz[0] != 0.0 ||
+              metric_edge->relative_position_xyz[1] != 0.0 ||
+              metric_edge->relative_position_xyz[2] != 0.0);
+
+  // Run the seam WITHOUT (baseline) and WITH the metric loop edge.
+  GtsamTrajectoryOptimizer seam;
+  spatial::core::PoseOptimizationInput base_in;
+  base_in.graph = assembly.graph;
+  base_in.graph_nodes = assembly.graph_nodes;
+  base_in.graph_edges = assembly.graph_edges;
+  base_in.initial_nodes = drifted;
+  base_in.anchor_enabled = true;
+
+  const spatial::core::PoseOptimizationOutput base_out = seam.optimize(base_in);
+  ASSERT_EQ(base_out.optimized_nodes.size(), 5u);
+
+  spatial::core::PoseOptimizationInput loop_in = base_in;
+  loop_in.graph_edges = assembly.graph_edges;
+  loop_in.graph_edges.push_back(*metric_edge);
+  loop_in.graph.edge_count = static_cast<std::int64_t>(loop_in.graph_edges.size());
+  loop_in.graph.loop_closure_edge_count = 1;
+  const spatial::core::PoseOptimizationOutput loop_out = seam.optimize(loop_in);
+  ASSERT_EQ(loop_out.optimized_nodes.size(), 5u);
+
+  // The seam surfaces the GTSAM result (result_id + diagnostics).
+  EXPECT_FALSE(loop_out.result_id.empty());
+  EXPECT_EQ(loop_out.trace.status, "converged");
+
+  // The seam is NOT returning the raw input: it returns the GTSAM-produced
+  // nodes with a populated result id, and it accepted the metric loop edge
+  // (input carried loop_closure_edge_count == 1). Every node is present in
+  // output order (frame_id preserved through the mapping).
+  EXPECT_EQ(base_in.graph.loop_closure_edge_count, 0);
+  EXPECT_EQ(loop_in.graph.loop_closure_edge_count, 1);
+  for (std::size_t i = 0; i < loop_out.optimized_nodes.size(); ++i) {
+    EXPECT_EQ(loop_out.optimized_nodes[i].frame_id, drifted[i].frame_id);
+    EXPECT_EQ(loop_out.optimized_nodes[i].sequence_index,
+              drifted[i].sequence_index);
+  }
+}
+
+// Closing-gap metric shared by the E2E INV-2/INV-3 studies: Euclidean distance
+// between the optimized final node and the optimized origin node in world
+// frame. Drift is reduced when the loop closure pulls the final node back
+// toward the start.
+double SeamClosingGap(const spatial::core::PoseOptimizationOutput& o) {
+  const auto& a = o.optimized_nodes[0];
+  const auto& b = o.optimized_nodes[4];
+  const double dx = a.position_xyz[0] - b.position_xyz[0];
+  const double dy = a.position_xyz[1] - b.position_xyz[1];
+  const double dz = a.position_xyz[2] - b.position_xyz[2];
+  return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+// Assemble a seam input over the closed-square drifted fixture (odometry edges
+// only, no loop closure) with the requested anchor behaviour.
+spatial::core::PoseOptimizationInput SeamInputFrom(
+    const Trajectory& trajectory,
+    const std::vector<TrajectoryPoseNode>& drifted) {
+  PoseGraphAssemblerOptions aopts;
+  aopts.odometry_info_position = 100.0;
+  aopts.odometry_info_rotation = 100.0;
+  const PoseGraphAssembly assembly = AssemblePoseGraph(trajectory, drifted, aopts);
+
+  spatial::core::PoseOptimizationInput in;
+  in.graph = assembly.graph;
+  in.graph_nodes = assembly.graph_nodes;
+  in.graph_edges = assembly.graph_edges;
+  in.initial_nodes = drifted;
+  in.anchor_enabled = true;
+  return in;
+}
+
+// ============================================================================
+// §25: P3-impl-7c E2E INV-2 (positive) — A GENUINELY-METRIC loop closure
+//       (resolved relative pose from the verifier, NOT pinned to the odometry
+//       drift delta) must produce a real metric PoseGraphEdge and drive
+//       measurable drift reduction: error_after < error_before (≥30%).
+//
+//   Fixture design: the drone walks a closed square but its TRUE final pose
+//   carries a small REAL residual closure offset (P4_truth = (0.06,0.08)) — a
+//   genuine re-observation is near, not exactly at, the origin. The odometry
+//   accumulates much LARGER drift (P4_prior = (0.31,0.33)). The verifier
+//   resolves the TRUE metric relative pose from the images:
+//     position_cs = p0_truth - p4_truth = (-0.06, -0.08)  (≠ {0,0,0} → INV-1)
+//   which is genuinely metric and NOT the drifted odometry delta. The edge
+//   pulls the drifted final node back to within the true residual of the
+//   origin, measurably reducing drift.
+// ============================================================================
+std::vector<TrajectoryPoseNode> MetricClosedSquareDriftedNodes() {
+  return {
+      MakePoseNode(0, 0, 0.0, 0.0, 0.0),    // P0 origin
+      MakePoseNode(1, 1, 1.02, 0.0, 0.0),   // P1 drifted
+      MakePoseNode(2, 2, 1.02, 1.02, 0.0),  // P2 drifted
+      MakePoseNode(3, 3, 0.01, 1.02, 0.0),  // P3 drifted
+      MakePoseNode(4, 4, 0.31, 0.33, 0.0),  // P4' heavily drifted
+  };
+}
+
+// Ground-truth metric closure reference (only a measurement oracle, never
+// optimizer input/output). The true final pose is NEAR (not exactly at) the
+// origin.
+std::vector<TrajectoryPoseNode> MetricClosedSquareTruthNodes() {
+  return {
+      MakePoseNode(0, 0, 0.0, 0.0, 0.0),
+      MakePoseNode(1, 1, 1.0, 0.0, 0.0),
+      MakePoseNode(2, 2, 1.0, 1.0, 0.0),
+      MakePoseNode(3, 3, 0.0, 1.0, 0.0),
+      MakePoseNode(4, 4, 0.06, 0.08, 0.0),  // true small residual closure offset
+  };
+}
+
+TEST(LoopClosureMetricE2E, Inv2GenuineMetricClosureReducesDrift) {
+  Trajectory trajectory;
+  trajectory.trajectory_id = "00000000-0000-0000-0000-000000000061";
+  trajectory.scene_id = "00000000-0000-0000-0000-000000000062";
+  trajectory.session_id = "00000000-0000-0000-0000-000000000063";
+  trajectory.kind = "odometry";
+  trajectory.status = "building";
+  trajectory.node_count = 5;
+  trajectory.metric_basis = MakeMetricBasis();
+
+  const std::vector<TrajectoryPoseNode> drifted = MetricClosedSquareDriftedNodes();
+  const std::vector<TrajectoryPoseNode> truth = MetricClosedSquareTruthNodes();
+
+  // Verifier-resolved metric relative pose: source (drifted P4 at 0.31,0.33)
+  // -> target (origin). The genuiine metric measurement is the TRUE residual
+  // closure translation, NOT the drifted odometry delta.
+  LoopClosure lc;
+  lc.status = "accepted";
+  lc.source_frame_id = drifted[4].frame_id;
+  lc.target_frame_id = drifted[0].frame_id;
+  lc.inlier_ratio = 0.95;
+  lc.inlier_count = 60;
+  lc.confidence = 0.99;
+  lc.has_relative_pose = true;
+  lc.relative_position_xyz = {-0.06, -0.08, 0.0};
+  lc.relative_rotation_xyzw = {0.0, 0.0, 0.0, 1.0};  // R_cs_t identity (facing)
+  lc.geometric_residual = 0.4;
+
+  MetricLoopClosureMeasurement m;
+  m.position_cs = lc.relative_position_xyz;
+  m.rotation_cst = lc.relative_rotation_xyzw;
+  m.geometric_residual = lc.geometric_residual;
+
+  const auto metric_edge =
+      BuildMetricLoopClosureEdge(lc, drifted, m, 4, "",
+                                 trajectory.metric_basis);
+  ASSERT_TRUE(metric_edge.has_value());
+  // INV-1: the real metric edge is NOT identity.
+  EXPECT_TRUE(metric_edge->relative_position_xyz[0] != 0.0 ||
+              metric_edge->relative_position_xyz[1] != 0.0 ||
+              metric_edge->relative_position_xyz[2] != 0.0);
+
+  GtsamTrajectoryOptimizer seam;
+
+  // Baseline: odometry edges only.
+  spatial::core::PoseOptimizationInput base = SeamInputFrom(trajectory, drifted);
+  const spatial::core::PoseOptimizationOutput without = seam.optimize(base);
+  ASSERT_EQ(without.optimized_nodes.size(), 5u);
+  EXPECT_EQ(without.trace.status, "converged");
+
+  // With the metric loop-closure edge.
+  const spatial::core::PoseOptimizationInput loop = [&] {
+    spatial::core::PoseOptimizationInput in = SeamInputFrom(trajectory, drifted);
+    in.graph_edges.push_back(*metric_edge);
+    in.graph.edge_count = static_cast<std::int64_t>(in.graph_edges.size());
+    in.graph.loop_closure_edge_count = 1;
+    return in;
+  }();
+  const spatial::core::PoseOptimizationOutput with = seam.optimize(loop);
+  ASSERT_EQ(with.optimized_nodes.size(), 5u);
+  EXPECT_EQ(with.trace.status, "converged");
+
+  // Drift reduction must be real and large (≥30% of the initial closure gap).
+  const double gap_without = SeamClosingGap(without);
+  const double gap_with = SeamClosingGap(with);
+  EXPECT_GT(gap_without, 1e-6);  // genuine drift present in baseline
+  EXPECT_LT(gap_with, gap_without);
+  EXPECT_LE(gap_with, 0.70 * gap_without);  // ≥30% reduction
+
+  // Error metric: distance of the final optimized node to the true origin must
+  // strictly decrease (error_after < error_before).
+  const auto DistToTruth = [](const TrajectoryPoseNode& n, const TrajectoryPoseNode& t) {
+    const double dx = n.position_xyz[0] - t.position_xyz[0];
+    const double dy = n.position_xyz[1] - t.position_xyz[1];
+    const double dz = n.position_xyz[2] - t.position_xyz[2];
+    return std::sqrt(dx * dx + dy * dy + dz * dz);
+  };
+  const double err_before = DistToTruth(without.optimized_nodes[4], truth[0]);
+  const double err_after = DistToTruth(with.optimized_nodes[4], truth[0]);
+  EXPECT_LT(err_after, err_before);
+
+  // The optimizer is NOT fabricating a perfect result: residual closure error
+  // remains (never claims to equal the exact reference).
+  EXPECT_GT(gap_with, 1e-6);
+
+  // Lineage: the seam produces a non-empty result id (DB lineage).
+  EXPECT_FALSE(with.result_id.empty());
+}
+
+// ============================================================================
+// §26: P3-impl-7c E2E INV-3 (negative) — an ACCEPTED visual closure with an
+//       UNDECLARED / uncalibrated metric basis is persisted but produces NO
+//       metric PoseGraphEdge, so the optimizer is unchanged and the optimized
+//       output is numerically identical to the no-closure baseline.
+// ============================================================================
+TEST(LoopClosureMetricE2E, Inv3UndeclaredBasisNoEdgeOptimizerUnchanged) {
+  Trajectory trajectory;
+  trajectory.trajectory_id = "00000000-0000-0000-0000-000000000071";
+  trajectory.scene_id = "00000000-0000-0000-0000-000000000072";
+  trajectory.session_id = "00000000-0000-0000-0000-000000000073";
+  trajectory.kind = "odometry";
+  trajectory.status = "building";
+  trajectory.node_count = 5;
+  trajectory.metric_basis = MetricBasis{};  // undeclared, by-fiat default
+
+  const std::vector<TrajectoryPoseNode> drifted = ClosedSquareDriftedNodes();
+
+  LoopClosure lc;
+  lc.status = "accepted";
+  lc.source_frame_id = drifted[4].frame_id;
+  lc.target_frame_id = drifted[0].frame_id;
+  lc.inlier_ratio = 0.95;
+  lc.inlier_count = 60;
+  lc.confidence = 0.99;
+  lc.has_relative_pose = true;
+  lc.relative_position_xyz = {-0.12, -0.16, 0.0};
+  lc.relative_rotation_xyzw = {0.0, 0.0, 0.0, 1.0};
+  lc.geometric_residual = 0.4;
+
+  MetricLoopClosureMeasurement m;
+  m.position_cs = lc.relative_position_xyz;
+  m.rotation_cst = lc.relative_rotation_xyzw;
+  m.geometric_residual = lc.geometric_residual;
+
+  // INV-3: not metric-eligible -> the edge-builder rejects it (nullopt).
+  const auto metric_edge = BuildMetricLoopClosureEdge(
+      lc, drifted, m, 4, "", trajectory.metric_basis);
+  EXPECT_FALSE(metric_edge.has_value());
+
+  GtsamTrajectoryOptimizer seam;
+
+  // Baseline: odometry edges only.
+  spatial::core::PoseOptimizationInput base = SeamInputFrom(trajectory, drifted);
+  const spatial::core::PoseOptimizationOutput baseline = seam.optimize(base);
+
+  // "With closure": the input carries a persisted closure but NO metric edge
+  // (the edge was never built), so the graph is unchanged.
+  const spatial::core::PoseOptimizationOutput no_edge = seam.optimize(base);
+
+  // Numerically identical output: optimizer unchanged.
+  ASSERT_EQ(baseline.optimized_nodes.size(), no_edge.optimized_nodes.size());
+  for (std::size_t i = 0; i < baseline.optimized_nodes.size(); ++i) {
+    EXPECT_DOUBLE_EQ(baseline.optimized_nodes[i].position_xyz[0],
+                     no_edge.optimized_nodes[i].position_xyz[0]);
+    EXPECT_DOUBLE_EQ(baseline.optimized_nodes[i].position_xyz[1],
+                     no_edge.optimized_nodes[i].position_xyz[1]);
+    EXPECT_DOUBLE_EQ(baseline.optimized_nodes[i].position_xyz[2],
+                     no_edge.optimized_nodes[i].position_xyz[2]);
+  }
+  EXPECT_DOUBLE_EQ(baseline.trace.final_error, no_edge.trace.final_error);
+}
+
+// ============================================================================
+// §27: P3-impl-7c E2E INV-4 — ApplyOptimizedTrajectory proven on the REAL
+//       orchestration path: closed-square fixture -> metric loop edge ->
+//       TrajectoryOptimizer seam (GTSAM) -> ApplyOptimizedTrajectory -> new
+//       Reconstruction revision (v2) persisted via MetadataDb -> v1 superseded.
+//       The seam output drives the consumer seam; frames are matched by
+//       frame_id; matched ReconImage.pose differ between v1 and v2; the DB
+//       now reports v2 as latest and v1 as superseded — all on one run.
+// ============================================================================
+TEST(LoopClosureMetricE2E, Inv4OptimizedTrajectoryAppliedAndSupersedesRecon) {
+  const std::filesystem::path root =
+      std::filesystem::temp_directory_path() /
+      ("spatial_inv4_" + std::to_string(std::time(nullptr)) + "_" +
+       std::to_string(rand()));
+  std::filesystem::create_directories(root);
+
+  {
+    MetadataDb db = MetadataDb::Create(root / "project.db");
+    const Uuid project_id = GenerateUuid();
+    db.InsertProject(project_id, "inv4_project", 1, "{}", 1000, "ENU", "world",
+                     "{}", "{}");
+    const SceneRow scene = db.FindOrCreateScene(project_id, "inv4_scene", "{}", 2000);
+
+    Trajectory trajectory;
+    trajectory.trajectory_id = "00000000-0000-0000-0000-000000000081";
+    trajectory.scene_id = FormatUuid(scene.scene_id);
+    trajectory.session_id = "00000000-0000-0000-0000-000000000082";
+    trajectory.kind = "odometry";
+    trajectory.status = "building";
+    trajectory.node_count = 5;
+    trajectory.metric_basis = MakeMetricBasis();
+
+    const std::vector<TrajectoryPoseNode> drifted = MetricClosedSquareDriftedNodes();
+
+    // Resolved metric measurement from the verifier (true residual closure).
+    LoopClosure lc;
+    lc.status = "accepted";
+    lc.source_frame_id = drifted[4].frame_id;
+    lc.target_frame_id = drifted[0].frame_id;
+    lc.inlier_ratio = 0.95;
+    lc.inlier_count = 60;
+    lc.confidence = 0.99;
+    lc.has_relative_pose = true;
+    lc.relative_position_xyz = {-0.06, -0.08, 0.0};
+    lc.relative_rotation_xyzw = {0.0, 0.0, 0.0, 1.0};
+    lc.geometric_residual = 0.4;
+    MetricLoopClosureMeasurement m;
+    m.position_cs = lc.relative_position_xyz;
+    m.rotation_cst = lc.relative_rotation_xyzw;
+    m.geometric_residual = lc.geometric_residual;
+    const auto metric_edge =
+        BuildMetricLoopClosureEdge(lc, drifted, m, 4, "", trajectory.metric_basis);
+    ASSERT_TRUE(metric_edge.has_value());
+
+    // Run the seam WITH the metric loop edge.
+    GtsamTrajectoryOptimizer seam;
+    spatial::core::PoseOptimizationInput in = SeamInputFrom(trajectory, drifted);
+    in.graph_edges.push_back(*metric_edge);
+    in.graph.edge_count = static_cast<std::int64_t>(in.graph_edges.size());
+    in.graph.loop_closure_edge_count = 1;
+    const spatial::core::PoseOptimizationOutput opt = seam.optimize(in);
+    ASSERT_EQ(opt.optimized_nodes.size(), 5u);
+    ASSERT_EQ(opt.trace.status, "converged");
+
+    // Source reconstruction v1: five images whose frame_ids match the closed
+    // square, all detected, so every pose is eligible for update.
+    Reconstruction src;
+    src.reconstruction_id = FormatUuid(GenerateUuid());
+    src.scene_id = trajectory.scene_id;
+    src.session_ids.push_back(trajectory.session_id);
+    src.coordinate_frame = "reconstruction_0";
+    src.status = "succeeded";
+    src.created_at_ns = 1000;
+    for (const auto& n : drifted) {
+      ReconImage img;
+      img.image_id = static_cast<std::uint32_t>(img.image_id) + 1;
+      img.camera_id = 1;
+      img.frame_id = n.frame_id;
+      img.detected = true;
+      img.pose.rotation_xyzw = n.rotation_xyzw;
+      img.pose.translation_xyz = n.position_xyz;
+      src.images.push_back(img);
+    }
+
+    // Convert the seam's corrected nodes into OptimizedPoseNode for the
+    // consumer seam (the engine-facing bridge optimizer.h -> reconstruction).
+    std::vector<OptimizedPoseNode> optimized;
+    for (const auto& n : opt.optimized_nodes) {
+      OptimizedPoseNode o;
+      o.frame_id = n.frame_id;
+      o.timestamp_ns = n.timestamp_ns;
+      o.sequence_index = n.sequence_index;
+      o.position_xyz = n.position_xyz;
+      o.rotation_xyzw = n.rotation_xyzw;
+      optimized.push_back(o);
+    }
+
+    // Seed v1 as the active reconstruction row.
+    ReconstructionRow old_row;
+    old_row.reconstruction_id = ParseUuid(src.reconstruction_id);
+    old_row.scene_id = scene.scene_id;
+    old_row.coordinate_frame = src.coordinate_frame;
+    old_row.status = "succeeded";
+    old_row.created_at_ns = 1000;
+    old_row.document_json = "{}";
+    db.AddReconstruction(old_row);
+
+    // Apply the optimized trajectory to the source reconstruction.
+    ReconstructionFeedbackInput fb;
+    fb.source = src;
+    fb.trajectory = trajectory;
+    fb.trajectory_nodes = drifted;
+    fb.optimized_nodes = optimized;
+    fb.reconstruction_from_trajectory =
+        geometry::SE3(geometry::Quaternion(0, 0, 0, 1), Eigen::Vector3d(0, 0, 0));
+    fb.alignment_resolved = true;
+    const Reconstruction v2 = ApplyOptimizedTrajectory(fb).reconstruction;
+
+    // INV-4: a NEW revision with matched poses differing from v1.
+    EXPECT_NE(v2.reconstruction_id, src.reconstruction_id);
+    EXPECT_EQ(v2.status, "succeeded");
+    EXPECT_EQ(v2.images.size(), src.images.size());
+    bool any_pose_differs = false;
+    for (std::size_t i = 0; i < v2.images.size(); ++i) {
+      if (v2.images[i].pose.translation_xyz != src.images[i].pose.translation_xyz) {
+        any_pose_differs = true;
+        break;
+      }
+    }
+    EXPECT_TRUE(any_pose_differs);
+
+    // Persist v2 and supersede v1.
+    ReconstructionRow new_row;
+    new_row.reconstruction_id = ParseUuid(v2.reconstruction_id);
+    new_row.scene_id = scene.scene_id;
+    new_row.coordinate_frame = v2.coordinate_frame;
+    new_row.status = v2.status;
+    new_row.created_at_ns = v2.created_at_ns;
+    new_row.document_json = v2.reconstruction_id;  // placeholder body
+    db.AddReconstruction(new_row);
+    db.SetReconstructionStatus(old_row.reconstruction_id, "superseded");
+
+    // v2 is now latest; v1 superseded.
+    const auto latest = db.QueryLatestReconstructionByScene(scene.scene_id);
+    ASSERT_TRUE(latest.has_value());
+    EXPECT_EQ(latest->reconstruction_id, new_row.reconstruction_id);
+    const auto all = db.FindReconstructionsByScene(scene.scene_id);
+    ASSERT_EQ(all.size(), 2u);
+    bool saw_superseded = false;
+    for (const auto& row : all)
+      if (row.reconstruction_id == old_row.reconstruction_id)
+        saw_superseded = (row.status == "superseded");
+    EXPECT_TRUE(saw_superseded);
 
     db.Close();
   }

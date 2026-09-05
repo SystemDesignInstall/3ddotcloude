@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "core/reconstruction/reconstruction.h"
+#include "core/trajectory/metric_basis.h"
 
 namespace spatial::core {
 
@@ -61,6 +62,7 @@ struct Trajectory {
   double total_duration_ns = 0.0;          // time span in nanoseconds
   TrajectoryUncertainty uncertainty;       // aggregate uncertainty metrics (D-TRJ-06)
   ReconstructionProvenance provenance;     // reuse P2.5 provenance type
+  MetricBasis metric_basis;                // D4 metric-eligibility declaration (INV-3)
   bool operator==(const Trajectory&) const = default;
 };
 

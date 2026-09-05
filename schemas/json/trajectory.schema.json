@@ -16,6 +16,45 @@
       "format": "uuid",
       "description": "Instance-scoped UUIDv4 identity matching the MetadataDb trajectory row (D-TRJ-02)."
     },
+    "metric_basis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["declared", "source", "basis", "scale_calibration_ref"],
+      "description": "Metric-basis declaration (P3 Phase 3, D4). PROVENANCE-DERIVED, never caller-asserted (max-conviction, P3-impl-7c §5.1). A valid declared basis is the eligibility gate for a metric loop-closure edge (INV-3).",
+      "properties": {
+        "declared": {
+          "type": "boolean",
+          "description": "True only when a trusted scale-producing pipeline set it. May never be true by fiat."
+        },
+        "source": {
+          "type": "string",
+          "enum": ["trajectory", "reconstruction", "combined"],
+          "description": "Which artifact declared the scale basis."
+        },
+        "basis": {
+          "type": "string",
+          "enum": ["odometry_scale", "calibrated_baseline", "sfm_metric_aligned", "ground_truth"],
+          "description": "How the metric scale basis was established."
+        },
+        "provenance": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "D-CRM-11 provenance record that is the evidence of the scale basis.",
+          "properties": {
+            "configuration_hash": {
+              "type": "string",
+              "minLength": 1,
+              "description": "SHA-256 of the effective configuration that produced the scale basis."
+            }
+          }
+        },
+        "scale_calibration_ref": {
+          "type": "string",
+          "minLength": 1,
+          "description": "CAS/artifact reference of the calibration that fixes scale."
+        }
+      }
+    },
     "nodes": {
       "type": "array",
       "items": { "$ref": "#/definitions/PoseNode" },

@@ -475,6 +475,12 @@ class MetadataDb {
 
   // P3-impl-1 (D-PG-01): canonical pose graph entity (migration 0008).
   void AddPoseGraph(const PoseGraphRow& row);
+  // Idempotent variant (P3-impl-7c §7.2 persistence increment): INSERT OR
+  // REPLACE keyed on graph_id. Re-processing the same orchestrated run (same
+  // graph identity) overwrites the row instead of violating the PK, so repeated
+  // handling of the same verified closure cannot create duplicate or
+  // contradictory canonical rows.
+  void UpsertPoseGraph(const PoseGraphRow& row);
   std::optional<PoseGraphRow> QueryLatestPoseGraphByTrajectory(
       const Uuid& trajectory_id) const;
   std::vector<PoseGraphRow> FindPoseGraphsByTrajectory(
@@ -489,6 +495,12 @@ class MetadataDb {
 
   // P3-impl-1 (D-LC-05): loop closures (migration 0008).
   void AddLoopClosure(const LoopClosureRow& row);
+  // Idempotent variant (P3-impl-7c §7.2 persistence increment): INSERT OR
+  // REPLACE keyed on closure_id. This is the real UPDATE path for
+  // LoopClosure.spatial_separation_m: re-processing the same verified closure
+  // overwrites the row with a fresh (deterministic) spatial_separation_m
+  // instead of failing on the PK. Never creates duplicate closure rows.
+  void UpsertLoopClosure(const LoopClosureRow& row);
   std::vector<LoopClosureRow> FindLoopClosuresByTrajectory(
       const Uuid& trajectory_id) const;
   std::vector<LoopClosureRow> FindAcceptedLoopClosuresByTrajectory(
@@ -496,6 +508,11 @@ class MetadataDb {
 
   // P3-impl-1 (D-OPT-01): optimization results (migration 0008).
   void AddOptimizationResult(const OptimizationResultRow& row);
+  // Idempotent variant (P3-impl-7c §7.2 persistence increment): INSERT OR
+  // REPLACE keyed on result_id, so re-running the same orchestrated
+  // optimization (same result identity) never duplicates or contradicts a
+  // previously persisted OptimizationResultRow.
+  void UpsertOptimizationResult(const OptimizationResultRow& row);
   std::optional<OptimizationResultRow> QueryLatestOptimizationResultByTrajectory(
       const Uuid& trajectory_id) const;
   std::vector<OptimizationResultRow> FindOptimizationResultsByTrajectory(

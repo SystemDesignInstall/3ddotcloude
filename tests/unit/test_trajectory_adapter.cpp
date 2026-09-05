@@ -676,5 +676,89 @@ TEST_F(TrajectorySchemaValidationTest, MissingFrameIdStillValid) {
          }();
 }
 
+// D4 — a valid declared metric_basis on the trajectory root validates; a bare
+// declared:true (missing scale_calibration_ref / provenance hash) fails.
+TEST_F(TrajectorySchemaValidationTest, DeclaredMetricBasisPasses) {
+  SparseModel model;
+
+  SparseModelCamera cam;
+  cam.camera_id = 1;
+  cam.model = "PINHOLE";
+  cam.intrinsic_model = "pinhole";
+  cam.model_id = 1;
+  cam.width = 640;
+  cam.height = 480;
+  cam.intrinsics = {500.0, 500.0, 320.0, 240.0};
+  cam.raw_params = {500.0, 500.0, 320.0, 240.0};
+  model.cameras.push_back(cam);
+
+  SparseModelImage img;
+  img.image_id = 1;
+  img.camera_id = 1;
+  img.name = "img1.jpg";
+  img.qvec = {1.0, 0.0, 0.0, 0.0};
+  img.tvec = {0.0, 0.0, 0.0};
+  model.images.push_back(img);
+
+  TrajectoryProvenanceInfo prov;
+  prov.backend_name = "colmap";
+  auto result = SparseModelToTrajectory(
+      model, "11111111-2222-3333-4444-555555555555",
+      "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+      "bbbbbbbb-cccc-dddd-eeee-ffffffffffff", "trajectory_0", prov);
+  nlohmann::json doc = TrajectoryToJson(result);
+  doc["metric_basis"] = {
+      {"declared", true},
+      {"source", "trajectory"},
+      {"basis", "calibrated_baseline"},
+      {"provenance", {{"configuration_hash", "deadbeef00000000000000000000000000"}}},
+      {"scale_calibration_ref", "cas://calib/baseline_v1"}};
+  std::vector<std::string> violations;
+  CheckNode(schema_, doc, "$", &violations);
+  EXPECT_TRUE(violations.empty())
+      << "Schema violations: "
+      << [&]() {
+           std::string s;
+           for (const auto& v : violations) s += "\n  " + v;
+           return s;
+         }();
+}
+
+TEST_F(TrajectorySchemaValidationTest, BareByFiatMetricBasisFails) {
+  SparseModel model;
+
+  SparseModelCamera cam;
+  cam.camera_id = 1;
+  cam.model = "PINHOLE";
+  cam.intrinsic_model = "pinhole";
+  cam.model_id = 1;
+  cam.width = 640;
+  cam.height = 480;
+  cam.intrinsics = {500.0, 500.0, 320.0, 240.0};
+  cam.raw_params = {500.0, 500.0, 320.0, 240.0};
+  model.cameras.push_back(cam);
+
+  SparseModelImage img;
+  img.image_id = 1;
+  img.camera_id = 1;
+  img.name = "img1.jpg";
+  img.qvec = {1.0, 0.0, 0.0, 0.0};
+  img.tvec = {0.0, 0.0, 0.0};
+  model.images.push_back(img);
+
+  TrajectoryProvenanceInfo prov;
+  prov.backend_name = "colmap";
+  auto result = SparseModelToTrajectory(
+      model, "11111111-2222-3333-4444-555555555555",
+      "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+      "bbbbbbbb-cccc-dddd-eeee-ffffffffffff", "trajectory_0", prov);
+  nlohmann::json doc = TrajectoryToJson(result);
+  // Bare declared:true with no scale_calibration_ref -> schema-invalid.
+  doc["metric_basis"] = {{"declared", true}, {"source", "trajectory"}};
+  std::vector<std::string> violations;
+  CheckNode(schema_, doc, "$", &violations);
+  EXPECT_FALSE(violations.empty());
+}
+
 }  // namespace
 }  // namespace spatial::adapters::colmap

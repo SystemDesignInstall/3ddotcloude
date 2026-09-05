@@ -760,6 +760,36 @@ TEST_F(LoopClosureSchemaTest, MinimalDocumentPasses) {
   EXPECT_TRUE(v.empty()) << "violations: " << JoinString(v);
 }
 
+TEST_F(LoopClosureSchemaTest, MetricResolvedClosurePasses) {
+  json doc = MakeLoopClosureMinimal();
+  doc["closures"].push_back(json::parse(R"({
+    "closure_id": "d4e5f6a7-b8c9-4d0e-1f2a-3b4c5d6e7f80",
+    "trajectory_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "source_frame_id": "6ba7b812-9dad-11d1-80b4-00c04fd430c8",
+    "target_frame_id": "6ba7b813-9dad-11d1-80b4-00c04fd430c8",
+    "status": "accepted",
+    "inlier_ratio": 0.92,
+    "inlier_count": 150,
+    "confidence": 0.95,
+    "temporal_separation_ns": 5000000000,
+    "spatial_separation_m": 25.3,
+    "has_relative_pose": true,
+    "relative_position_xyz": [0.3, 0.4, 0.0],
+    "relative_rotation_xyzw": [0.0, 0.0, 0.0, 1.0],
+    "geometric_residual": 0.42,
+    "created_at_ns": 1783123201000000000
+  })"));
+  auto v = Validate(schema_, doc);
+  EXPECT_TRUE(v.empty()) << "violations: " << JoinString(v);
+}
+
+TEST_F(LoopClosureSchemaTest, WrongRelativePositionLengthFails) {
+  doc_["closures"][0]["has_relative_pose"] = true;
+  doc_["closures"][0]["relative_position_xyz"] = json::array({0.3, 0.4});
+  auto v = Validate(schema_, doc_);
+  EXPECT_FALSE(v.empty());
+}
+
 TEST_F(LoopClosureSchemaTest, AcceptedClosurePasses) {
   json doc = MakeLoopClosureMinimal();
   doc["closures"].push_back(json::parse(R"({

@@ -128,6 +128,30 @@
           "minimum": 0,
           "description": "Euclidean distance between original poses in meters (D-LC-06). Very large values may indicate false positives."
         },
+        "has_relative_pose": {
+          "type": "boolean",
+          "default": false,
+          "description": "True iff the geometric verifier produced a calibrated, metric relative pose (essential/calibrated path, D5). When false the closure is verified-visual-only and MUST NOT produce a metric pose-graph edge (INV-1)."
+        },
+        "relative_position_xyz": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": { "type": "number" },
+          "description": "Resolved metric translation T_source_target expressed in the source camera frame C_s, in meters (D5). Meaningful only when has_relative_pose is true."
+        },
+        "relative_rotation_xyzw": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "items": { "type": "number" },
+          "description": "Cheirality-resolved relative rotation R_ess mapping C_s -> C_t, scalar-last quaternion (x,y,z,w) (D5). Meaningful only when has_relative_pose is true."
+        },
+        "geometric_residual": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Mean reprojection residual in pixels of the accepted inliers (verifier output). Feeds the D3 deterministic information model."
+        },
         "created_at_ns": {
           "type": "integer",
           "description": "Creation timestamp in nanoseconds since epoch."

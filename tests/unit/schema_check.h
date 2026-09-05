@@ -26,7 +26,8 @@ inline void CheckNode(const nlohmann::json& schema,
                     (t == "number" && doc.is_number()) ||
                     (t == "integer" && doc.is_number_integer()) ||
                     (t == "object" && doc.is_object()) ||
-                    (t == "array" && doc.is_array());
+                    (t == "array" && doc.is_array()) ||
+                    (t == "boolean" && doc.is_boolean());
     if (!ok) {
       violations->push_back(path + ": expected " + t + ", got " +
                             doc.type_name());
