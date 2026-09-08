@@ -29,6 +29,7 @@
 #include <string>
 #include <vector>
 
+#include "core/artifacts/artifact_store.h"
 #include "core/storage/metadata_db.h"
 #include "core/trajectory/loop_closure.h"
 #include "core/trajectory/metric_basis.h"
@@ -49,6 +50,7 @@ struct LoopClosureOptimizePipelineInput {
   std::string configuration_hash;          // forwarded to produced edges
   spatial::core::TrajectoryOptimizer* optimizer = nullptr;  // seam (engine never sees GTSAM)
   spatial::core::MetadataDb* db = nullptr;                  // persistence
+  spatial::core::ArtifactStore* store = nullptr;            // CAS persistence (§3.3)
   double odometry_info_position = 100.0;   // assemble odometry-edges info block
   double odometry_info_rotation = 100.0;
 };

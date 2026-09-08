@@ -25,6 +25,7 @@
 #include "engine/engine.h"
 #include "engine/pipeline/feature_extraction.h"
 #include "engine/pipeline/mock_photogrammetry.h"
+#include "engine/pipeline/production_pipelines.h"
 #include "engine/pipeline/quality/quality_report.h"
 #include "engine/task/task_serialization.h"
 #include "importers/images/image_importer.h"
@@ -55,6 +56,7 @@ constexpr const char* kUsage =
     "  spatial run --dag <dag.json> [--project <dir>]\n"
     "  spatial run feature-extraction --session <uuid> [--config <json>]"
     " [--project <dir>]\n"
+    "  spatial p3_sparse_correction [--project <dir>]\n"
     "  spatial status <run-id> [--project <dir>]\n"
     "  spatial report <run-id> [--project <dir>]\n"
     "  spatial import <file> ... [--sensor <uuid>] [--time <ns>]"
@@ -474,6 +476,7 @@ int main(int argc, char** argv) {
       // `spatial run <pipeline-id>`: everything after the id is flags.
       RegisterMockPhotogrammetry(engine.registry());
       RegisterFeatureExtraction(engine.registry());
+      RegisterProductionPipelines(engine.registry());
       const std::string pipeline_id = rest[0];
       std::vector<std::string> flags(rest.begin() + 1, rest.end());
       // Session-scoped feature extraction is its own command (RFC-0007 §8):
@@ -521,6 +524,18 @@ int main(int argc, char** argv) {
       Engine engine = OpenProjectAndEngine(rest);
       const Uuid id = ParseUuid(rest[0]);
       return ReportCommand(id, engine);
+    }
+
+    if (args[0] == "p3_sparse_correction") {
+      std::vector<std::string> rest(args.begin() + 1, args.end());
+      Engine engine = OpenProjectAndEngine(rest);
+      RegisterProductionPipelines(engine.registry());
+      std::cout << "p3_sparse_correction: production pipeline registered\n";
+      std::cout << "available pipelines:\n";
+      for (const auto& id : engine.registry().Ids()) {
+        std::cout << "  " << id << "\n";
+      }
+      return 0;
     }
 
     if (args[0] == "import") {

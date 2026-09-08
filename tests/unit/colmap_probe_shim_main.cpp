@@ -210,6 +210,120 @@ int RunMapper(const std::vector<std::string>& argv) {
   return 0;
 }
 
+std::uint64_t ReadU64(std::ifstream& in) {
+  std::uint64_t value = 0;
+  for (int i = 0; i < 8; ++i) {
+    const int byte = in.get();
+    if (byte < 0) return 0;
+    value |= static_cast<std::uint64_t>(byte) << (8 * i);
+  }
+  return value;
+}
+
+std::uint32_t ReadU32(std::ifstream& in) {
+  std::uint32_t value = 0;
+  for (int i = 0; i < 4; ++i) {
+    const int byte = in.get();
+    if (byte < 0) return 0;
+    value |= static_cast<std::uint32_t>(byte) << (8 * i);
+  }
+  return value;
+}
+
+double ReadF64(std::ifstream& in) {
+  std::uint64_t bits = ReadU64(in);
+  double value = 0.0;
+  std::memcpy(&value, &bits, sizeof(value));
+  return value;
+}
+
+// The bundle_adjuster stand-in (P3-impl-8c): reads the native input model the
+// adapter wrote under --input_path (sparse/0) and emits a deterministic
+// "refined" model under --output_path (sparse_ba), matching the real tool's
+// fixed-intrinsics contract: cameras.bin and images.bin pass through VERBATIM
+// (intrinsics + poses untouched), points3D.bin is rebuilt with every point's x
+// coordinate offset by +0.5 (a deterministic, reversible refinement so tests
+// can prove the output model — and not a stale copy of the input — is what the
+// adapter parses back).
+int RunBundleAdjuster(const std::vector<std::string>& argv) {
+  const std::string input_path = FlagValue(argv, "--input_path");
+  const std::string output_path = FlagValue(argv, "--output_path");
+  if (input_path.empty() || !std::filesystem::is_directory(input_path)) {
+    std::fprintf(stderr,
+                 "bundle_adjuster: --input_path does not exist: %s\n",
+                 input_path.c_str());
+    return 66;
+  }
+  if (output_path.empty()) {
+    std::fputs("bundle_adjuster: missing --output_path\n", stderr);
+    return 66;
+  }
+  const std::filesystem::path in_dir = input_path;
+  const std::filesystem::path out_dir = output_path;
+  // Test-only: prove the adapter fails closed (P12-iii) on a bundle_adjuster
+  // that exits 0 but writes no refined model.
+  if (HasMarker("shim_bundle_adjuster_no_output")) {
+    std::puts("bundle_adjuster: (shim) ran without writing a model");
+    return 0;
+  }
+  for (const char* file : {"cameras.bin", "images.bin", "points3D.bin"}) {
+    if (!std::filesystem::exists(in_dir / file)) {
+      std::fprintf(stderr, "bundle_adjuster: input %s missing\n", file);
+      return 66;
+    }
+  }
+  std::error_code ec;
+  std::filesystem::create_directories(out_dir, ec);
+  if (ec) {
+    std::fprintf(stderr, "bundle_adjuster: cannot create %s\n",
+                 out_dir.string().c_str());
+    return 66;
+  }
+  std::filesystem::copy_file(in_dir / "cameras.bin", out_dir / "cameras.bin",
+                             std::filesystem::copy_options::overwrite_existing,
+                             ec);
+  if (ec) {
+    std::fprintf(stderr, "bundle_adjuster: cannot copy cameras.bin\n");
+    return 66;
+  }
+  std::filesystem::copy_file(in_dir / "images.bin", out_dir / "images.bin",
+                             std::filesystem::copy_options::overwrite_existing,
+                             ec);
+  if (ec) {
+    std::fprintf(stderr, "bundle_adjuster: cannot copy images.bin\n");
+    return 66;
+  }
+  const double kPointOffset = 0.5;
+  {
+    std::ifstream in(in_dir / "points3D.bin", std::ios::binary);
+    BinWriter out(out_dir / "points3D.bin");
+    const std::uint64_t num_points = ReadU64(in);
+    out.U64(num_points);
+    for (std::uint64_t i = 0; i < num_points; ++i) {
+      out.U64(ReadU64(in));                                   // point3D_id
+      const double x = ReadF64(in) + kPointOffset;            // refined x
+      out.F64(x);
+      out.F64(ReadF64(in));                                   // y
+      out.F64(ReadF64(in));                                   // z
+      out.U8(static_cast<std::uint8_t>(in.get()));            // r
+      out.U8(static_cast<std::uint8_t>(in.get()));            // g
+      out.U8(static_cast<std::uint8_t>(in.get()));            // b
+      out.F64(ReadF64(in));                                   // error
+      const std::uint64_t track_len = ReadU64(in);
+      out.U64(track_len);
+      for (std::uint64_t j = 0; j < track_len; ++j) {
+        const std::uint32_t image_id = ReadU32(in);
+        const std::uint32_t point2d_idx = ReadU32(in);
+        out.U32(image_id);
+        out.U32(point2d_idx);
+      }
+    }
+  }
+  std::puts("bundle_adjuster: refined model written to sparse_ba "
+            "(poses + intrinsics fixed, points adjusted)");
+  return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -249,6 +363,9 @@ int main(int argc, char** argv) {
   }
   if (command == "mapper") {
     return RunMapper(args);
+  }
+  if (command == "bundle_adjuster") {
+    return RunBundleAdjuster(args);
   }
   std::fprintf(stderr, "colmap: unknown command '%s'\n", command.c_str());
   return 64;

@@ -33,7 +33,7 @@ const std::unordered_set<std::string>& CalibrationKeys() {
 const std::unordered_set<std::string>& TopLevelKeys() {
   static const std::unordered_set<std::string> keys = {
       "threads", "seed", "feature_extractor", "matcher", "mapper",
-      "enabled_stages",
+      "bundle_adjuster", "enabled_stages",
   };
   return keys;
 }
@@ -61,6 +61,17 @@ const std::unordered_set<std::string>& MapperKeys() {
   return keys;
 }
 
+// bundle_adjuster stage keys (P3-impl-8c P9/P16). Algorithm settings ONLY:
+// calibration still travels in input_refs, never here (RFC-0009 §6).
+const std::unordered_set<std::string>& BundleAdjusterKeys() {
+  static const std::unordered_set<std::string> keys = {
+      "loss_function", "loss_scale_px", "max_num_iterations",
+      "refine_focal_length", "refine_principal_point", "refine_extra_params",
+      "refine_extrinsics", "refine_intrinsics",
+  };
+  return keys;
+}
+
 ValidationError Violation(const std::string& message) {
   return ValidationError(ErrorCode::kValidationDomain, message, {},
                          /*recoverable=*/false,
@@ -79,7 +90,8 @@ ValidationError CalibrationViolation(const std::string& message) {
 }
 
 bool IsKnownStage(const std::string& name) {
-  return name == "feature_extractor" || name == "matcher" || name == "mapper";
+  return name == "feature_extractor" || name == "matcher" || name == "mapper" ||
+         name == "bundle_adjuster";
 }
 
 // Rejects any object key that belongs to the calibration vocabulary, anywhere
@@ -123,6 +135,8 @@ const char* ColmapStageName(ColmapStage stage) noexcept {
       return "matcher";
     case ColmapStage::kMapper:
       return "mapper";
+    case ColmapStage::kBundleAdjuster:
+      return "bundle_adjuster";
   }
   return "unknown";
 }
@@ -136,6 +150,9 @@ std::optional<ColmapStage> ColmapStageFromName(const std::string& name) noexcept
   }
   if (name == ColmapStageName(ColmapStage::kMapper)) {
     return ColmapStage::kMapper;
+  }
+  if (name == ColmapStageName(ColmapStage::kBundleAdjuster)) {
+    return ColmapStage::kBundleAdjuster;
   }
   return std::nullopt;
 }
@@ -264,6 +281,74 @@ ColmapConfig ColmapConfig::FromJson(const std::string& config_json) {
       }
     }
 
+    if (doc.contains("bundle_adjuster")) {
+      const json& section = doc["bundle_adjuster"];
+      if (!section.is_object()) {
+        throw Violation("'bundle_adjuster' must be an object");
+      }
+      RejectUnknownKeys(section, "bundle_adjuster", BundleAdjusterKeys());
+      if (section.contains("loss_function")) {
+        const std::string loss = section["loss_function"].get<std::string>();
+        if (loss != "SoftL1" && loss != "Trivial" && loss != "Cauchy") {
+          throw Violation(
+              "'bundle_adjuster.loss_function' must be one of "
+              "{SoftL1, Trivial, Cauchy}");
+        }
+        config.bundle_adjuster.loss_function = loss;
+      }
+      if (section.contains("loss_scale_px")) {
+        const double scale = section["loss_scale_px"].get<double>();
+        if (scale < 0.0) {
+          throw Violation(
+              "'bundle_adjuster.loss_scale_px' must be >= 0 (0 = auto, the "
+              "D5 threshold of the v3 observation set); a negative robust "
+              "loss scale is invalid (P8)");
+        }
+        config.bundle_adjuster.loss_scale_px = scale;
+      }
+      if (section.contains("max_num_iterations")) {
+        const int iters = section["max_num_iterations"].get<int>();
+        if (iters < 1) {
+          throw Violation("'bundle_adjuster.max_num_iterations' must be >= 1");
+        }
+        config.bundle_adjuster.max_num_iterations = iters;
+      }
+      if (section.contains("refine_focal_length")) {
+        config.bundle_adjuster.refine_focal_length =
+            section["refine_focal_length"].get<bool>();
+      }
+      if (section.contains("refine_principal_point")) {
+        config.bundle_adjuster.refine_principal_point =
+            section["refine_principal_point"].get<bool>();
+      }
+      if (section.contains("refine_extra_params")) {
+        config.bundle_adjuster.refine_extra_params =
+            section["refine_extra_params"].get<bool>();
+      }
+      if (section.contains("refine_extrinsics")) {
+        config.bundle_adjuster.refine_extrinsics =
+            section["refine_extrinsics"].get<bool>();
+      }
+      if (section.contains("refine_intrinsics")) {
+        config.bundle_adjuster.refine_intrinsics =
+            section["refine_intrinsics"].get<bool>();
+      }
+      // FIXED-INTRINSICS invariant (D3/D-8c-3, P5): every intrinsics-refine
+      // toggle is pinned OFF. An ON toggle is rejected, never silently pinned
+      // down or forwarded.
+      if (config.bundle_adjuster.refine_focal_length ||
+          config.bundle_adjuster.refine_principal_point ||
+          config.bundle_adjuster.refine_extra_params ||
+          config.bundle_adjuster.refine_intrinsics) {
+        throw Violation(
+            "bundle_adjuster intrinsics refinement (refine_focal_length / "
+            "refine_principal_point / refine_extra_params / "
+            "refine_intrinsics) is out of scope for 8c: 8c keeps intrinsics "
+            "FIXED (D3), so every intrinsics-refine toggle must be false "
+            "(P5/D-8c-3)");
+      }
+    }
+
     if (doc.contains("enabled_stages")) {
       const json& stages = doc["enabled_stages"];
       if (!stages.is_array()) {
@@ -284,6 +369,21 @@ ColmapConfig ColmapConfig::FromJson(const std::string& config_json) {
         }
         config.enabled_stages.push_back(name);
       }
+    }
+
+    // P9/D6 (8c): a bundle_adjuster run REQUIRES a pinned non-empty seed — a
+    // bundle_adjuster plan without one is rejected here, at configuration
+    // validation (the seam also fails closed defensively). The requirement
+    // keys on the ENABLED stage (the config round-trips the full
+    // bundle_adjuster section even for plans that don't run it, so section
+    // presence alone would break the non-BA config round-trip).
+    const bool runs_bundle_adjuster =
+        std::find(config.enabled_stages.begin(), config.enabled_stages.end(),
+                  "bundle_adjuster") != config.enabled_stages.end();
+    if (runs_bundle_adjuster && config.seed.empty()) {
+      throw Violation(
+          "a bundle_adjuster plan requires a non-empty 'seed': 8c is "
+          "deterministic only with a pinned random seed (D6/P9)");
     }
 
     return config;
@@ -316,6 +416,16 @@ std::string ColmapConfig::ToJson() const {
       {"ba_min_num_residuals_for_multithreading",
        mapper.ba_min_num_residuals_for_multithreading},
   };
+  doc["bundle_adjuster"] = {
+      {"loss_function", bundle_adjuster.loss_function},
+      {"loss_scale_px", bundle_adjuster.loss_scale_px},
+      {"max_num_iterations", bundle_adjuster.max_num_iterations},
+      {"refine_focal_length", bundle_adjuster.refine_focal_length},
+      {"refine_principal_point", bundle_adjuster.refine_principal_point},
+      {"refine_extra_params", bundle_adjuster.refine_extra_params},
+      {"refine_extrinsics", bundle_adjuster.refine_extrinsics},
+      {"refine_intrinsics", bundle_adjuster.refine_intrinsics},
+  };
   doc["enabled_stages"] = enabled_stages;
   return doc.dump();
 }
@@ -325,9 +435,12 @@ std::vector<std::string> ColmapConfig::Plan() const {
       ColmapStageName(ColmapStage::kFeatureExtractor),
       ColmapStageName(ColmapStage::kMatcher),
       ColmapStageName(ColmapStage::kMapper),
+      ColmapStageName(ColmapStage::kBundleAdjuster),
   };
   if (enabled_stages.empty()) {
-    return order;
+    // Pre-8c default plan stays the frozen three-stage chain; bundle_adjuster
+    // runs only when explicitly requested (8c / P3-impl-8c P16).
+    return {order[0], order[1], order[2]};
   }
   std::vector<std::string> plan;
   plan.reserve(enabled_stages.size());
@@ -371,6 +484,26 @@ std::vector<std::string> ColmapConfig::BuildStageArgs(ColmapStage stage) const {
           "--Mapper.ba_min_num_residuals_for_multithreading",
           std::to_string(mapper.ba_min_num_residuals_for_multithreading),
       };
+    case ColmapStage::kBundleAdjuster: {
+      // Fixed-intrinsics pins are always 0 (D3/D-8c-3). The robust-loss SCALE
+      // is data-derived (the D5 threshold of the v3 observation set, P8) and
+      // therefore NOT part of this pure config transform: the seam appends
+      // --BundleAdjustment.robust_loss_scale after computing it.
+      const char* loss = "SOFT_L1";
+      if (bundle_adjuster.loss_function == "Trivial") loss = "TRIVIAL";
+      if (bundle_adjuster.loss_function == "Cauchy") loss = "CAUCHY";
+      return {
+          "--BundleAdjustment.max_num_iterations",
+          std::to_string(bundle_adjuster.max_num_iterations),
+          "--BundleAdjustment.robust_loss_function", loss,
+          "--BundleAdjustment.refine_focal_length", "0",
+          "--BundleAdjustment.refine_principal_point", "0",
+          "--BundleAdjustment.refine_extra_params", "0",
+          "--BundleAdjustment.refine_extrinsics",
+          bundle_adjuster.refine_extrinsics ? "1" : "0",
+          "--BundleAdjustment.refine_intrinsics", "0",
+      };
+    }
   }
   return {};
 }

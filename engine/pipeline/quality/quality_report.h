@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 
+#include "core/geometry/reprojection.h"
 #include "engine/engine_common.h"
 #include "engine/task/task_types.h"
 
@@ -25,10 +26,13 @@ const char* QualityVerdictName(QualityVerdict verdict) noexcept;
 // Known metric groups (quality-report specification §3). Typed so the
 // evaluator can normalize them against thresholds; the JSON schema stays open
 // for additive extensions (RFC-0005 §5.5 Schema Evolution Policy).
-struct ReprojectionMetrics {
-  double rmse_px = 0.0;        // root-mean-square reprojection error (px)
-  double mean_error_px = 0.0;  // mean reprojection error (px)
-};
+//
+// P3-impl-8a (D4): the reprojection group is the canonical
+// spatial::core::geometry::ReprojectionMetrics type — the deterministic
+// residual evaluator output (rmse_px, mean_error_px, median_error_px,
+// threshold_px, inlier/outlier counts, per-image aggregates, per-point
+// distribution), so Core and the report never drift apart.
+using ReprojectionMetrics = spatial::core::geometry::ReprojectionMetrics;
 
 struct CoverageMetrics {
   double completeness_pct = 0.0;  // fraction of expected extent with output (%)

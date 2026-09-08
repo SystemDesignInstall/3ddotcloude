@@ -214,9 +214,4 @@ spatial::core::Reconstruction SparseModelToReconstruction(
     const ReconstructionProvenanceInfo& provenance,
     const std::map<std::string, std::string>& frame_id_map = {});
 
-// Canonical JSON serialization of a Reconstruction v2 document.
-// Deterministic field order and number formatting (ADR-020).
-// The output conforms to schemas/json/reconstruction.schema.json.
-std::string ReconstructionToJson(const spatial::core::Reconstruction& rec);
-
 }  // namespace spatial::adapters::colmap

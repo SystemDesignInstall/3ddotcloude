@@ -28,9 +28,11 @@ configure_file(colmap_adapter_build_info.h.in
 
 add_library(spatial_colmap_adapter STATIC
   colmap_adapter.cpp
+  colmap_bundle_adjustment_adapter.cpp
   colmap_cli.cpp
   colmap_config.cpp
   colmap_converter.cpp
+  colmap_model_writer.cpp
   colmap_trajectory_adapter.cpp
 )
 

@@ -34,6 +34,8 @@ std::string StageSubcommand(ColmapStage stage) {
       return "exhaustive_matcher";
     case ColmapStage::kMapper:
       return "mapper";
+    case ColmapStage::kBundleAdjuster:
+      return "bundle_adjuster";
   }
   return "unknown";
 }
@@ -75,6 +77,14 @@ std::vector<std::string> BuildStageCommand(
       command.push_back("--output_path");
       command.push_back(ws + "/sparse");
       break;
+    case ColmapStage::kBundleAdjuster:
+      // The seam seeds the input model into sparse/0 and consumes the
+      // refined model from sparse_ba (P3-impl-8c P16).
+      command.push_back("--input_path");
+      command.push_back(SparseModelDir(workspace).string());
+      command.push_back("--output_path");
+      command.push_back(ws + "/sparse_ba");
+      break;
   }
   const std::vector<std::string> tokens = StageArgTokens(config, stage);
   command.insert(command.end(), tokens.begin(), tokens.end());
@@ -86,9 +96,10 @@ std::filesystem::path SparseModelDir(
   return workspace / "sparse" / "0";
 }
 
-std::vector<std::filesystem::path> DiscoverNativeModelFiles(
-    const std::filesystem::path& workspace) {
-  const std::filesystem::path model_dir = SparseModelDir(workspace);
+namespace {
+
+std::vector<std::filesystem::path> DiscoverNativeModelFilesIn(
+    const std::filesystem::path& model_dir) {
   const std::vector<std::filesystem::path> files = {
       model_dir / "cameras.bin",
       model_dir / "images.bin",
@@ -101,7 +112,7 @@ std::vector<std::filesystem::path> DiscoverNativeModelFiles(
     }
   }
   if (present == 0) {
-    return {};  // the mapper produced no reconstruction
+    return {};  // the backend produced no reconstruction
   }
   if (present != files.size()) {
     throw spatial::core::AdapterError(
@@ -113,6 +124,18 @@ std::vector<std::filesystem::path> DiscoverNativeModelFiles(
         "converted or emitted.");
   }
   return files;
+}
+
+}  // namespace
+
+std::vector<std::filesystem::path> DiscoverNativeModelFiles(
+    const std::filesystem::path& workspace) {
+  return DiscoverNativeModelFilesIn(SparseModelDir(workspace));
+}
+
+std::vector<std::filesystem::path> DiscoverBundleAdjustmentModelFiles(
+    const std::filesystem::path& workspace) {
+  return DiscoverNativeModelFilesIn(workspace / "sparse_ba");
 }
 
 }  // namespace spatial::adapters::colmap

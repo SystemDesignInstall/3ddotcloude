@@ -4,6 +4,8 @@
 // right-handed convention (docs/architecture/coordinate-systems.md).
 // Rotation is stored as a Quaternion; the platform stores no Euler angles.
 
+#include <array>
+
 #include <Eigen/Geometry>
 
 #include "core/geometry/quaternion.h"
@@ -16,6 +18,13 @@ class SE3 {
           translation_(Eigen::Vector3d::Zero()) {}
   SE3(Quaternion rotation, Eigen::Vector3d translation)
       : rotation_(rotation), translation_(translation) {}
+  // std::array form: lets domain code (core/trajectory, engine) build SE3 from
+  // canonical position_xyz arrays without naming an Eigen type (domain-types
+  // gate forbids bare Eigen tokens outside core/geometry and the adapters).
+  SE3(Quaternion rotation, const std::array<double, 3>& translation)
+      : rotation_(rotation),
+        translation_(Eigen::Vector3d(translation[0], translation[1],
+                                     translation[2])) {}
 
   static SE3 Identity() {
     return SE3(Quaternion::Identity(), Eigen::Vector3d::Zero());
@@ -23,6 +32,12 @@ class SE3 {
 
   const Quaternion& rotation() const noexcept { return rotation_; }
   const Eigen::Vector3d& translation() const noexcept { return translation_; }
+
+  // Canonical std::array form of translation(); the inverse of the
+  // std::array constructor above.
+  std::array<double, 3> TranslationArray() const noexcept {
+    return {translation_.x(), translation_.y(), translation_.z()};
+  }
 
   // Homogeneous form. For adapter boundaries only; domain code composes SE3.
   Eigen::Matrix4d ToMatrix() const {

@@ -563,5 +563,122 @@ TEST_F(ReconstructionDbTest, SetStatusPersistsAfterReopen) {
   EXPECT_EQ(all[0].coordinate_frame, "reconstruction_0");
 }
 
+TEST_F(ReconstructionDbTest, WriteTransactionCommitPersistsAtomically) {
+  // Mirrors the 8c pipeline write path: the v4 add + v3 supersede are one
+  // transaction; COMMIT makes both durable.
+  ReconstructionRow v3;
+  v3.reconstruction_id = GenerateUuid();
+  v3.scene_id = scene_.scene_id;
+  v3.coordinate_frame = "reconstruction_0";
+  v3.status = "succeeded";
+  v3.created_at_ns = 1000;
+  v3.document_json = "{}";
+  db_.AddReconstruction(v3);
+
+  ReconstructionRow v4;
+  v4.reconstruction_id = GenerateUuid();
+  v4.scene_id = scene_.scene_id;
+  v4.coordinate_frame = "reconstruction_0";
+  v4.status = "succeeded";
+  v4.created_at_ns = 2000;
+  v4.document_json = "{}";
+
+  {
+    MetadataDb::WriteTransaction txn(db_);
+    db_.AddReconstruction(v4);
+    db_.SetReconstructionStatus(v3.reconstruction_id, "superseded");
+    txn.Commit();
+  }
+
+  const auto rows = db_.FindReconstructionsByScene(scene_.scene_id);
+  ASSERT_EQ(rows.size(), 2u);
+  // v4 inserted ...
+  const auto* v4_row = &rows[0];
+  const auto* v3_row = &rows[1];
+  if (v3_row->reconstruction_id == v4.reconstruction_id) {
+    std::swap(v3_row, v4_row);
+  }
+  EXPECT_EQ(v4_row->reconstruction_id, v4.reconstruction_id);
+  EXPECT_EQ(v4_row->status, "succeeded");
+  EXPECT_EQ(v3_row->reconstruction_id, v3.reconstruction_id);
+  EXPECT_EQ(v3_row->status, "superseded");
+}
+
+TEST_F(ReconstructionDbTest, WriteTransactionRollbackDiscardsWholeBatch) {
+  // P12: a failure inside the transaction AFTER the v4 insert must not leave a
+  // dangling active v4 beside a still-succeeded v3 — the whole batch rolls back.
+  ReconstructionRow v3;
+  v3.reconstruction_id = GenerateUuid();
+  v3.scene_id = scene_.scene_id;
+  v3.coordinate_frame = "reconstruction_0";
+  v3.status = "succeeded";
+  v3.created_at_ns = 1000;
+  v3.document_json = "{}";
+  db_.AddReconstruction(v3);
+
+  ReconstructionRow v4;
+  v4.reconstruction_id = GenerateUuid();
+  v4.scene_id = scene_.scene_id;
+  v4.coordinate_frame = "reconstruction_0";
+  v4.status = "succeeded";
+  v4.created_at_ns = 2000;
+  v4.document_json = "{}";
+
+  {
+    MetadataDb::WriteTransaction txn(db_);
+    db_.AddReconstruction(v4);
+    // First trap: the v3 supersede succeeds inside the transaction ...
+    db_.SetReconstructionStatus(v3.reconstruction_id, "superseded");
+    // ... then a second write fails (terminal "superseded" -> "succeeded").
+    EXPECT_THROW(db_.SetReconstructionStatus(v3.reconstruction_id, "succeeded"),
+                 StorageError);
+    txn.Rollback();
+  }
+
+  // Atomicity: neither the v4 insert nor the earlier supersede survived.
+  const auto rows = db_.FindReconstructionsByScene(scene_.scene_id);
+  ASSERT_EQ(rows.size(), 1u);
+  EXPECT_EQ(rows[0].reconstruction_id, v3.reconstruction_id);
+  EXPECT_EQ(rows[0].status, "succeeded");
+}
+
+TEST_F(ReconstructionDbTest, WriteTransactionScopeExitRollsBack) {
+  ReconstructionRow v3;
+  v3.reconstruction_id = GenerateUuid();
+  v3.scene_id = scene_.scene_id;
+  v3.coordinate_frame = "reconstruction_0";
+  v3.status = "succeeded";
+  v3.created_at_ns = 1000;
+  v3.document_json = "{}";
+  db_.AddReconstruction(v3);
+
+  ReconstructionRow v4;
+  v4.reconstruction_id = GenerateUuid();
+  v4.scene_id = scene_.scene_id;
+  v4.coordinate_frame = "reconstruction_0";
+  v4.status = "succeeded";
+  v4.created_at_ns = 2000;
+  v4.document_json = "{}";
+
+  EXPECT_THROW(
+      {
+        MetadataDb::WriteTransaction txn(db_);
+        db_.AddReconstruction(v4);
+        db_.SetReconstructionStatus(v3.reconstruction_id, "superseded");
+        throw StorageError(ErrorCode::kStorageReadOnly,
+                           "injected failure before commit", {}, false, "");
+      },
+      StorageError);
+
+  const auto rows = db_.FindReconstructionsByScene(scene_.scene_id);
+  ASSERT_EQ(rows.size(), 1u);
+  EXPECT_EQ(rows[0].status, "succeeded");
+}
+
+TEST_F(ReconstructionDbTest, WriteTransactionReadOnlyRejected) {
+  MetadataDb ro = MetadataDb::OpenReadOnly(path_);
+  EXPECT_THROW(MetadataDb::WriteTransaction txn(ro), StorageError);
+}
+
 }  // namespace
 }  // namespace spatial::core

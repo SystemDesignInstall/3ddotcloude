@@ -177,6 +177,28 @@ QualityReport EvaluateQuality(const std::string& pipeline_hash,
 }
 
 std::string QualityReportToJson(const QualityReport& report) {
+  auto per_image_json = [&report]() {
+    json j = json::array();
+    for (const auto& img : report.reprojection.per_image) {
+      j.push_back({{"image_id", img.image_id},
+                   {"rmse_px", img.rmse_px},
+                   {"mean_error_px", img.mean_error_px},
+                   {"count", img.total_count},
+                   {"inlier_count", img.inlier_count},
+                   {"outlier_count", img.outlier_count}});
+    }
+    return j;
+  };
+  auto per_point_json = [&report]() {
+    json j = json::array();
+    for (const auto& pt : report.reprojection.per_point) {
+      j.push_back({{"point3d_id", pt.point3d_id},
+                   {"error_px", pt.error_px},
+                   {"count", pt.total_count},
+                   {"inlier_count", pt.inlier_count}});
+    }
+    return j;
+  };
   const json j = {
       {"pipeline_hash", report.pipeline_hash},
       {"stage_id", report.stage_id},
@@ -190,7 +212,14 @@ std::string QualityReportToJson(const QualityReport& report) {
       {"metrics",
        {{"reprojection",
          {{"rmse_px", report.reprojection.rmse_px},
-          {"mean_error_px", report.reprojection.mean_error_px}}},
+          {"mean_error_px", report.reprojection.mean_error_px},
+          {"median_error_px", report.reprojection.median_error_px},
+          {"threshold_px", report.reprojection.threshold_px},
+          {"inlier_count", report.reprojection.inlier_count},
+          {"outlier_count", report.reprojection.outlier_count},
+          {"total_count", report.reprojection.total_count},
+          {"per_image", per_image_json()},
+          {"per_point", per_point_json()}}},
         {"coverage",
          {{"completeness_pct", report.coverage.completeness_pct},
           {"baseline_ratio", report.coverage.baseline_ratio}}},
@@ -252,6 +281,42 @@ QualityReport QualityReportFromJson(const std::string& report_json) {
     report.reprojection.rmse_px = reprojection.value("rmse_px", 0.0);
     report.reprojection.mean_error_px =
         reprojection.value("mean_error_px", 0.0);
+    report.reprojection.median_error_px =
+        reprojection.value("median_error_px", 0.0);
+    report.reprojection.threshold_px =
+        reprojection.value("threshold_px", 0.0);
+    report.reprojection.inlier_count =
+        reprojection.value("inlier_count", 0);
+    report.reprojection.outlier_count =
+        reprojection.value("outlier_count", 0);
+    report.reprojection.total_count =
+        reprojection.value("total_count", 0);
+    const auto per_image_values = reprojection.value("per_image", json::array());
+    if (per_image_values.is_array()) {
+      for (const auto& element : per_image_values) {
+        if (!element.is_object()) continue;
+        spatial::core::geometry::PerImageReprojection img;
+        img.image_id = element.value("image_id", 0u);
+        img.rmse_px = element.value("rmse_px", 0.0);
+        img.mean_error_px = element.value("mean_error_px", 0.0);
+        img.total_count = element.value("count", 0);
+        img.inlier_count = element.value("inlier_count", 0);
+        img.outlier_count = element.value("outlier_count", 0);
+        report.reprojection.per_image.push_back(img);
+      }
+    }
+    const auto per_point_values = reprojection.value("per_point", json::array());
+    if (per_point_values.is_array()) {
+      for (const auto& element : per_point_values) {
+        if (!element.is_object()) continue;
+        spatial::core::geometry::PerPointReprojection pt;
+        pt.point3d_id = element.value("point3d_id", 0u);
+        pt.error_px = element.value("error_px", 0.0);
+        pt.total_count = element.value("count", 0);
+        pt.inlier_count = element.value("inlier_count", 0);
+        report.reprojection.per_point.push_back(pt);
+      }
+    }
   }
   const auto coverage =
       metrics.is_object() ? metrics.value("coverage", json::object())

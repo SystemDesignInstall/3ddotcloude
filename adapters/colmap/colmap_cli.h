@@ -54,4 +54,11 @@ std::filesystem::path SparseModelDir(
 std::vector<std::filesystem::path> DiscoverNativeModelFiles(
     const std::filesystem::path& workspace);
 
+// Discovers a complete native COLMAP model under <ws>/sparse_ba — the output
+// of a `bundle_adjuster` run (P3-impl-8c; the seam seeds the workspace from
+// SparseModelDir and reads the refined model back from here). Same contract
+// as DiscoverNativeModelFiles: three files or fail closed.
+std::vector<std::filesystem::path> DiscoverBundleAdjustmentModelFiles(
+    const std::filesystem::path& workspace);
+
 }  // namespace spatial::adapters::colmap

@@ -45,9 +45,7 @@ inline geometry::SE3 MakeCameraPose(const std::array<double, 3>& position_xyz,
                                     const std::array<double, 4>& rotation_xyzw) {
   geometry::Quaternion rot(rotation_xyzw[0], rotation_xyzw[1],
                            rotation_xyzw[2], rotation_xyzw[3]);
-  return geometry::SE3(rot.Normalized(),
-                       Eigen::Vector3d(position_xyz[0], position_xyz[1],
-                                       position_xyz[2]));
+  return geometry::SE3(rot.Normalized(), position_xyz);
 }
 
 inline geometry::SE3 PoseFromNode(const TrajectoryPoseNode& n) {
@@ -67,8 +65,8 @@ inline RelativePose RelativePoseBetween(const TrajectoryPoseNode& a,
   const geometry::SE3 Tb = PoseFromNode(b);
   const geometry::SE3 Tab = Ta.Inverse() * Tb;
   const geometry::Quaternion r = Tab.rotation();
-  const Eigen::Vector3d t = Tab.translation();
-  return {{t.x(), t.y(), t.z()},
+  const std::array<double, 3> t = Tab.TranslationArray();
+  return {{t[0], t[1], t[2]},
           {r.x(), r.y(), r.z(), r.w()}};
 }
 

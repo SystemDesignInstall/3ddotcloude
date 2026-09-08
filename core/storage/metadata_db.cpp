@@ -1827,6 +1827,47 @@ std::vector<ImportRejectionRow> MetadataDb::FindImportRejectionsBySession(
 
 // --- P2.5 reconstruction (migration 0007, D-CRM-15) ---
 
+MetadataDb::WriteTransaction::WriteTransaction(MetadataDb& db) : db_(&db) {
+  if (db_->read_only_) {
+    throw StorageError(ErrorCode::kStorageReadOnly,
+                       "cannot begin a write transaction on a read-only "
+                       "project",
+                       {}, false, "Open the project for writing to modify it.");
+  }
+  db_->Exec("BEGIN IMMEDIATE TRANSACTION;", "begin write transaction");
+}
+
+MetadataDb::WriteTransaction::~WriteTransaction() noexcept {
+  if (!done_) {
+    try {
+      db_->Exec("ROLLBACK;", "rollback write transaction");
+    } catch (...) {
+      // Destructor during stack unwinding must not throw.
+    }
+  }
+}
+
+void MetadataDb::WriteTransaction::Commit() {
+  if (done_) {
+    return;
+  }
+  db_->Exec("COMMIT;", "commit write transaction");
+  done_ = true;
+}
+
+void MetadataDb::WriteTransaction::Rollback() noexcept {
+  if (done_) {
+    return;
+  }
+  try {
+    db_->Exec("ROLLBACK;", "rollback write transaction");
+  } catch (...) {
+    // Explicit rollback failure is reported to the user by the caller's
+    // primary error; swallowing keeps the noexcept guarantee.
+  }
+  done_ = true;
+}
+
 void MetadataDb::AddReconstruction(const ReconstructionRow& row) {
   if (read_only_) {
     throw StorageError(ErrorCode::kStorageReadOnly,

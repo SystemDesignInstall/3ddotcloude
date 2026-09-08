@@ -13,14 +13,19 @@
 #include <array>
 #include <cstdint>
 #include <string>
+#include <vector>
 
+#include "core/artifacts/artifact_manifest.h"
 #include "core/storage/metadata_db.h"
 #include "core/trajectory/optimization.h"
+#include "core/trajectory/optimization_result_json.h"
 #include "core/trajectory/optimizer.h"
 #include "core/trajectory/pose_graph.h"
 #include "core/trajectory/pose_graph_helpers.h"
+#include "core/trajectory/pose_graph_json.h"
 #include "core/trajectory/trajectory.h"
 #include "core/utils/uuid.h"
+#include "engine_build_info.h"
 
 namespace spatial::engine {
 
@@ -69,7 +74,8 @@ spatial::core::LoopClosureRow ToLoopClosureRow(const spatial::core::LoopClosure&
   return row;
 }
 
-spatial::core::PoseGraphRow ToPoseGraphRow(const spatial::core::PoseGraph& g) {
+spatial::core::PoseGraphRow ToPoseGraphRow(const spatial::core::PoseGraph& g,
+                                           const std::string& cas_content_hash) {
   spatial::core::PoseGraphRow row;
   row.graph_id = spatial::core::ParseUuid(g.graph_id);
   row.trajectory_id = spatial::core::ParseUuid(g.trajectory_id);
@@ -81,12 +87,13 @@ spatial::core::PoseGraphRow ToPoseGraphRow(const spatial::core::PoseGraph& g) {
   row.loop_closure_edge_count = g.loop_closure_edge_count;
   row.prior_edge_count = g.prior_edge_count;
   row.created_at_ns = g.created_at_ns;
-  row.document_json = g.graph_id;  // full graph document lives in CAS; identity placeholder
+  row.document_json = cas_content_hash;
   return row;
 }
 
 spatial::core::OptimizationResultRow ToOptimizationResultRow(
-    const spatial::core::OptimizationResult& r) {
+    const spatial::core::OptimizationResult& r,
+    const std::string& cas_content_hash) {
   spatial::core::OptimizationResultRow row;
   row.result_id = spatial::core::ParseUuid(r.result_id);
   row.graph_id = spatial::core::ParseUuid(r.graph_id);
@@ -97,8 +104,26 @@ spatial::core::OptimizationResultRow ToOptimizationResultRow(
   row.final_error = r.final_error;
   row.error_reduction = r.error_reduction;
   row.created_at_ns = r.created_at_ns;
-  row.document_json = r.result_id;  // full document lives in CAS; identity placeholder
+  row.document_json = cas_content_hash;
   return row;
+}
+
+// Writes a canonical document as a CAS artifact and returns the content hash.
+std::string WriteCasArtifact(spatial::core::ArtifactStore& store,
+                             const std::string& payload,
+                             const std::string& artifact_type,
+                             const std::string& configuration_hash) {
+  const std::vector<std::uint8_t> bytes(payload.begin(), payload.end());
+  spatial::core::ArtifactManifest manifest;
+  manifest.artifact_uuid = spatial::core::GenerateUuid();
+  manifest.type = artifact_type;
+  manifest.schema_version = 1;
+  manifest.producer = {"spatial-platform", kEngineVersion, kEngineGitCommit};
+  manifest.configuration_hash = configuration_hash;
+  manifest.mime_type = "application/json";
+  manifest.file_size = static_cast<std::int64_t>(bytes.size());
+  const auto written = store.Put(bytes, manifest);
+  return written.content_hash;
 }
 
 }  // namespace
@@ -158,8 +183,20 @@ LoopClosureOptimizePipelineResult LoopClosureOptimizePipeline(
   out.graph = assembly.graph;
   out.graph_id = graph_id;
 
-  // Persist the PoseGraph row idempotently.
-  input.db->UpsertPoseGraph(ToPoseGraphRow(assembly.graph));
+  // Persist the PoseGraph CAS document and DB row.
+  {
+    const std::string graph_doc = spatial::core::PoseGraphToJson(
+        assembly.graph, assembly.graph_nodes, assembly.graph_edges);
+    std::string graph_cas_hash;
+    if (input.store != nullptr) {
+      graph_cas_hash = WriteCasArtifact(*input.store, graph_doc, "pose_graph",
+                                        input.configuration_hash);
+    } else {
+      graph_cas_hash = graph_id;
+    }
+    input.db->UpsertPoseGraph(
+        ToPoseGraphRow(assembly.graph, graph_cas_hash));
+  }
 
   // 4. Run the optimizer through the seam.
   spatial::core::PoseOptimizationInput opt_in;
@@ -189,9 +226,6 @@ LoopClosureOptimizePipelineResult LoopClosureOptimizePipeline(
   opt_result.provenance.optimizer.version = "seam";
   opt_result.provenance.adapter_version = "0.1.0";
 
-  // Persist the OptimizationResult row idempotently (stable identity).
-  input.db->UpsertOptimizationResult(ToOptimizationResultRow(opt_result));
-
   // 6. Map the seam's corrected nodes to the optimizer-typed consumer output.
   out.optimized_nodes = seam_out.optimized_nodes;
   out.optimized.reserve(seam_out.optimized_nodes.size());
@@ -205,6 +239,22 @@ LoopClosureOptimizePipelineResult LoopClosureOptimizePipeline(
     o.covariance_position = n.covariance_position;
     o.covariance_rotation = n.covariance_rotation;
     out.optimized.push_back(std::move(o));
+  }
+
+  // Persist the OptimizationResult CAS document and DB row.
+  {
+    const std::string opt_doc = spatial::core::OptimizationResultToJson(
+        opt_result, out.optimized);
+    std::string opt_cas_hash;
+    if (input.store != nullptr) {
+      opt_cas_hash = WriteCasArtifact(*input.store, opt_doc,
+                                      "optimization_result",
+                                      input.configuration_hash);
+    } else {
+      opt_cas_hash = result_id;
+    }
+    input.db->UpsertOptimizationResult(
+        ToOptimizationResultRow(opt_result, opt_cas_hash));
   }
   out.optimization = opt_result;
   out.result_id = result_id;

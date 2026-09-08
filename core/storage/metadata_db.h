@@ -464,6 +464,17 @@ class MetadataDb {
   void SetReconstructionStatus(const Uuid& reconstruction_id,
                                const std::string& new_status);
 
+  // RAII write transaction on the same connection (BEGIN IMMEDIATE ...
+  // COMMIT/ROLLBACK). Brackets a multi-statement write so no partial state
+  // survives a failure between statements (P12 no-partial-results) — e.g. the
+  // bundle-adjustment revision add immediately followed by the supersede of
+  // the v3 row. Commit() makes the writes durable; otherwise the destructor
+  // rolls back. Opens BEGIN IMMEDIATE on construction, so it must be the
+  // outermost transaction: do NOT call methods that themselves begin a
+  // transaction (e.g. FindOrCreateScene/CreateSceneVersion) while it is live.
+  class WriteTransaction;
+  friend class WriteTransaction;
+
   // P3-impl-1 (D-TRJ-01): canonical trajectory entity (migration 0008).
   void AddTrajectory(const TrajectoryRow& row);
   std::optional<TrajectoryRow> QueryLatestTrajectoryBySession(
@@ -529,6 +540,24 @@ class MetadataDb {
 
   sqlite3* db_ = nullptr;
   bool read_only_ = false;
+};
+
+// Nested RAII transaction; declared inside MetadataDb above, defined here with
+// full access to the enclosing class's private members (C++11 nested-class
+// access rule). See the in-class comment for usage constraints.
+class MetadataDb::WriteTransaction {
+ public:
+  explicit WriteTransaction(MetadataDb& db);
+  WriteTransaction(const WriteTransaction&) = delete;
+  WriteTransaction& operator=(const WriteTransaction&) = delete;
+  ~WriteTransaction() noexcept;
+
+  void Commit();
+  void Rollback() noexcept;
+
+ private:
+  MetadataDb* db_ = nullptr;
+  bool done_ = false;
 };
 
 }  // namespace spatial::core

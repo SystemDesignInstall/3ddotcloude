@@ -27,6 +27,7 @@
 #include "adapters/colmap/colmap_converter.h"
 #include "core/errors/project_error.h"
 #include "core/reconstruction/reconstruction.h"
+#include "core/reconstruction/reconstruction_json.h"
 #include "schema_check.h"
 
 namespace spatial::adapters::colmap {
@@ -514,7 +515,7 @@ TEST_F(ColmapConverterV2Test, EmptyModelProducesValidV2Document) {
   EXPECT_TRUE(rec.images.empty());
   EXPECT_TRUE(rec.points3D.empty());
 
-  const json doc = json::parse(ReconstructionToJson(rec));
+  const json doc = json::parse(spatial::core::ReconstructionToJson(rec));
   EXPECT_EQ(doc["schema_version"].get<int>(), 2);
   EXPECT_EQ(doc["reconstruction_id"].get<std::string>(), "rec-uuid-001");
   EXPECT_EQ(doc["scene_id"].get<std::string>(), "scene-uuid-001");
@@ -969,7 +970,7 @@ TEST_F(ColmapConverterV2Test, V2JsonConformsToRequiredFields) {
       model, "rec-uuid-001", "scene-uuid-001", {"session-uuid-001"},
       "reconstruction_0", prov);
 
-  const json doc = json::parse(ReconstructionToJson(rec));
+  const json doc = json::parse(spatial::core::ReconstructionToJson(rec));
 
   // Required top-level fields.
   EXPECT_TRUE(doc.contains("schema_version"));
@@ -1070,7 +1071,7 @@ TEST_F(ColmapConverterV2Test, ProvenanceInfoTransferredCorrectly) {
   EXPECT_EQ(rec.provenance.finished_at_ns, 2000000000);
   EXPECT_EQ(rec.provenance.duration_ns, 1000000000);
 
-  const json doc = json::parse(ReconstructionToJson(rec));
+  const json doc = json::parse(spatial::core::ReconstructionToJson(rec));
   EXPECT_EQ(doc["provenance"]["backend"]["name"], "colmap");
   EXPECT_EQ(doc["provenance"]["configuration_hash"], std::string(64, 'a'));
   EXPECT_EQ(doc["provenance"]["input_artifact_hashes"].size(), 2u);
@@ -1110,7 +1111,7 @@ TEST_F(ColmapConverterV2Test, ReconstructionToJsonDeterministic) {
   spatial::core::Reconstruction rec2 = SparseModelToReconstruction(
       model, "r1", "s1", {"ses1"}, "reconstruction_0", prov);
 
-  EXPECT_EQ(ReconstructionToJson(rec1), ReconstructionToJson(rec2));
+  EXPECT_EQ(spatial::core::ReconstructionToJson(rec1), spatial::core::ReconstructionToJson(rec2));
 }
 
 // ---------------------------------------------------------------------------
@@ -1310,7 +1311,7 @@ TEST_F(ColmapConverterV2Test, ConverterOutputPassesSchemaValidation) {
       {"00000000-0000-0000-0000-000000000003"},
       "reconstruction_0", prov);
 
-  const json doc = json::parse(ReconstructionToJson(rec));
+  const json doc = json::parse(spatial::core::ReconstructionToJson(rec));
   const auto resolved = schema_helpers::ResolveRefs(
       schema_helpers::LoadReconstructionSchema());
   std::vector<std::string> violations;
@@ -1353,7 +1354,7 @@ TEST_F(ColmapConverterV2Test, ConverterOutputWithEmptyFrameIdPassesSchema) {
       {"00000000-0000-0000-0000-000000000003"},
       "reconstruction_0", prov);
 
-  const json doc = json::parse(ReconstructionToJson(rec));
+  const json doc = json::parse(spatial::core::ReconstructionToJson(rec));
 
   // frame_id must NOT be present when empty.
   EXPECT_FALSE(doc["images"][0].contains("frame_id"))

@@ -21,7 +21,10 @@
 
 #include <gtest/gtest.h>
 
+#include <nlohmann/json.hpp>
+
 #include "adapters/gtsam/gtsam_optimizer_adapter.h"
+#include "core/artifacts/artifact_store.h"
 #include "core/storage/metadata_db.h"
 #include "core/trajectory/loop_closure.h"
 #include "core/trajectory/metric_basis.h"
@@ -244,6 +247,78 @@ TEST_F(LoopClosureOptimizePipelineTest, RepeatedProcessingIsIdempotent) {
             spatial::core::ParseUuid(closure.closure_id));
   EXPECT_NEAR(closures[0].spatial_separation_m, first.spatial_separation_m,
               1e-9);
+}
+
+// CAS persistence regression (P3-Production-E2E §3.3, §4.3, R2): when a real
+// ArtifactStore is injected, the PoseGraph/OptimizationResult full documents
+// must be written to CAS and their content hashes stored in document_json --
+// closing the lineage gap where only the *id* was stored and the full document
+// was never produced. Each document must round-trip against its canonical
+// schema and be present in the store under its recorded hash.
+TEST_F(LoopClosureOptimizePipelineTest,
+       CasDocumentsWrittenAndContentHashesPersisted) {
+  LoopClosure closure = MakeClosure(nodes_, trajectory_.trajectory_id,
+                                    "00000000-0000-0000-0000-0000000000C4");
+
+  spatial::core::ArtifactStore store(root_ / "artifacts", *db_);
+  spatial::adapters::gtsam::GtsamTrajectoryOptimizer seam;
+
+  LoopClosureOptimizePipelineInput in;
+  in.trajectory = &trajectory_;
+  in.trajectory_nodes = &nodes_;
+  in.closure = closure;
+  in.metric_basis = MakeBasis();
+  in.configuration_hash = "cfg-hash";
+  in.optimizer = &seam;
+  in.db = &*db_;
+  in.store = &store;
+
+  const LoopClosureOptimizePipelineResult out = LoopClosureOptimizePipeline(in);
+  ASSERT_TRUE(out.ran);
+
+  // PoseGraph row's document_json is a REAL CAS content hash (not the fallback
+  // graph id), and the stored document is fetchable under that hash.
+  const auto graphs = db_->FindPoseGraphsByTrajectory(
+      spatial::core::ParseUuid(trajectory_.trajectory_id));
+  ASSERT_EQ(graphs.size(), 1u);
+  const std::string graph_hash = graphs[0].document_json;
+  EXPECT_NE(graph_hash, out.graph_id);
+  EXPECT_TRUE(store.Has(graph_hash));
+  const auto graph_payload = store.Get(graph_hash);
+  ASSERT_TRUE(graph_payload.has_value());
+  const nlohmann::json graph_doc =
+      nlohmann::json::parse(std::string(graph_payload->begin(),
+                                        graph_payload->end()));
+  EXPECT_EQ(graph_doc["schema_version"].get<int>(), 1);
+  EXPECT_EQ(graph_doc["graph_id"].get<std::string>(), out.graph_id);
+  EXPECT_EQ(graph_doc["trajectory_id"].get<std::string>(),
+            trajectory_.trajectory_id);
+
+  // OptimizationResult row likewise: content hash in document_json, document
+  // in CAS, canonical schema_version.
+  const auto opts = db_->FindOptimizationResultsByTrajectory(
+      spatial::core::ParseUuid(trajectory_.trajectory_id));
+  ASSERT_EQ(opts.size(), 1u);
+  const std::string opt_hash = opts[0].document_json;
+  EXPECT_NE(opt_hash, out.result_id);
+  EXPECT_TRUE(store.Has(opt_hash));
+  const auto opt_payload = store.Get(opt_hash);
+  ASSERT_TRUE(opt_payload.has_value());
+  const nlohmann::json opt_doc =
+      nlohmann::json::parse(std::string(opt_payload->begin(),
+                                        opt_payload->end()));
+  EXPECT_EQ(opt_doc["schema_version"].get<int>(), 1);
+  EXPECT_EQ(opt_doc["result_id"].get<std::string>(), out.result_id);
+  EXPECT_EQ(opt_doc["graph_id"].get<std::string>(), out.graph_id);
+
+  // Idempotent re-run with the store still yields the SAME CAS hashes (content
+  // addressing dedupes identical documents -> no duplicates).
+  const LoopClosureOptimizePipelineResult second = LoopClosureOptimizePipeline(in);
+  ASSERT_TRUE(second.ran);
+  const auto graphs2 = db_->FindPoseGraphsByTrajectory(
+      spatial::core::ParseUuid(trajectory_.trajectory_id));
+  ASSERT_EQ(graphs2.size(), 1u);
+  EXPECT_EQ(graphs2[0].document_json, graph_hash);
 }
 
 // INV-3 (negative): undeclared metric basis -> NO pose graph, NO optimization,

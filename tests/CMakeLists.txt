@@ -39,6 +39,7 @@ set(SPATIAL_UNIT_TESTS
   unit/test_p3_schema.cpp
   unit/test_cli_import.cpp
   unit/test_cli_feature_extraction.cpp
+  unit/test_p3_multi_input_dispatch.cpp
 )
 
 # A tiny frame-echo helper the framing tests drive as a child process; it
@@ -148,6 +149,34 @@ target_compile_definitions(spatial_colmap_worker_tests PRIVATE
 )
 gtest_discover_tests(spatial_colmap_worker_tests)
 
+# P3-Production-E2E golden + negatives: the production sparse-correction chain
+# through Engine::RunPipeline (colmap_worker behind ProcessExecutor + probe
+# shim), the host-runner COMMIT (sparse_correction_orchestrator.h), the stage-6
+# BundleAdjustmentOptimizePipeline (D5 gate, P14 ordering, WriteTransaction),
+# and the stage-5 LoopClosureOptimizePipeline INV-3 gate. No GTSAM required:
+# the stage-6 seam is a deterministic stub and the stage-5 negative short-
+# circuits before the optimizer seam. Gated on the worker + probe shim, like
+# the colmap worker tests above.
+add_executable(spatial_p3_production_e2e_tests
+  unit/test_p3_production_e2e.cpp
+)
+target_link_libraries(spatial_p3_production_e2e_tests PRIVATE
+  spatial_engine
+  spatial_core
+  GTest::gtest
+  GTest::gtest_main
+)
+add_dependencies(spatial_p3_production_e2e_tests
+  spatial_colmap_worker
+  spatial_colmap_probe_shim
+)
+target_include_directories(spatial_p3_production_e2e_tests PRIVATE ${CMAKE_SOURCE_DIR})
+target_compile_definitions(spatial_p3_production_e2e_tests PRIVATE
+  SPATIAL_COLMAP_WORKER_EXECUTABLE="$<TARGET_FILE:spatial_colmap_worker>"
+  SPATIAL_COLMAP_PROBE_SHIM_EXECUTABLE="$<TARGET_FILE:spatial_colmap_probe_shim>"
+)
+gtest_discover_tests(spatial_p3_production_e2e_tests)
+
 # P3-impl-7a: Visual loop-closure candidate generation tests. Link core +
 # engine (for WriteFeatureArtifactPayload / DetectLoopClosureCandidates) and the
 # classical visual matcher adapter, which proves the candidate path from real
@@ -206,6 +235,34 @@ target_link_libraries(spatial_loop_closure_stage_tests PRIVATE
 )
 target_include_directories(spatial_loop_closure_stage_tests PRIVATE ${CMAKE_SOURCE_DIR})
 gtest_discover_tests(spatial_loop_closure_stage_tests)
+
+# P3-impl-8a: canonical projection + reprojection geometry tests (core + engine
+# + the shared closed-square fixture). No GTSAM, no adapter, no boost stub.
+add_executable(spatial_reprojection_geometry_tests
+  unit/test_reprojection_geometry.cpp
+)
+target_link_libraries(spatial_reprojection_geometry_tests PRIVATE
+  spatial_core
+  spatial_engine
+  GTest::gtest
+  GTest::gtest_main
+)
+target_include_directories(spatial_reprojection_geometry_tests PRIVATE ${CMAKE_SOURCE_DIR})
+gtest_discover_tests(spatial_reprojection_geometry_tests)
+
+# P3-impl-8b: canonical re-triangulation tests (core + fixture, GTest). No
+# GTSAM, no adapter, no boost stub.
+add_executable(spatial_triangulation_tests
+  unit/test_triangulation.cpp
+)
+target_link_libraries(spatial_triangulation_tests PRIVATE
+  spatial_core
+  spatial_engine
+  GTest::gtest
+  GTest::gtest_main
+)
+target_include_directories(spatial_triangulation_tests PRIVATE ${CMAKE_SOURCE_DIR})
+gtest_discover_tests(spatial_triangulation_tests)
 
 # P3-impl-6a: GTSAM adapter tests — gated, never part of core test suite.
 if(SPATIAL_HAS_GTSAM)
@@ -288,3 +345,47 @@ if(SPATIAL_HAS_GTSAM)
     )
   endif()
 endif()
+
+# ---------------------------------------------------------------------------
+# P3-impl-8c: Bundle Adjustment (fixed intrinsics) seam + engine stage.
+# ---------------------------------------------------------------------------
+# Engine orchestration-stage tests: run the REAL persistence path
+# (AddReconstruction then SetReconstructionStatus) around an injected
+# deterministic ReconstructionOptimizer stub; no backend, no subprocess.
+add_executable(spatial_bundle_adjustment_optimize_pipeline_tests
+  unit/test_bundle_adjustment_optimize_pipeline.cpp
+)
+target_link_libraries(spatial_bundle_adjustment_optimize_pipeline_tests PRIVATE
+  spatial_core
+  spatial_engine
+  GTest::gtest
+  GTest::gtest_main
+)
+target_include_directories(spatial_bundle_adjustment_optimize_pipeline_tests PRIVATE
+  ${CMAKE_SOURCE_DIR}
+)
+add_test(NAME spatial_bundle_adjustment_optimize_pipeline_tests
+         COMMAND spatial_bundle_adjustment_optimize_pipeline_tests)
+
+# COLMAP bundle-adjustment adapter E2E tests: drive the real
+# ColmapBundleAdjustmentAdapter against the probe-shim bundle_adjuster command.
+# Same discipline as spatial_adapter_tests: never links the engine.
+add_executable(spatial_colmap_bundle_adjustment_adapter_tests
+  unit/test_colmap_bundle_adjustment_adapter.cpp
+)
+target_link_libraries(spatial_colmap_bundle_adjustment_adapter_tests PRIVATE
+  spatial_colmap_adapter
+  GTest::gtest
+  GTest::gtest_main
+)
+add_dependencies(spatial_colmap_bundle_adjustment_adapter_tests
+  spatial_colmap_probe_shim
+)
+target_include_directories(spatial_colmap_bundle_adjustment_adapter_tests PRIVATE
+  ${CMAKE_SOURCE_DIR}
+)
+target_compile_definitions(spatial_colmap_bundle_adjustment_adapter_tests PRIVATE
+  SPATIAL_COLMAP_PROBE_SHIM_EXECUTABLE="$<TARGET_FILE:spatial_colmap_probe_shim>"
+)
+add_test(NAME spatial_colmap_bundle_adjustment_adapter_tests
+         COMMAND spatial_colmap_bundle_adjustment_adapter_tests)

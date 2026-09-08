@@ -16,6 +16,7 @@
 #include "core/artifacts/artifact_store.h"
 #include "core/errors/project_error.h"
 #include "core/reconstruction/reconstruction.h"
+#include "core/reconstruction/reconstruction_json.h"
 #include "core/utils/fs.h"
 #include "core/utils/sha256.h"
 #include "core/utils/uuid.h"
@@ -395,7 +396,7 @@ void ColmapAdapter::Execute(const std::vector<std::string>& plan,
 
     const std::filesystem::path payload =
         SparseModelDir(workspace) / "reconstruction.json";
-    AtomicWrite(payload, ReconstructionToJson(rec));
+    AtomicWrite(payload, spatial::core::ReconstructionToJson(rec));
     sink.ArtifactProduced(payload.string(), BuildManifest(payload));
   }
 }
