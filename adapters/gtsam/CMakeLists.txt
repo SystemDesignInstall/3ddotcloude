@@ -1,4 +1,4 @@
-# P3-impl-6a: GTSAM optimizer adapter (isolated from core).
+# P3-impl-6a/8c: GTSAM optimizer adapters (isolated from core).
 #
 # This target is the ONLY place in the spatial-platform codebase that links
 # GTSAM::GTSAM. The core library (spatial_core) and all other adapters must
@@ -24,6 +24,7 @@ configure_file(gtsam_adapter_build_info.h.in
 
 add_library(spatial_gtsam_adapter STATIC
   gtsam_optimizer_adapter.cpp
+  gtsam_bundle_adjustment_optimizer.cpp
 )
 
 target_include_directories(spatial_gtsam_adapter PUBLIC

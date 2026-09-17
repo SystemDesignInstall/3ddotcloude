@@ -23,11 +23,13 @@
 
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "core/loop_closure/feature_matcher.h"
 #include "core/loop_closure/verification_options.h"
+#include "core/reconstruction/reconstruction.h"
 #include "core/trajectory/loop_closure.h"
 
 namespace spatial::core {
@@ -48,6 +50,30 @@ struct LoopClosureVerificationInput {
   MatchingFrameDescriptors source;   // newer frame (source_frame_id)
   MatchingFrameDescriptors target;   // older frame (target_frame_id)
   std::vector<FeatureCorrespondence> correspondences;  // reconstructed pairs
+  // Calibrated intrinsics for the source/target frames (P3.1 Step 1/2: the
+  // canonical calibration carrier is the existing ReconCamera; no parallel
+  // intrinsics format is introduced). Consumed ONLY by calibrated
+  // (essential) providers via CameraModel::FromReconCamera. Absent for the
+  // uncalibrated (fundamental) path, which ignores these fields and keeps its
+  // existing behaviour. A calibrated provider REQUIRES both cameras and
+  // fails closed (rejected, no pose) when either is absent — absence is never
+  // a fallback to fundamental estimation inside that provider.
+  std::optional<ReconCamera> source_camera;
+  std::optional<ReconCamera> target_camera;
+};
+
+// A calibrated UNIT relative pose (P3.1 Step 1/2): the cheirality-resolved
+// rotation R_source_target plus the UNIT translation direction t_hat expressed
+// in the source camera frame C_s. DIMENSIONLESS — this is a direction, never
+// metres. Metric scale is resolved downstream ONLY by the frozen
+// ResolveMetricTranslationFromUnitDirection against a metric-eligible
+// trajectory; only that resolved measurement may populate the metric
+// relative_position_xyz / has_relative_pose fields. Carried as
+// std::optional (absent == no unit estimate) so a "present but stale" state
+// is structurally impossible.
+struct UnitRelativePose {
+  std::array<double, 4> rotation_xyzw{0.0, 0.0, 0.0, 1.0};  // R_source_target
+  std::array<double, 3> translation_direction_xyz{};        // t_hat in C_s
 };
 
 // The deterministic, canonical result of one geometric verification run
@@ -86,9 +112,21 @@ struct GeometricVerificationResult {
   // metric (calibrated/essential) evidence justified it (§7, §11). For the
   // uncalibrated (fundamental) first path this is always false — a genuinely
   // non-metric result is never dressed up as a metric pose.
+  //
+  // UNIT-pose rule (P3.1 Step 1/2): a calibrated essential provider that
+  // estimates R + t_hat (unit direction) sets has_relative_pose = false and
+  // leaves relative_position_xyz zeroed — a unit direction MUST NEVER be
+  // placed in these metric fields (downstream LoopClosureToPoseGraph reads
+  // them as metres). The unit estimate travels ONLY in unit_relative_pose
+  // below until the frozen metric resolver produces metres.
   bool has_relative_pose = false;
   std::array<double, 3> relative_position_xyz{};   // T_source_target translation
   std::array<double, 4> relative_rotation_xyzw{};  // T_source_target (x,y,z,w)
+
+  // Calibrated unit relative pose (essential path only). Set on a successful
+  // calibrated estimation; stays nullopt on every rejection/failure and for
+  // the uncalibrated path. geometric_model == "essential" marks the producer.
+  std::optional<UnitRelativePose> unit_relative_pose;
 };
 
 // Backend-independent verification seam (P3-impl-7b §14). Core never names a

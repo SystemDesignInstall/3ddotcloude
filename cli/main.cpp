@@ -8,24 +8,35 @@
 //   spatial status <run-id> [--project <dir>]
 
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <memory>
 #include <string>
 #include <vector>
 
+#include "adapters/gtsam/gtsam_bundle_adjustment_optimizer.h"
+#include "adapters/gtsam/gtsam_optimizer_adapter.h"
+#include "adapters/visual_geometry/essential_verifier.h"
+#include "adapters/visual_matching/visual_matcher_adapter.h"
 #include "core/artifacts/artifact_manifest.h"
 #include "core/artifacts/artifact_store.h"
 #include "core/errors/project_error.h"
+#include "core/geometry/reconstruction_optimizer.h"
+#include "core/loop_closure/feature_matcher.h"
+#include "core/loop_closure/geometric_verifier.h"
 #include "core/project/project.h"
 #include "core/scene/query/scene_query.h"
+#include "core/trajectory/optimizer.h"
 #include "core/utils/fs.h"
 #include "core/utils/uuid.h"
 #include "engine/engine.h"
 #include "engine/pipeline/feature_extraction.h"
 #include "engine/pipeline/mock_photogrammetry.h"
 #include "engine/pipeline/production_pipelines.h"
+#include "engine/pipeline/sparse_correction_runner.h"
 #include "engine/pipeline/quality/quality_report.h"
 #include "engine/task/task_serialization.h"
 #include "importers/images/image_importer.h"
@@ -131,6 +142,94 @@ Engine OpenProjectAndEngine(std::vector<std::string>& args) {
   return Engine(Project::Open(project_dir));
 }
 
+// Env lookup that avoids the MSVC C4996 deprecation warning for getenv
+// (same pattern as the worker tests' GetEnv helper).
+const char* GetEnv(const char* name) {
+#if defined(_WIN32)
+  char* value = nullptr;
+  size_t len = 0;
+  if (_dupenv_s(&value, &len, name) == 0 && value != nullptr) {
+    static thread_local std::string storage;
+    storage = value;
+    free(value);
+    return storage.c_str();
+  }
+  return nullptr;
+#else
+  return std::getenv(name);
+#endif
+}
+
+// P3.1 P-5 (§3): the sparse-correction pipeline runs through its own composition
+// root — the host runner (sparse_correction_runner.cpp) plus the sparse worker
+// profile — because its DAG includes the host COMMIT and bundle-adjustment
+// seams, which the default engine's demo-runner profile cannot execute. The
+// worker argv comes from the environment: images mode requires
+// SPATIAL_COLMAP_WORKER and SPATIAL_COLMAP_PROBE_SHIM; without them the runner
+// runs in reconstruction mode and fails closed with a typed error if a worker
+// task is requested. Same --project handling as OpenProjectAndEngine.
+//
+// Step 12 (real providers): the CLI is the ENGINE's composition root, so it
+// injects the REAL seam implementations (L2NearestMatcher +
+// EssentialGeometricVerifier + GtsamTrajectoryOptimizer +
+// GtsamBundleAdjustmentOptimizer) — the same four providers the production E2E
+// suite proves with. The seam objects are heap-allocated and owned by the
+// handle so they outlive the Engine (the in-process runner captures the seam
+// POINTERS by value inside its task lambda).
+struct SparseCorrectionEngineHandle {
+  // Engine is neither copyable nor movable, so it is owned through a pointer
+  // and constructed in place (make_unique) inside OpenSparseCorrectionEngine.
+  std::unique_ptr<Engine> engine;
+  std::unique_ptr<spatial::core::LoopClosureFeatureMatcher> matcher;
+  std::unique_ptr<spatial::core::GeometricVerifier> verifier;
+  std::unique_ptr<spatial::core::TrajectoryOptimizer> trajectory_optimizer;
+  std::unique_ptr<spatial::core::geometry::ReconstructionOptimizer>
+      ba_optimizer;
+};
+
+SparseCorrectionEngineHandle OpenSparseCorrectionEngine(
+    std::vector<std::string>& args) {
+  std::filesystem::path project_dir = ".";
+  for (std::size_t i = 0; i < args.size(); ++i) {
+    if (args[i] == "--project" && i + 1 < args.size()) {
+      project_dir = args[i + 1];
+      args.erase(args.begin() + i, args.begin() + i + 2);
+      break;
+    }
+  }
+  Project project = Project::Open(project_dir);
+  std::vector<std::string> worker_command;
+  if (const char* worker = GetEnv("SPATIAL_COLMAP_WORKER")) {
+    worker_command.emplace_back(worker);
+  }
+  if (const char* shim = GetEnv("SPATIAL_COLMAP_PROBE_SHIM")) {
+    worker_command.emplace_back(shim);
+  }
+  auto& db = project.db();
+  auto& store = project.artifacts();
+  SparseCorrectionEngineHandle handle;
+  handle.matcher =
+      std::make_unique<spatial::adapters::visual_matching::L2NearestMatcher>();
+  handle.verifier =
+      std::make_unique<spatial::adapters::visual_geometry::
+                           EssentialGeometricVerifier>();
+  handle.trajectory_optimizer =
+      std::make_unique<spatial::adapters::gtsam::GtsamTrajectoryOptimizer>();
+  handle.ba_optimizer = std::make_unique<
+      spatial::adapters::gtsam::GtsamBundleAdjustmentOptimizer>();
+  spatial::engine::SparseCorrectionSeams seams;
+  seams.matcher = handle.matcher.get();
+  seams.verifier = handle.verifier.get();
+  seams.trajectory_optimizer = handle.trajectory_optimizer.get();
+  seams.ba_optimizer = handle.ba_optimizer.get();
+  handle.engine = std::make_unique<Engine>(
+      std::move(project),
+      spatial::engine::MakeSparseCorrectionRunner(db, store, seams,
+                                                  std::move(worker_command)),
+      spatial::engine::SparseCorrectionProfile());
+  return handle;
+}
+
 int RunCommand(const std::vector<std::string>& args, Engine& engine,
                std::string pipeline_id) {
   std::vector<std::filesystem::path> inputs;
@@ -162,7 +261,9 @@ int RunCommand(const std::vector<std::string>& args, Engine& engine,
   const auto manifest =
       engine.RunPipeline(pipeline_id, refs, config);
   std::cout << spatial::engine::ToJson(manifest) << "\n";
-  return 0;
+  // Step 12: 0 only when the pipeline succeeded; a failed manifest is an
+  // error the caller can rely on.
+  return manifest.status == "succeeded" ? 0 : 1;
 }
 
 int RunDagCommand(const std::string& dag_path, Engine& engine) {
@@ -465,6 +566,17 @@ int main(int argc, char** argv) {
         return 2;
       }
       std::vector<std::string> rest(args.begin() + 1, args.end());
+      // P3.1 P-5: p3_sparse_correction must run through its own composition
+      // root (host runner + sparse profile). Route it before the default
+      // engine so the DAG never binds the demo-runner capabilities.
+      if (!rest.empty() &&
+          rest[0] == spatial::engine::kSparseCorrectionPipelineId) {
+        SparseCorrectionEngineHandle handle = OpenSparseCorrectionEngine(rest);
+        RegisterProductionPipelines(handle.engine->registry());
+        std::vector<std::string> flags(rest.begin() + 1, rest.end());
+        return RunCommand(flags, *handle.engine,
+                          spatial::engine::kSparseCorrectionPipelineId);
+      }
       Engine engine = OpenProjectAndEngine(rest);
       if (rest[0] == "--dag") {
         if (rest.size() < 2) {
@@ -528,14 +640,13 @@ int main(int argc, char** argv) {
 
     if (args[0] == "p3_sparse_correction") {
       std::vector<std::string> rest(args.begin() + 1, args.end());
-      Engine engine = OpenProjectAndEngine(rest);
-      RegisterProductionPipelines(engine.registry());
-      std::cout << "p3_sparse_correction: production pipeline registered\n";
-      std::cout << "available pipelines:\n";
-      for (const auto& id : engine.registry().Ids()) {
-        std::cout << "  " << id << "\n";
-      }
-      return 0;
+      SparseCorrectionEngineHandle handle = OpenSparseCorrectionEngine(rest);
+      RegisterProductionPipelines(handle.engine->registry());
+      // P3.1 P-5: run the pipeline end-to-end (--input/--config) instead of the
+      // former registry print-out; the worker env gap now surfaces as a typed
+      // failure from the runner/manifest rather than a silent no-op.
+      return RunCommand(rest, *handle.engine,
+                        spatial::engine::kSparseCorrectionPipelineId);
     }
 
     if (args[0] == "import") {

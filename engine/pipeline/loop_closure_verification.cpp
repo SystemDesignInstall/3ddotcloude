@@ -11,6 +11,8 @@
 #include "core/errors/project_error.h"
 #include "core/loop_closure/correspondence_reconstruction.h"
 #include "core/loop_closure/loop_closure_candidate_gen.h"
+#include "core/trajectory/metric_basis.h"
+#include "core/trajectory/pose_graph_helpers.h"
 #include "core/utils/fs.h"
 #include "core/utils/uuid.h"
 #include "engine_build_info.h"
@@ -62,7 +64,8 @@ LoopClosureVerificationResult VerifyLoopClosureGeometry(
     const spatial::core::LoopClosureFeatureMatcher& matcher,
     const spatial::core::GeometricVerifier& verifier,
     const spatial::core::GeometricVerificationOptions& options,
-    const std::string& configuration_hash) {
+    const std::string& configuration_hash,
+    const std::optional<MetricResolutionInput>& metric_resolution) {
   LoopClosureVerificationResult result;
 
   // Resolve both FeatureArtifacts (keypoints + descriptors) from the CAS.
@@ -94,6 +97,11 @@ LoopClosureVerificationResult VerifyLoopClosureGeometry(
   vinput.source = std::move(src);
   vinput.target = std::move(tgt);
   vinput.correspondences = std::move(correspondences);
+  // P3.1 Step 3: per-frame calibration for calibrated (essential) providers.
+  // Nullopt cameras reach the verifier as-is (fundamental ignores them; a
+  // calibrated provider fails closed on absence).
+  vinput.source_camera = source.camera;
+  vinput.target_camera = target.camera;
   result.geo = verifier.Verify(vinput, options);
 
   // Stamp instance identity (D-DI-01) + provenance on the canonical record.
@@ -111,6 +119,38 @@ LoopClosureVerificationResult VerifyLoopClosureGeometry(
   result.closure.relative_position_xyz = result.geo.relative_position_xyz;
   result.closure.relative_rotation_xyzw = result.geo.relative_rotation_xyzw;
   result.closure.geometric_residual = result.geo.geometric_residual;
+
+  // P3.1 Step 3 — unit-to-metric resolution (THE call site). Only when ALL
+  // hold: trajectory context supplied, trajectory metric-eligible (INV-3
+  // provenance gate FIRST — the frozen resolver is basis-unaware by design,
+  // so eligibility is enforced here, never inside it), closure accepted, and
+  // the verifier produced a UNIT pose. The FROZEN D6 resolver converts the
+  // unit direction to metres against the trajectory; only its success
+  // promotes the closure (has_relative_pose=true + metric fields). `geo` is
+  // deliberately left as the verifier produced it (geo.has_relative_pose
+  // stays false on the unit path): estimation evidence vs orchestrated
+  // resolution remain distinguishable in the return value. Every other
+  // outcome stays verified-visual-only: persistable, no metric edge.
+  if (result.geo.verified && result.geo.unit_relative_pose.has_value() &&
+      metric_resolution.has_value() &&
+      metric_resolution->trajectory_nodes != nullptr &&
+      spatial::core::MetricEligibleTrajectoryBasis(
+          metric_resolution->metric_basis)) {
+    const spatial::core::UnitRelativePose& unit =
+        *result.geo.unit_relative_pose;
+    const std::optional<spatial::core::MetricLoopClosureMeasurement>
+        measurement =
+            spatial::core::ResolveMetricTranslationFromUnitDirection(
+                result.geo.closure, *metric_resolution->trajectory_nodes,
+                unit.translation_direction_xyz, unit.rotation_xyzw,
+                result.geo.geometric_residual);
+    if (measurement.has_value()) {
+      result.closure.has_relative_pose = true;
+      result.closure.relative_position_xyz = measurement->position_cs;
+      result.closure.relative_rotation_xyzw = measurement->rotation_cst;
+      result.closure.geometric_residual = measurement->geometric_residual;
+    }
+  }
 
   // Persist the closure (accepted OR rejected) to the loop_closures table.
   LoopClosureRow row;

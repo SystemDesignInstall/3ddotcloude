@@ -59,10 +59,38 @@ void RegisterBundleAdjustmentPipeline(PipelineRegistry& registry) {
   registry.Register(std::move(def));
 }
 
+void RegisterSparseCorrectionPipeline(PipelineRegistry& registry) {
+  PipelineDefinition def;
+  def.id = kSparseCorrectionPipelineId;
+  def.name = "Sparse Correction";
+  def.version = "0.1.0";
+  def.git_commit = kEngineGitCommit;
+  def.config_schema_json = "{}";
+  def.stages = {
+      // Stage 1: worker-compute sparse reconstruction (colmap_worker behind
+      // ProcessExecutor, images mode) or the canonical reconstruction
+      // passthrough (reconstruction mode) — deterministic and replayable.
+      {"sparse_reconstruct", "sparse_reconstruction",
+       "sparse_reconstruction",
+       {"image", "reconstruction"},
+       {"reconstruction"}},
+      // Stage 2: host COMMIT + stage-6 bundle adjustment. Reuses the existing
+      // "bundle_adjustment" capability (the taxonomy is RFC-gated, P3.1 §4 P-1);
+      // the in-process runner dispatches it by task_type. The stage is
+      // DB-committing, so never cacheable: a replay would skip the writes.
+      {"correct", "bundle_adjustment", "sparse_correction",
+       {"reconstruction"},
+       {"reconstruction"}},
+  };
+  def.stages[1].cache = CachePolicy::kNever;
+  registry.Register(std::move(def));
+}
+
 void RegisterProductionPipelines(PipelineRegistry& registry) {
   RegisterLoopClosureVerificationPipeline(registry);
   RegisterLoopClosureOptimizationPipeline(registry);
   RegisterBundleAdjustmentPipeline(registry);
+  RegisterSparseCorrectionPipeline(registry);
 }
 
 }  // namespace spatial::engine

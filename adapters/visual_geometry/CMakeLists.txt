@@ -1,5 +1,6 @@
-# P3-impl-7b: classical geometric verifier adapter (uncalibrated fundamental +
-# RANSAC). Deterministic, std + Eigen only (no OpenCV / COLMAP / GTSAM).
+# P3-impl-7b + P3.1 Step 2: classical geometric verifier adapters
+# (uncalibrated fundamental + RANSAC; calibrated essential + RANSAC).
+# Deterministic, std + Eigen only (no OpenCV / COLMAP / GTSAM).
 # Links only core (for the canonical GeometricVerifier contract and typed-error
 # types), never the engine aggregate — proving the seam is self-contained
 # (RFC-0008 §5, P3-impl-7b §14).
@@ -8,6 +9,7 @@
 
 add_library(spatial_visual_geometry_adapter STATIC
   fundamental_verifier.cpp
+  essential_verifier.cpp
 )
 
 target_include_directories(spatial_visual_geometry_adapter PUBLIC

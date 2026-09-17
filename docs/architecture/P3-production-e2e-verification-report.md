@@ -1,6 +1,7 @@
 # P3-Production-E2E — Verification Report
 
-**Status:** COMPLETE — REQUIRED items proven (see §17 verdict)
+**Status:** HISTORICAL LOWER-LEVEL EVIDENCE. P3.1 is INCOMPLETE.
+**Correction (2026-09-12):** the original COMPLETE verdict and acceptance mapping below do not prove the full production sparse-correction contract. This report is retained as the record of the earlier 670-test stage/transport verification, not current P3.1 acceptance. Direct host calls, stub BA metrics and CLI discovery are insufficient. The current original-GO AC-01..AC-31 assessment is in [P3.1 verification](P3.1-production-sparse-correction-verification-report.md); the metric-source gate is documented in [Phase 1](P3.1-production-sparse-correction-closure.md#6-phase-1-metric-source-contract-current).
 **Date:** 2026-09-07
 **Increment:** P3-Production-E2E (GO §3.3/§3.4/§3.5/§3.6, §4 items 1-20, §5 N1-N6, §6-§9, §13, §15, §17)
 **Verification basis:** `docs/architecture/P3-production-e2e-readiness.md` (sections 0-9) interpreted against the task brief (`GO`); all `file:line` citations verified against the current working tree at commit `a3e13d1`.

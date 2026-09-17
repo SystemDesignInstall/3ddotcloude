@@ -138,6 +138,7 @@ ExecutionPlan PipelineCompiler::Compile(
     task.config_json = stage_config.dump();
 
     task.metadata.deterministic = true;
+    task.metadata.cache = stage.cache;
     task.metadata.created_at_ns = plan.created_at_ns;
     task.metadata.updated_at_ns = plan.created_at_ns;
 

@@ -9,6 +9,8 @@
 #include <string>
 #include <vector>
 
+#include "engine/task/task_types.h"
+
 namespace spatial::engine {
 
 // One stage of a pipeline. Capability-based (ADR-011/034): the compiler binds
@@ -19,6 +21,10 @@ struct PipelineStage {
   std::string task_type;                  // semantic task type the worker runs
   std::vector<std::string> input_artifact_kinds;   // consumed artifact kinds
   std::vector<std::string> output_artifact_kinds;  // produced artifact kinds
+  // ADR-020 cache control. Stages with MetadataDb side effects MUST be
+  // kNever: a cache replay would skip the side effect while still reporting a
+  // succeeded output (the sparse-correction host stage).
+  CachePolicy cache = CachePolicy::kCacheable;
 };
 
 struct PipelineDefinition {

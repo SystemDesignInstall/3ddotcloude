@@ -41,7 +41,13 @@ void RegisterLoopClosureOptimizationPipeline(PipelineRegistry& registry);
 //   -> {reconstruction}.
 void RegisterBundleAdjustmentPipeline(PipelineRegistry& registry);
 
-// Registers all three production pipelines (§3.5 convenience).
+// Registers the top-level sparse-correction pipeline (P3.1):
+//   sparse reconstruction (worker compute or reconstruction passthrough)
+//     -> host COMMIT + stage-6 bundle adjustment (seam, D5 gate, P14).
+// The correction stage is CachePolicy::kNever (DB side effect).
+void RegisterSparseCorrectionPipeline(PipelineRegistry& registry);
+
+// Registers all production pipelines (§3.5 convenience).
 void RegisterProductionPipelines(PipelineRegistry& registry);
 
 }  // namespace spatial::engine

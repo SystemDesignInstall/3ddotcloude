@@ -177,6 +177,35 @@ target_compile_definitions(spatial_p3_production_e2e_tests PRIVATE
 )
 gtest_discover_tests(spatial_p3_production_e2e_tests)
 
+# P3.1: production sparse-correction pipeline through the Engine surface ONLY.
+# The runner (pipeline/sparse_correction_runner.cpp) + engine + host runner +
+# production pipeline registrations; worker subprocess (golden images mode) via
+# ProcessExecutor + probe shim, the no-worker golden (reconstruction mode), and
+# the N1/N2/N3/N5 fail-closed negatives. Same worker/probe gating as the E2E
+# suite above. No GTSAM.
+add_executable(spatial_p3_sparse_correction_pipeline_tests
+  unit/test_p3_sparse_correction_pipeline.cpp
+  unit/test_p3_runner_context.cpp
+)
+target_link_libraries(spatial_p3_sparse_correction_pipeline_tests PRIVATE
+  spatial_engine
+  spatial_core
+  spatial_visual_matching_adapter
+  spatial_visual_geometry_adapter
+  GTest::gtest
+  GTest::gtest_main
+)
+add_dependencies(spatial_p3_sparse_correction_pipeline_tests
+  spatial_colmap_worker
+  spatial_colmap_probe_shim
+)
+target_include_directories(spatial_p3_sparse_correction_pipeline_tests PRIVATE ${CMAKE_SOURCE_DIR})
+target_compile_definitions(spatial_p3_sparse_correction_pipeline_tests PRIVATE
+  SPATIAL_COLMAP_WORKER_EXECUTABLE="$<TARGET_FILE:spatial_colmap_worker>"
+  SPATIAL_COLMAP_PROBE_SHIM_EXECUTABLE="$<TARGET_FILE:spatial_colmap_probe_shim>"
+)
+gtest_discover_tests(spatial_p3_sparse_correction_pipeline_tests)
+
 # P3-impl-7a: Visual loop-closure candidate generation tests. Link core +
 # engine (for WriteFeatureArtifactPayload / DetectLoopClosureCandidates) and the
 # classical visual matcher adapter, which proves the candidate path from real
@@ -206,6 +235,7 @@ gtest_discover_tests(spatial_loop_closure_tests)
 # false-positive / degenerate / determinism / boundary / provenance cases.
 add_executable(spatial_loop_closure_verification_tests
   unit/test_loop_closure_verification.cpp
+  unit/test_essential_orchestration.cpp
 )
 target_link_libraries(spatial_loop_closure_verification_tests PRIVATE
   spatial_core
@@ -220,6 +250,23 @@ target_compile_definitions(spatial_loop_closure_verification_tests PRIVATE
   SPATIAL_LOOPCLOSURE_SCHEMA_JSON="${CMAKE_SOURCE_DIR}/schemas/json/loop-closure.schema.json"
 )
 gtest_discover_tests(spatial_loop_closure_verification_tests)
+
+# P3.1 Step 2: calibrated essential-verifier tests (T1-T12). Link core + the
+# visual-geometry adapter only: proving R + t_hat estimation from calibrated
+# observations, canonical source->target conventions, cheirality selection,
+# fail-closed gates, determinism, and the unit/metric separation. No GTSAM,
+# no engine, no runner.
+add_executable(spatial_essential_verifier_tests
+  unit/test_essential_verifier.cpp
+)
+target_link_libraries(spatial_essential_verifier_tests PRIVATE
+  spatial_core
+  spatial_visual_geometry_adapter
+  GTest::gtest
+  GTest::gtest_main
+)
+target_include_directories(spatial_essential_verifier_tests PRIVATE ${CMAKE_SOURCE_DIR})
+gtest_discover_tests(spatial_essential_verifier_tests)
 
 # P3-impl-7 Phase 3: LoopClosure -> PoseGraph stage tests (core + engine only,
 # no GTSAM/adapter). Covers D2 spatial_separation_m, INV-3 metric-eligibility
@@ -344,6 +391,91 @@ if(SPATIAL_HAS_GTSAM)
       ENVIRONMENT_MODIFICATION "${SPATIAL_GTSAM_ENV_STR}"
     )
   endif()
+
+  # P3.1 Step 6: PoseGraph -> GTSAM TrajectoryOptimizer production tests.
+  # Drive Engine::RunPipeline (reconstruction mode) with the REAL GTSAM seam
+  # implementation: drifted trajectory nodes are corrected by the loop edge
+  # (O1, strictly decreasing backend-computed errors) and the measurement
+  # stays immutable (O2). Same GTSAM/Boost manual-test-registration
+  # constraints as spatial_gtsam_tests (own main(), no discovery).
+  add_executable(spatial_p3_trajectory_optimization_tests
+    unit/test_p3_trajectory_optimization.cpp
+  )
+  target_link_libraries(spatial_p3_trajectory_optimization_tests PRIVATE
+    spatial_core
+    spatial_engine
+    spatial_visual_matching_adapter
+    spatial_visual_geometry_adapter
+    spatial_gtsam_adapter
+    GTest::gtest
+  )
+  target_compile_definitions(spatial_p3_trajectory_optimization_tests PRIVATE
+    BOOST_ALL_NO_LIB
+  )
+  target_include_directories(spatial_p3_trajectory_optimization_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}
+  )
+  add_test(NAME spatial_p3_trajectory_optimization_tests
+           COMMAND spatial_p3_trajectory_optimization_tests)
+  if(SPATIAL_GTSAM_ENV_STR)
+    set_tests_properties(spatial_p3_trajectory_optimization_tests PROPERTIES
+      ENVIRONMENT_MODIFICATION "${SPATIAL_GTSAM_ENV_STR}"
+    )
+  endif()
+
+  # P3-impl-8c: GTSAM bundle-adjustment adapter DIRECT tests (real LM backend,
+  # no engine). Same GTSAM/Boost manual-test-registration constraints as
+  # spatial_gtsam_tests (own main(), no discovery).
+  add_executable(spatial_gtsam_bundle_adjustment_tests
+    unit/test_gtsam_bundle_adjustment.cpp
+  )
+  target_link_libraries(spatial_gtsam_bundle_adjustment_tests PRIVATE
+    spatial_gtsam_adapter
+    GTest::gtest
+  )
+  target_compile_definitions(spatial_gtsam_bundle_adjustment_tests PRIVATE
+    BOOST_ALL_NO_LIB
+  )
+  target_include_directories(spatial_gtsam_bundle_adjustment_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}
+  )
+  add_test(NAME spatial_gtsam_bundle_adjustment_tests
+           COMMAND spatial_gtsam_bundle_adjustment_tests)
+  if(SPATIAL_GTSAM_ENV_STR)
+    set_tests_properties(spatial_gtsam_bundle_adjustment_tests PROPERTIES
+      ENVIRONMENT_MODIFICATION "${SPATIAL_GTSAM_ENV_STR}"
+    )
+  endif()
+
+  # Step 12 (real providers): CLI E2E. TEMPORARILY DISABLED: the test source
+  # `unit/test_cli_sparse_correction_e2e.cpp` does not exist yet (the P3.1
+  # Step 12 work is in progress; see P3.1-production-sparse-correction-
+  # verification-report.md — the full v4 chain is still NOT PROVEN). Re-enable
+  # this block when the test file lands. Spawns the REAL `spatial` executable
+  # (the Engine composition root) with `run p3_sparse_correction --project
+  # --input --config` and asserts the succeeded manifest, the non-zero exit on a
+  # failed manifest, and the FULL v4 chain persisted (committed/applied/v3
+  # superseded, real-GTSAM v4 the sole succeeded + latest). No direct internal
+  # pipeline-stage calls. Requires the GTSAM-enabled CLI, so it lives in this
+  # block; the runtime DLLs the spawned CLI needs are copied next to it by
+  # cli/CMakeLists.txt.
+  # add_executable(spatial_cli_sparse_correction_e2e_tests
+  #   unit/test_cli_sparse_correction_e2e.cpp
+  # )
+  # target_link_libraries(spatial_cli_sparse_correction_e2e_tests PRIVATE
+  #   spatial_core
+  #   spatial_engine
+  #   GTest::gtest
+  #   GTest::gtest_main
+  # )
+  # add_dependencies(spatial_cli_sparse_correction_e2e_tests spatial)
+  # target_include_directories(spatial_cli_sparse_correction_e2e_tests PRIVATE
+  #   ${CMAKE_SOURCE_DIR}
+  # )
+  # target_compile_definitions(spatial_cli_sparse_correction_e2e_tests PRIVATE
+  #   SPATIAL_CLI_EXECUTABLE="$<TARGET_FILE:spatial>"
+  # )
+  # gtest_discover_tests(spatial_cli_sparse_correction_e2e_tests)
 endif()
 
 # ---------------------------------------------------------------------------

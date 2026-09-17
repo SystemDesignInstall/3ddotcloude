@@ -54,8 +54,10 @@ endif()
 add_subdirectory(core)
 add_subdirectory(engine)
 add_subdirectory(importers)
-add_subdirectory(cli)
+# adapters before cli: the CLI composition root links the adapter libraries, and
+# cli/CMakeLists.txt guards the GTSAM wiring with if(TARGET spatial_gtsam_adapter).
 add_subdirectory(adapters)
+add_subdirectory(cli)
 
 if(SPATIAL_ENABLE_TESTS)
   enable_testing()

@@ -96,6 +96,7 @@ add_library(spatial_engine STATIC
   pipeline/loop_closure_optimize_pipeline.cpp
   pipeline/bundle_adjustment_optimize_pipeline.cpp
   pipeline/production_pipelines.cpp
+  pipeline/sparse_correction_runner.cpp
   workers/protocol_framing.cpp
   workers/in_process_executor.cpp
   workers/process_executor.cpp
