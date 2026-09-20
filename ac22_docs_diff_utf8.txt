@@ -1,0 +1,62 @@
+##### FILE: docs/architecture/P3-milestone-status.md
+diff --git a/docs/architecture/P3-milestone-status.md b/docs/architecture/P3-milestone-status.md
+index dab5746..3c97176 100644
+--- a/docs/architecture/P3-milestone-status.md
++++ b/docs/architecture/P3-milestone-status.md
+@@ -134,6 +134,39 @@ CAS + Provenance
+ - **Step 9 (Bundle Adjustment, PROVEN):** real GTSAM BA over the injected `ReconstructionOptimizer` seam. Adapter suite GA1вЂ“GA6 in `tests/unit/test_gtsam_bundle_adjustment.cpp` (`spatial_gtsam_adapter_tests`): GA1/GA2 real LM refinement reduces reprojection residual and moves poses; GA3 deterministic for fixed seed; GA4 fail-closed without observations; GA5 refuses non-LM optimizer; GA6 empty observations are a well-defined no-op. Runner-level BT1 in `test_p3_trajectory_optimization.cpp`: committedв†’appliedв†’retriangulated v3 chain, all superseded, v4 the sole succeeded revision, provably v3 superseded in the same transaction and (+100 ns) v4 timing, `nlohmann`-parsed optimizer telemetry asserts `converged=true` and `rms_after < rms_before`; validation via index-aligned `MeanDistanceToTruth` (id-keyed lookup is invalid because `Retriangulate` renumbers replaced rows). Runner Step-9 block `sparse_correction_runner.cpp:1704` chain-compacts the committed revision exactly once before BA; observations resolved STRICTLY from the corrected chain (v3) frameв†’feature linkage; the plain committed-only path (golden images-mode E2E) keeps the milestone-approved EMPTY observation list (`P3-production-e2e-verification-report.md` В§"runner passes an empty observation list") вЂ” an unresolvable-observation throw on that path regressed golden test #585 and is fixed. Suite verified with real GTSAM (not stub): **Debug 713/713** and **Release 713/713**.
+ - **Step 10 (Production visual-loop в†’ GTSAM E2E, PROVEN):** the SAME chain, entered ONLY through `Engine::RunPipeline("p3_sparse_correction", вЂ¦)` вЂ” one invocation per case, no direct host-stage calls. New `E2E1_FullProductionChainSingleInvocation` / `E2E2_NoMetricBasisYieldsNoCorrection` in `RealGtsamBundleAdjustmentTest`; all seams REAL (`L2NearestMatcher` + `EssentialGeometricVerifier` + `GtsamTrajectoryOptimizer` + `GtsamBundleAdjustmentOptimizer`). E2E1 (valid-basis О»=7 noise 0.4 px): closure accepted with `has_relative_pose` at the ~0.65 m baseline; PoseGraph edge is the verbatim measurement; real GTSAM converged + error reduced; node pulled в‰Ґ5 cm off the drift; applied revision via per-frame FrameID join toward truth in BOTH translation (<5 cm) and rotation (closer to truth than the drifted input); retriangulated v3 recomputed the geometry (images/cameras/tracks verbatim) toward truth (mean 0.85 m vs committed 1.99 m вЂ” the exact-pixel tightness <2 cm is RT1's separate claim); real BA v4 (LM, `rms_after < rms_before`, +100 ns, cameras verbatim, geometry changed); persistence: committed/applied/v3 superseded, v4 the SOLE succeeded+latest; feature artifacts untouched. E2E2 (basis `declared=false`): manifest FAILS (stage 0 succeeded, stage 1 failed via the D5 gate over the GA6 empty-observation no-op with the REAL BA seam); the closure is ACCEPTED with inliers but visual-only (`has_relative_pose=false`) вЂ” INV-3: NO PoseGraph, NO optimization (real GTSAM never invoked), NO applied, NO v3, NO v4; the committed reconstruction is the ONLY revision, byte-identical to the CAS input. Scheduler note (pre-existing, `test_p3_runner_context.cpp:1261-1275`): a failed stage is retried while the error is recoverable (the in-process executor marks every runner exception recoverable), so loop-closure evidence may accumulate across the retries; every instance is asserted accepted + visual-only. Suite #710 (`spatial_p3_trajectory_optimization_tests`) **21/21** Debug + Release with real GTSAM. **Step 10 E2E target: PASS.** **Full suite: NOT flat-green вЂ” known pre-existing MetadataDb concurrency flakes** (Debug 710/713, Release 711/713; only `MetadataDbTest` cases CreateAppliesMigrations / ReadOnlyRejectsWrites / FindOrCreateSceneCreatesOnce / RegisterSensorRoundTrip / ReadSurfaceResolvesSessionsAndScenes fail, differing subsets per run); **isolated 24/24** (`MetadataDbTest.*` passes fully in `spatial_unit_tests`), unrelated to this change (different test binary; only `test_p3_trajectory_optimization.cpp` was edited). `git diff --check` clean.
+ - **Step 11 (failure/recovery N1вЂ“N6 through `Engine::RunPipeline` ONLY, PROVEN):** the milestone's negative/recovery acceptance, all entered through the same surface with NO direct host-stage calls. **N1 damaged SHA-256** (`N1_DamagedSha256FailsClosedAndQuarantines`): a real, previously-Put CAS payload whose bytes are corrupted under the same content hash fails the read re-verification вЂ” manifest "failed", the corrupt payload QUARANTINED and its index row flagged `validation_status="degraded"`, nothing committed (no scene, no revision). **N2/N3/N5 inputs** (existing N1NonImprovingGateFailsThroughSurface / N2MissingInputFailsClosedAndNothingCommitted / N3NonSucceededPayloadFailsClosed / N5UnpinnedSeedFailsClosedBeforeAnyWrite) remain surface-level with `StubOptimizer`. **N3 mid-chain stage failure** (`N3_StageGateFailureRetainsV3NoV4`, trajectory suite): the full measured chain (LC в†’ PoseGraph в†’ real GTSAM trajectory optimization в†’ apply в†’ retriangulated v3 в†’ chain-compaction of the committed revision) runs but the seam's D5 gate REFUSES the refinement (rms_after == rms_before): retriangulated v3 is RETAINED as a succeeded revision (never erased), the committed revision IS compacted, and NO v4 row/artifact exists under ANY seam attempt; every succeeded revision is a `spatial_retriangulator` v3, latest is a v3; the failed stage's only published artifacts are measurement evidence (accepted loop closure), never a reconstruction output. **N4 all-status newest preflight** (`N4_NonSucceededNewestRejectedBeforeAnyWrite`): a scene whose newest revision (ANY status) is `reconstructing` is refused by the runner `sparse_correction_runner.cpp:1617-1632` BEFORE any DB write (P12) вЂ” the pre-seeded rows stay byte-identical, no closure/graph/result/revision evidence appears, `QueryLatest` correctly has no value. **N5 deterministic replay** (`N5_DeterministicReplayNeverDuplicatesRevisions`): identical re-run в†’ same `pipeline_hash`, same pass-through output, duplicate committed identity refused fail-closed, the lineage stays exactly run1's (superseded + succeeded v4 byte-identical to run1's terminal CAS artifact). **N6 cache + rollback** (`N6_CommittedStageNeverReplayedAndRerunRollsBack`): the DB-committing correction stage is `CachePolicy::kNever` вЂ” identical re-run replays the pure-CAS `sparse_reconstruction` stage from cache (`cache_hit=true`) but RE-EXECUTES the committing stage (`cache_hit=false`) and refuses again; the failed re-run wrote NOTHING вЂ” same two revision rows, same succeeded latest, no partial/duplicate writes. New tests: `spatial_p3_sparse_correction_pipeline_tests` **29/29**, `spatial_p3_trajectory_optimization_tests` **22/22** (N3 added to the Step 10 21/21). Full batteries this run: **Debug 717/717** and **Release 717/717** (no MetadataDb flakes this run). `git diff --check` clean. Remaining P3.1 acceptance items: CLI real providers, AC-22 (NOT started per GO).
++- **Step 12 (CLI real providers + CLI E2E through the SOLE user entry point, PROVEN):**  the CLI
++  composition root injects the REAL seam implementations вЂ” `L2NearestMatcher` +
++  `EssentialGeometricVerifier` + `GtsamTrajectoryOptimizer` + `GtsamBundleAdjustmentOptimizer`
++  (owned by the engine handle so the seam objects outlive the in-process runner's value-captured
++  pointers; code committed at HEAD `fbef42b` alongside the adapter links in `cli/CMakeLists.txt`,
++  the `--input <file>`/`--config <json>` run path, and the exit code вЂ” `RunCommand` returns 0 ONLY
++  on a succeeded manifest). GTSAM's runtime DLLs (tbb12/tbbmalloc) are copied post-build next to
++  `spatial.exe` so every child-spawned CLI works without a manual PATH. New
++  `tests/unit/test_cli_sparse_correction_e2e.cpp` (`spatial_cli_sparse_correction_e2e_tests`, 2
++  tests, discovery) spawns the REAL binary `spatial run p3_sparse_correction --project <dir>
++  --input <recon.json> --config <json>` and never calls internal stages directly:
++  **positive** вЂ” exit 0, manifest "succeeded" with BOTH stages succeeded, and the FULL v4 chain
++  persisted (4 rows: committed `colmap` superseded and byte-identical to the submitted document,
++  `spatial_optimizer` applied superseded, `spatial_retriangulator` v3 superseded with v3
++  images/cameras verbatim, real-GTSAM `spatial_gtsam_bundle_adjuster` v4 the SOLE succeeded +
++  latest with LM `rms_after < rms_before`, byte-identical intrinsics, `created_at_ns == v3 + 100`);
++  the geometry really changed through the CLI (mean v3 error < committed error > 5 cm, v3 moved)
++  and the GTSAM trajectory optimization converged with the node pulled в‰Ґ 5 cm off the drift;
++  **negative** вЂ” a fail-closed config (missing `random_seed`, D6) yields exit code 1 with a
++  "failed" manifest (stage 0 succeeded, stage 1 failed) and NO database writes (P12: no scene, no
++  revision rows). The GTSAM LM damping diagnostic (`Partial Cholesky on HessianFactor failed`) is
++  emitted to stdout before the manifest and is tolerated by the test's JSON scanner (identical to
++  the in-process E2E behaviour). Full batteries **Debug 719/719** and **Release 719/719** (Step 11
++  was 717/717; the +2 are the CLI E2E cases); the pre-existing CLI-spawn suites
++  (`CliImportTest` 4/4, `CliFeatureExtractionTest` 4/4) still pass against the GTSAM-linked
++  `spatial.exe` via the copied DLLs. Gates 7/7 PASS (`check_dependencies`, `check_schemas`,
++  `check_worker_boundary`, `check_arch_debt`, `check_domain_types`, `check_rfc`, `check_constitution
++  --base HEAD --rfc RFC-0000`); `git diff --check` clean (tracked diff = `tests/CMakeLists.txt`
++  block activation only) and the new test file has no trailing whitespace. Remaining P3.1 items:
++  AC-22 (PROVEN 2026-09-12: `AC22_DeterministicSecondRunThroughProductionSurface` twin вЂ” two fresh
++  `Engine::RunPipeline` invocations through REAL GTSAM seams, semantic equivalence asserted,
++  N5 duplicate-refusal re-proven; Debug EXIT 0 Release EXIT 0; full trajectory 23/23 + CLI
++  sparse-correction e2e 2/2 + production e2e 8/8 in both configs).
+ 
+ ---
+ 
+
+
+##### FILE: docs/architecture/P3.1-production-sparse-correction-verification-report.md
+diff --git a/docs/architecture/P3.1-production-sparse-correction-verification-report.md b/docs/architecture/P3.1-production-sparse-correction-verification-report.md
+index 1126aa4..9d5bffc 100644
+--- a/docs/architecture/P3.1-production-sparse-correction-verification-report.md
++++ b/docs/architecture/P3.1-production-sparse-correction-verification-report.md
+@@ -222,7 +222,7 @@ This table preserves the original AC numbers and meanings. Evidence explicitly m
+ | AC-19: N4 | Top-level negative absent | NOT PROVEN |
+ | AC-20: N5 | Partial seed validation proof, full path not implemented | NOT PROVEN |
+ | AC-21: N6 | Top-level negative/all-status check absent | NOT PROVEN |
+-| AC-22: Deterministic second run | No double-run | NOT PROVEN |
++| AC-22: Deterministic second run | Twin double-run via `Engine::RunPipeline` (two fresh projects, real GTSAM seams), Debug EXIT 0 + Release EXIT 0 | PROVEN |
+ | AC-23: Debug full suite | 676/676 historical; new completed-implementation matrix not run | NOT PROVEN |
+ | AC-24: Release full suite | 676/676 historical; new completed-implementation matrix not run | NOT PROVEN |
+ | AC-25: Architecture gates | Fresh execution of all seven gates in section 21 | PROVEN |
+

@@ -1,0 +1,75 @@
+### git log --oneline -8 ###
+fbef42b feat(engine): P3.1 sparse-correction closure - calibrated essential verifier, GTSAM trajectory/BA optimizers, host runner, and CLI composition root (Step 12 CLI E2E target deferred pending test file)
+a3768c3 feat(engine): COLMAP bundle adjustment adapter, reprojection/triangulation core, and production sparse-correction e2e pipelines (P3-impl-8)
+a3e13d1 docs: point ADR/Constitution links to the real governance repo (SystemDesignInstall/spatial-rfcs)
+9942629 feat(engine): loop-closure optimize pipeline, pose-graph stage, and reconstruction feedback (P3-impl-7 phase3)
+2c2b0a7 refactor(core): reuse MakeCameraPose, drop raw Eigen from reconstruction feedback seam
+38f9e69 feat(core): header-only ApplyOptimizedTrajectory seam implementation (P3-impl-7, Mapping §12.1)
+e1030f1 feat(core): reconstruction lifecycle status API + optimized-trajectory feedback seam (P3-impl-7 blockers)
+8418235 feat(engine): geometric loop-closure verification (P3-impl-7b)
+
+### git status --short ###
+M docs/architecture/P3-milestone-status.md
+ M docs/architecture/P3.1-production-sparse-correction-verification-report.md
+ M tests/CMakeLists.txt
+ M tests/unit/test_p3_trajectory_optimization.cpp
+?? ac22_both_docs_full.txt
+?? ac22_commit_preview_gen.py
+?? ac22_docs_diff_utf8.txt
+?? ac22_dump_diffs.py
+?? ac22_final_truth_gen.py
+?? ac22_ground_truth_dump.py
+?? ac22_ground_truth_dump.txt
+?? ac22_head_docs_lines.txt
+?? ac22_lines_dump.py
+?? ac22_milestone.diff
+?? ac22_purity_check.py
+?? ac22_report.diff
+?? ac22_report_utf8.diff.txt
+?? ac22_scratch/
+?? ac22_truth_check_report.txt
+?? ac22_truth_final.txt
+?? cli_preview_milestone.diff
+?? cli_preview_milestone.diff.txt
+?? cli_preview_report.diff
+?? cli_preview_report.diff.txt
+?? gen_ac22_docs_diff_utf8.py
+?? gen_ac22_fresh.py
+?? gen_ac22_fresh_truth.py
+?? gen_ac22_head_lines.py
+?? milestone_hunks_gen.py
+?? ms_diff_here.diff
+?? rep_diff_here.diff
+?? tests/unit/test_cli_sparse_correction_e2e.cpp
+?? tmp/
+?? tmp_ac22_hunklines.py
+?? tmp_ac22_preview.py
+?? tmp_dump_milestone_utf8.py
+
+### git diff --stat HEAD ###
+docs/architecture/P3-milestone-status.md           |  33 +
+ ...uction-sparse-correction-verification-report.md |   2 +-
+ tests/CMakeLists.txt                               |  53 +-
+ tests/unit/test_p3_trajectory_optimization.cpp     | 798 +++++++++++++++++++++
+ 4 files changed, 857 insertions(+), 29 deletions(-)
+
+### MILESTONE: lines of interest in HEAD ###
+   HEAD 136 | - **Step 11 (failure/recovery N1–N6 through `Engine::RunPipeline` ONLY, PROVEN):** the milestone's negative/recovery acceptance, all entered through the same surface with NO direct
+
+### MILESTONE: lines of interest in WORKING (file) ###
+   WORK 136 | - **Step 11 (failure/recovery N1–N6 through `Engine::RunPipeline` ONLY, PROVEN):** the milestone's negative/recovery acceptance, all entered through the same surface with NO direct
+   WORK 137 | - **Step 12 (CLI real providers + CLI E2E through the SOLE user entry point, PROVEN):**  the CLI
+   WORK 165 | block activation only) and the new test file has no trailing whitespace. Remaining P3.1 items:
+   WORK 166 | AC-22 (PROVEN 2026-09-12: `AC22_DeterministicSecondRunThroughProductionSurface` twin — two fresh
+
+### REPORT: lines of interest in WORKING ###
+   WORK 225 | | AC-22: Deterministic second run | Twin double-run via `Engine::RunPipeline` (two fresh projects, real GTSAM seams), Debug EXIT 0 + Release EXIT 0 | PROVEN |
+
+### MILESTONE diff hunks (working vs HEAD): token purity per hunk ###
+  HUNK @@ -134,6 +134,39 @@ CAS + Provenance tokens=['AC22', 'CLI', 'Step12'] add=33 del=0
+
+### REPORT diff hunks (working vs HEAD) ###
+  HUNK @@ -222,7 +222,7 @@ This table preserves the original AC numbers and meanings. Evidence explicitly m add=1 del=1
+
+### git diff --check (rc) ###
+  rc=0 stderr=''

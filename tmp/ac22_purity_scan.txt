@@ -1,0 +1,73 @@
+########## 1) TEST hunk purity ##########
+  HUNK @@ -51,6 +51,7 @@ | add=1 ac_ids=[] cli=False e2e=False
+  HUNK @@ -75,6 +76,7 @@ using spatial::core::Recon | add=1 ac_ids=[] cli=False e2e=False
+  HUNK @@ -1936,6 +1938,802 @@ TEST_F(RealGtsamBund | add=796 ac_ids=['22'] cli=False e2e=False
+     + [ac22] // AC-22 вЂ” DETERMINISTIC SECOND RUN THROUGH THE PRODUCTION SURFACE.
+     + [ac22] // Engine::RunPipeline("p3_sparse_correction", ...) against a FRESH project
+     + [ac22] json cfg;  // parsed config exactly as submitted to RunPipeline
+     + [ac22] // REAL seams, using the pinned AC-22 identity constants and the caller's
+     + [ac22] ev->manifest = engine->RunPipeline(kSparseCorrectionPipelineId,
+     + [ac22] // Semantic equality of two reconstruction revision documents for the AC-22
+     + [ac22] AC22_DeterministicSecondRunThroughProductionSurface) {
+     + [ac22] const auto replay = engine_a->RunPipeline(kSparseCorrectionPipelineId,
+     + [misc?] // fails closed (N5) instead of executing the chain again. That replay IS the
+     + [misc?] db.FindPoseGraphsByTrajectory(ParseUuid(kAc22TrajectoryId));
+     + [misc?] void ExpectPoseGraphCoreEqual(const Ac22TwinEvidence& a,
+     + [misc?] ASSERT_EQ(na["covariance_position"].size(),
+     + [misc?] nb["covariance_position"].size());
+     + [misc?] for (std::size_t k = 0; k < na["covariance_position"].size(); ++k)
+     + [misc?] EXPECT_NEAR(na["covariance_position"][k].get<double>(),
+     + [misc?] nb["covariance_position"][k].get<double>(), kAc22PoseTol);
+     + [misc?] ASSERT_EQ(na["covariance_rotation"].size(),
+     + [misc?] nb["covariance_rotation"].size());
+     + [misc?] for (std::size_t k = 0; k < na["covariance_rotation"].size(); ++k)
+     + [misc?] EXPECT_NEAR(na["covariance_rotation"][k].get<double>(),
+     + [misc?] nb["covariance_rotation"][k].get<double>(), kAc22PoseTol);
+     + [misc?] ExpectPoseGraphCoreEqual(ev_a, ev_b);
+
+########## 2) MILESTONE @HEAD: 'Remaining P3.1 items' + AC-22 ##########
+    136| - **Step 11 (failure/recovery N1вЂ“N6 through `Engine::RunPipeline` ONLY, PROVEN):** the milestone's negative/recovery acceptance, all entered through the same surface with NO dire
+
+########## 3) REPORT diff hunks ##########
+   HUNK @@ -222,7 +222,7 @@ This table preserves the | AC22=True CLI=False add=1 del=1
+      - | | AC-22: Deterministic second run | No double-run | NOT PROVEN |
+      + | | AC-22: Deterministic second run | Twin double-run via `Engine::RunPipeline` (two fresh projects, real GTSAM seams), Debug EXIT 0 + Release EXIT 0 | PROVEN |
+
+########## 4) git diff --check ##########
+   exit_stdout=''  stderr=''
+
+########## 5) git status --short ##########
+    M docs/architecture/P3-milestone-status.md
+    M docs/architecture/P3.1-production-sparse-correction-verification-report.md
+    M tests/CMakeLists.txt
+    M tests/unit/test_p3_trajectory_optimization.cpp
+   ?? ac22_both_docs_full.txt
+   ?? ac22_commit_preview_gen.py
+   ?? ac22_docs_diff_utf8.txt
+   ?? ac22_dump_diffs.py
+   ?? ac22_milestone.diff
+   ?? ac22_purity_check.py
+   ?? ac22_report.diff
+   ?? ac22_report_utf8.diff.txt
+   ?? ac22_scratch/
+   ?? ac22_truth_check_report.txt
+   ?? cli_preview_milestone.diff
+   ?? cli_preview_milestone.diff.txt
+   ?? cli_preview_report.diff
+   ?? cli_preview_report.diff.txt
+   ?? gen_ac22_docs_diff_utf8.py
+   ?? milestone_hunks_gen.py
+   ?? ms_diff_here.diff
+   ?? rep_diff_here.diff
+   ?? tests/unit/test_cli_sparse_correction_e2e.cpp
+   ?? tmp/
+   ?? tmp_ac22_hunklines.py
+   ?? tmp_ac22_preview.py
+   ?? tmp_dump_milestone_utf8.py
+
+########## 6) git diff --stat ##########
+    docs/architecture/P3-milestone-status.md           |  33 +
+    ...uction-sparse-correction-verification-report.md |   2 +-
+    tests/CMakeLists.txt                               |  53 +-
+    tests/unit/test_p3_trajectory_optimization.cpp     | 798 +++++++++++++++++++++
+    4 files changed, 857 insertions(+), 29 deletions(-)

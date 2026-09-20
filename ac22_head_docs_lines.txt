@@ -1,0 +1,5 @@
+### HEAD milestone: Step 12 / CLI / AC-22 / Remaining ###
+     136 | - **Step 11 (failure/recovery N1вЂ“N6 through `Engine::RunPipeline` ONLY, PROVEN):** the milestone's negative/recovery acceptance, all entered through the same surface with NO direct host-stage calls.
+
+### HEAD report: AC-22 ###
+     225 | | AC-22: Deterministic second run | No double-run | NOT PROVEN |
