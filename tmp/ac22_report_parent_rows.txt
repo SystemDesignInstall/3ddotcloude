@@ -1,0 +1,4 @@
+parent report total lines=238
+=== full AC-22 rows in PARENT report ===
+  L225 | | AC-22: Deterministic second run | No double-run | NOT PROVEN |
+AC-22 row anchor count = 1

@@ -1,0 +1,823 @@
+﻿diff --git a/tests/unit/test_p3_trajectory_optimization.cpp b/tests/unit/test_p3_trajectory_optimization.cpp
+index 3de31f1..5c82b91 100644
+--- a/tests/unit/test_p3_trajectory_optimization.cpp
++++ b/tests/unit/test_p3_trajectory_optimization.cpp
+@@ -51,6 +51,7 @@
+ #include "core/reconstruction/reconstruction_json.h"
+ #include "core/storage/metadata_db.h"
+ #include "core/utils/fs.h"
++#include "core/utils/sha256.h"
+ #include "core/utils/uuid.h"
+ #include "engine/engine.h"
+ #include "engine/pipeline/feature_extraction.h"
+@@ -75,6 +76,7 @@ using spatial::core::ReconImage;
+ using spatial::core::ReconPoint3D;
+ using spatial::core::Reconstruction;
+ using spatial::core::ReconstructionToJson;
++using spatial::core::Sha256Hex;
+ using spatial::core::Uuid;
+ using spatial::core::fs::Iso8601UtcNow;
+ using spatial::core::geometry::BundleAdjustmentInput;
+@@ -1936,6 +1938,802 @@ TEST_F(RealGtsamBundleAdjustmentTest,
+             "spatial_retriangulator");
+ }
+ 
++// ===========================================================================
++// AC-22 тАФ DETERMINISTIC SECOND RUN THROUGH THE PRODUCTION SURFACE.
++// ===========================================================================
++//
++// Two INDEPENDENT runs of the FULL corrected chain тАФ each driven by ONE
++// Engine::RunPipeline("p3_sparse_correction", ...) against a FRESH project
++// with ALL FOUR seams real (L2NearestMatcher + EssentialGeometricVerifier +
++// GtsamTrajectoryOptimizer + GtsamBundleAdjustmentOptimizer) тАФ over
++// BIT-IDENTICAL pinned inputs: fixed identity constants (reconstruction,
++// frames, candidate, trajectory), one rendered scene, one committed geometry,
++// one pinned non-empty random_seed. Nothing below calls a host-stage function
++// directly; the engine surface is the only entry point.
++//
++// Why two projects? The DB-committing correction stage is CachePolicy::kNever
++// and MetadataDb::AddReconstruction is a plain PK INSERT: a second identical
++// invocation in the SAME project refuses the duplicate committed identity and
++// fails closed (N5) instead of executing the chain again. That replay IS the
++// N5 contract (asserted below), but it is not a computation probe. The twin
++// projects provide the probe: two genuine serial executions that must agree
++// semantically.
++//
++// Numerical tolerance: asserted EXACTLY (EXPECT_DOUBLE_EQ) where the contract
++// is bit-deterministic тАФ the measurement path (fixed-seed RANSAC over fixed
++// pixels, plus the pure D6 unit->metric resolution against fixed trajectory
++// nodes; the pose-graph edge is a VERBATIM copy of that measurement) тАФ and
++// with small ABSOLUTE tolerances where identical in-process GTSAM LM solves
++// (single-threaded, COLAMD-ordered factor graph, no random numbers; the pinned
++// seed is validated/recorded but consumed by none of the seams) and the frozen
++// DLT/D5/apply re-derivations are expected to reproduce:
++//   kAc22PoseTol      = 1e-9  тАФ optimized/optimizer-fed pose arrays and BA
++//                               rms/mean px telemetry (9 orders below any
++//                               measurement significance);
++//   kAc22GeometryTol  = 1e-6  тАФ re-triangulated / BA-refined 3D world points
++//                               (metres; the DLT and LM maps here are
++//                               well-conditioned so accumulated FPU noise is
++//                               orders of magnitude smaller).
++// A future port to a different FPU that reorders the LM summations is the
++// documented reason to widen a kAc22*Tol bound тАФ NOT a reason to weaken a
++// semantic comparison below it.
++//
++// Runtime-only identity (fresh UUIDs тАФ closure_id, graph_id, result_id,
++// revision/artifact ids; the wall-clock closure created_at; the per-project DB
++// scene id; the project_id inside the config) is compared BY CONTRACT: the two
++// configs provably differ in exactly the project_id, which changes only the
++// config/pipeline hash and never a semantic value.
++//
++// The block also re-proves the N5 duplicate refusal with the REAL seams (the
++// N5 suite used the StubOptimizer): a third identical invocation in run A's
++// project must fail closed at the duplicate committed identity, leave the
++// revision lineage byte-identical, and never produce a divergent reconstruction.
++constexpr const char* kAc22ProjectA = "10000000-0000-4000-8000-000000000001";
++constexpr const char* kAc22ProjectB = "10000000-0000-4000-8000-000000000002";
++constexpr const char* kAc22ReconId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
++constexpr const char* kAc22SrcFrame = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
++constexpr const char* kAc22TgtFrame = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
++constexpr const char* kAc22CandidateId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
++constexpr const char* kAc22TrajectoryId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
++constexpr const char* kAc22Seed = "pinned-ac22";
++constexpr const char* kAc22SceneName = "ac22_scene";
++constexpr double kAc22PoseTol = 1e-9;
++constexpr double kAc22GeometryTol = 1e-6;
++constexpr double kAc22TelemetryTol = 1e-9;
++
++struct Ac22TwinEvidence {
++  spatial::engine::ExecutionManifest manifest;
++  json cfg;  // parsed config exactly as submitted to RunPipeline
++  std::string recon_hash;
++  std::string src_art_hash;
++  std::string tgt_art_hash;
++  json closure;      // loop-closure CAS payload closures[0]
++  json graph_doc;    // pose-graph CAS document
++  json opt_payload;  // optimization-result CAS document
++  json applied;
++  json v3;
++  json v4;
++  std::vector<spatial::core::ReconstructionRow> rows;
++};
++
++class Ac22DeterminismTest : public RealGtsamBundleAdjustmentTest {
++ protected:
++  // Runs the ENTIRE production chain in a FRESH project wired with all four
++  // REAL seams, using the pinned AC-22 identity constants and the caller's
++  // fixed committed geometry/pixels. The engine is returned by value (its DB
++  // handle stays open, so the caller must destroy it before TearDown removes
++  // root_); basic run results land in `ev`, the geometry evidence is collected
++  // by CollectEvidence (called from the test body where ASSERT is legal).
++  std::unique_ptr<Engine> RunAc22Twin(const std::string& dir_name,
++                                      const std::string& project_uuid,
++                                      const CommittedGeometry& committed,
++                                      const RenderedScene& rendered,
++                                      Ac22TwinEvidence* ev) {
++    ProjectInfo info;
++    info.uuid = ParseUuid(project_uuid);
++    info.name = "ac22-" + dir_name;
++    info.created_at = Iso8601UtcNow();
++    auto project = std::make_unique<Project>(
++        Project::Create(root_ / (dir_name + ".spx"), info));
++
++    const std::string src_frame = kAc22SrcFrame;
++    const std::string tgt_frame = kAc22TgtFrame;
++    const std::string traj = kAc22TrajectoryId;
++
++    // The committed reconstruction: identical bytes in both projects (fixed
++    // identity + fixed geometry), so the input recon_hash is bit-identical.
++    Reconstruction recon;
++    recon.reconstruction_id = kAc22ReconId;
++    recon.scene_id = "22222222-2222-4222-8222-222222222222";
++    recon.session_ids = {"33333333-3333-4333-8333-333333333333"};
++    recon.coordinate_frame = "trajectory_0";
++    recon.status = "succeeded";
++    recon.created_at_ns = 100;
++    recon.provenance.backend.name = "colmap";
++    recon.provenance.backend.version = "v2";
++    recon.provenance.backend.adapter_version = "test";
++    recon.provenance.configuration_hash =
++        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
++    recon.cameras.push_back(PinholeCamera(1));
++    recon.cameras.push_back(PinholeCamera(2));
++    const Eigen::Vector3d drifted_t = DriftedTargetTranslation();
++    const std::array<double, 4> drifted_r = QuatXyzw(DriftedTargetRotation());
++    ReconImage src_img;
++    src_img.image_id = 1;
++    src_img.camera_id = 1;
++    src_img.frame_id = src_frame;
++    src_img.name = "frame_s.jpg";
++    src_img.pose.rotation_xyzw = {0.0, 0.0, 0.0, 1.0};
++    src_img.pose.translation_xyz = {0.0, 0.0, 0.0};
++    src_img.detected = true;
++    ReconImage tgt_img;
++    tgt_img.image_id = 2;
++    tgt_img.camera_id = 2;
++    tgt_img.frame_id = tgt_frame;
++    tgt_img.name = "frame_t.jpg";
++    tgt_img.pose.rotation_xyzw = drifted_r;
++    tgt_img.pose.translation_xyz = {drifted_t.x(), drifted_t.y(),
++                                    drifted_t.z()};
++    tgt_img.detected = true;
++    recon.images.push_back(src_img);
++    recon.images.push_back(tgt_img);
++    recon.points3D = committed.points;
++    const std::string doc = ReconstructionToJson(recon);
++    const std::vector<std::uint8_t> doc_bytes(doc.begin(), doc.end());
++    ArtifactManifest doc_manifest;
++    doc_manifest.artifact_uuid = GenerateUuid();
++    doc_manifest.type = "reconstruction";
++    doc_manifest.schema_version = 2;
++    doc_manifest.producer = {"spatial-platform", "0.1.0", "test"};
++    doc_manifest.creation_timestamp = Iso8601UtcNow();
++    const std::string recon_hash =
++        project->artifacts().Put(doc_bytes, doc_manifest).content_hash;
++
++    auto& db = project->db();
++    auto& store = project->artifacts();
++    auto put_features = [&](const Uuid& frame_id,
++                            const std::vector<std::pair<double, double>>& pts,
++                            std::string* content_hash) {
++      WriteFeatureArtifactInput input;
++      input.frame_id = frame_id;
++      input.detector = "mock";
++      input.descriptor_type = "mock_16";
++      input.input_content_hash = "image-" + FormatUuid(frame_id);
++      for (std::size_t i = 0; i < pts.size(); ++i) {
++        input.keypoints.push_back(
++            {pts[i].first, pts[i].second, 1.0, 0.0, 0.5});
++        std::uint32_t h = static_cast<std::uint32_t>(i + 1) * 2654435761u;
++        std::vector<double> row(16);
++        for (auto& v : row) {
++          h = h * 1664525u + 1013904223u;
++          v = static_cast<double>(h >> 8) * (1.0 / 16777216.0);
++        }
++        input.descriptors.push_back(std::move(row));
++      }
++      const FeatureExtractionResult result =
++          WriteFeatureArtifact(store, db, input);
++      if (content_hash != nullptr) *content_hash = result.content_hash;
++      return FormatUuid(result.artifact_uuid);
++    };
++    // Fixed frame ids + fixed pixels/descriptors -> bit-identical feature
++    // payloads across the twins (SHA-256 of the payload is the CAS content
++    // hash, so the feature content hashes agree as well).
++    const std::string src_art =
++        put_features(ParseUuid(src_frame), rendered.pair.src, &ev->src_art_hash);
++    const std::string tgt_art =
++        put_features(ParseUuid(tgt_frame), rendered.pair.tgt, &ev->tgt_art_hash);
++
++    // Drifted trajectory context mirroring RunDrifted, with FIXED identities.
++    const Eigen::Vector3d drifted = DriftedTargetTranslation();
++    const std::array<double, 4> drifted_node_r =
++        QuatXyzw(DriftedTargetRotation());
++    const json nodes = json::array(
++        {{{"frame_id", src_frame},
++          {"timestamp_ns", 2000},
++          {"sequence_index", 0},
++          {"position_xyz", {0.0, 0.0, 0.0}},
++          {"rotation_xyzw", {0.0, 0.0, 0.0, 1.0}}},
++         {{"frame_id", tgt_frame},
++          {"timestamp_ns", 1000},
++          {"sequence_index", 7},
++          {"position_xyz", {drifted.x(), drifted.y(), drifted.z()}},
++          {"rotation_xyzw",
++           {drifted_node_r[0], drifted_node_r[1], drifted_node_r[2],
++            drifted_node_r[3]}}}});
++    const json basis = {{"declared", true},
++                        {"type", "odometry_scale"},
++                        {"source", "trajectory"},
++                        {"scale_calibration_ref", "calib-ref-1"},
++                        {"provenance",
++                         {{"configuration_hash",
++                           "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
++                           "bbbbbbbb"}}}};
++    const json lc = {
++        {"metric",
++         {{"trajectory",
++           {{"trajectory_id", traj},
++            {"scene_id", "scene-1"},
++            {"session_id", "session-1"},
++            {"kind", "sfm"},
++            {"coordinate_frame", "trajectory_0"},
++            {"status", "building"},
++            {"created_at_ns", 0},
++            {"metric_basis", basis},
++            {"nodes", nodes}}}}},
++        {"loop_closure",
++         {{"candidate",
++           {{"candidate_id", kAc22CandidateId},
++            {"trajectory_id", traj},
++            {"source_frame_id", src_frame},
++            {"target_frame_id", tgt_frame},
++            {"feature_match_score", 999.0},
++            {"matcher", "visual_l2_nearest"},
++            {"created_at_ns", 0}}},
++          {"source_frame",
++           {{"frame_id", src_frame},
++            {"timestamp_ns", 2000},
++            {"feature_artifact_uuid", src_art}}},
++          {"target_frame",
++           {{"frame_id", tgt_frame},
++            {"timestamp_ns", 1000},
++            {"feature_artifact_uuid", tgt_art}}}}}};
++    json cfg = {{"project_id", project_uuid},
++                {"scene_name", kAc22SceneName},
++                {"random_seed", kAc22Seed}};
++    cfg.update(lc);
++
++    SparseCorrectionSeams seams;
++    seams.ba_optimizer = &real_ba_;
++    seams.matcher = &matcher_;
++    seams.verifier = &essential_;
++    seams.trajectory_optimizer = &gtsam_;
++    auto engine = std::make_unique<Engine>(
++        std::move(*project),
++        MakeSparseCorrectionRunner(db, store, seams, {}),
++        SparseCorrectionProfile());
++    project.reset();
++    RegisterProductionPipelines(engine->registry());
++
++    ev->manifest = engine->RunPipeline(kSparseCorrectionPipelineId,
++                                       {recon_hash}, cfg.dump());
++    ev->cfg = std::move(cfg);
++    ev->recon_hash = recon_hash;
++    return engine;
++  }
++
++  // Classifies the persisted revisions and resolves the canonical evidence of
++  // one twin. ASSERT is legal here (void return).
++  void CollectEvidence(Engine& engine, const Uuid& project_id,
++                       Ac22TwinEvidence* ev) {
++    auto& db = engine.project().db();
++    auto& store = engine.project().artifacts();
++    const auto scene = db.FindSceneByProject(project_id);
++    ASSERT_TRUE(scene.has_value());
++    ev->rows = db.FindReconstructionsByScene(scene->scene_id);
++
++    const auto lc_rows = db.FindArtifactsByType("loop_closure");
++    ASSERT_EQ(lc_rows.size(), 1u);
++    const auto lc_bytes = store.Get(lc_rows.front().content_hash);
++    ASSERT_TRUE(lc_bytes.has_value());
++    const json lc_payload =
++        json::parse(std::string(lc_bytes->begin(), lc_bytes->end()));
++    ASSERT_EQ(lc_payload["closures"].size(), 1u);
++    ev->closure = lc_payload["closures"][0];
++
++    const auto graphs =
++        db.FindPoseGraphsByTrajectory(ParseUuid(kAc22TrajectoryId));
++    ASSERT_EQ(graphs.size(), 1u);
++    ev->graph_doc = json::parse(graphs[0].document_json);
++
++    const auto opt_artifacts = db.FindArtifactsByType("optimization_result");
++    ASSERT_EQ(opt_artifacts.size(), 1u);
++    const auto opt_bytes = store.Get(opt_artifacts.front().content_hash);
++    ASSERT_TRUE(opt_bytes.has_value());
++    ev->opt_payload =
++        json::parse(std::string(opt_bytes->begin(), opt_bytes->end()));
++
++    ev->applied = FindDocByBackend(ev->rows, "spatial_optimizer");
++    ev->v3 = FindDocByBackend(ev->rows, "spatial_retriangulator");
++    ev->v4 = FindDocByBackend(ev->rows, "spatial_gtsam_bundle_adjuster");
++    ASSERT_FALSE(ev->applied.is_null());
++    ASSERT_FALSE(ev->v3.is_null());
++    ASSERT_FALSE(ev->v4.is_null());
++  }
++
++  static json FindDocByBackend(
++      const std::vector<spatial::core::ReconstructionRow>& rows,
++      const std::string& backend_name) {
++    for (const auto& row : rows) {
++      const json doc = json::parse(row.document_json);
++      if (doc.at("provenance").at("backend").at("name").get<std::string>() ==
++          backend_name)
++        return doc;
++    }
++    EXPECT_TRUE(false) << "no revision with backend '" << backend_name << "'";
++    return json();
++  }
++
++  // Exact comparison of the semantic loop-closure measurement: every persisted
++  // closure field except the runtime instance identity (closure_id, the
++  // wall-clock created_at_ns), which are compared by contract.
++  void ExpectClosureCoreEqual(const Ac22TwinEvidence& a,
++                              const Ac22TwinEvidence& b) const {
++    EXPECT_EQ(a.closure["trajectory_id"], b.closure["trajectory_id"]);
++    EXPECT_EQ(a.closure["trajectory_id"].get<std::string>(),
++              std::string(kAc22TrajectoryId));
++    EXPECT_EQ(a.closure["candidate_id"], b.closure["candidate_id"]);
++    EXPECT_EQ(a.closure["candidate_id"].get<std::string>(),
++              std::string(kAc22CandidateId));
++    EXPECT_EQ(a.closure["source_frame_id"], b.closure["source_frame_id"]);
++    EXPECT_EQ(a.closure["source_frame_id"].get<std::string>(),
++              std::string(kAc22SrcFrame));
++    EXPECT_EQ(a.closure["target_frame_id"], b.closure["target_frame_id"]);
++    EXPECT_EQ(a.closure["target_frame_id"].get<std::string>(),
++              std::string(kAc22TgtFrame));
++    EXPECT_EQ(a.closure["status"].get<std::string>(), "accepted");
++    EXPECT_EQ(b.closure["status"].get<std::string>(), "accepted");
++    EXPECT_TRUE(a.closure["has_relative_pose"].get<bool>());
++    EXPECT_TRUE(b.closure["has_relative_pose"].get<bool>());
++    EXPECT_GT(a.closure["inlier_count"].get<std::int64_t>(), 0);
++    EXPECT_EQ(a.closure["inlier_count"].get<std::int64_t>(),
++              b.closure["inlier_count"].get<std::int64_t>());
++    EXPECT_EQ(a.closure["temporal_separation_ns"].get<std::int64_t>(),
++              b.closure["temporal_separation_ns"].get<std::int64_t>());
++    // bit-deterministic measurement path: fixed-seed RANSAC + pure D6 resolver
++    EXPECT_DOUBLE_EQ(a.closure["inlier_ratio"].get<double>(),
++                     b.closure["inlier_ratio"].get<double>());
++    EXPECT_DOUBLE_EQ(a.closure["confidence"].get<double>(),
++                     b.closure["confidence"].get<double>());
++    EXPECT_DOUBLE_EQ(a.closure["spatial_separation_m"].get<double>(),
++                     b.closure["spatial_separation_m"].get<double>());
++    for (int i = 0; i < 3; ++i)
++      EXPECT_DOUBLE_EQ(a.closure["relative_position_xyz"][i].get<double>(),
++                       b.closure["relative_position_xyz"][i].get<double>());
++    for (int i = 0; i < 4; ++i)
++      EXPECT_DOUBLE_EQ(a.closure["relative_rotation_xyzw"][i].get<double>(),
++                       b.closure["relative_rotation_xyzw"][i].get<double>());
++    EXPECT_DOUBLE_EQ(a.closure["geometric_residual"].get<double>(),
++                     b.closure["geometric_residual"].get<double>());
++    // runtime identity by contract: a fresh closure id per execution
++    EXPECT_NE(a.closure["closure_id"], b.closure["closure_id"]);
++    EXPECT_NE(a.closure["created_at_ns"], b.closure["created_at_ns"]);
++  }
++
++  // Pose-graph: nodes + the verbatim metric edge, compared on every semantic
++  // field (graph_id is runtime-only; the edge configuration_hash carries the
++  // project-specific pipeline hash).
++  void ExpectPoseGraphCoreEqual(const Ac22TwinEvidence& a,
++                                const Ac22TwinEvidence& b) const {
++    EXPECT_EQ(a.graph_doc["trajectory_id"], b.graph_doc["trajectory_id"]);
++    EXPECT_EQ(a.graph_doc["trajectory_id"].get<std::string>(),
++              std::string(kAc22TrajectoryId));
++    EXPECT_NE(a.graph_doc["graph_id"], b.graph_doc["graph_id"]);
++    ASSERT_EQ(a.graph_doc["nodes"].size(), 2u);
++    ASSERT_EQ(b.graph_doc["nodes"].size(), 2u);
++    for (int i = 0; i < 2; ++i) {
++      EXPECT_EQ(a.graph_doc["nodes"][i]["node_id"],
++                b.graph_doc["nodes"][i]["node_id"]);
++      EXPECT_EQ(a.graph_doc["nodes"][i]["frame_id"],
++                b.graph_doc["nodes"][i]["frame_id"]);
++      EXPECT_EQ(a.graph_doc["nodes"][i]["timestamp_ns"],
++                b.graph_doc["nodes"][i]["timestamp_ns"]);
++    }
++    ASSERT_EQ(a.graph_doc["edges"].size(), 1u);
++    ASSERT_EQ(b.graph_doc["edges"].size(), 1u);
++    const json& ea = a.graph_doc["edges"][0];
++    const json& eb = b.graph_doc["edges"][0];
++    EXPECT_EQ(ea["type"], eb["type"]);
++    EXPECT_EQ(ea["type"].get<std::string>(), "loop_closure");
++    EXPECT_EQ(ea["source"], eb["source"]);
++    EXPECT_EQ(ea["source_node_id"], eb["source_node_id"]);
++    EXPECT_EQ(ea["source_node_id"].get<std::int64_t>(), 0);
++    EXPECT_EQ(ea["target_node_id"], eb["target_node_id"]);
++    EXPECT_EQ(ea["target_node_id"].get<std::int64_t>(), 1);
++    for (int i = 0; i < 3; ++i)
++      EXPECT_DOUBLE_EQ(ea["relative_position_xyz"][i].get<double>(),
++                       eb["relative_position_xyz"][i].get<double>());
++    for (int i = 0; i < 4; ++i)
++      EXPECT_DOUBLE_EQ(ea["relative_rotation_xyzw"][i].get<double>(),
++                       eb["relative_rotation_xyzw"][i].get<double>());
++    ASSERT_EQ(ea["information_matrix_6x6"].size(), 36u);
++    ASSERT_EQ(eb["information_matrix_6x6"].size(), 36u);
++    for (int i = 0; i < 36; ++i)
++      EXPECT_DOUBLE_EQ(ea["information_matrix_6x6"][i].get<double>(),
++                       eb["information_matrix_6x6"][i].get<double>());
++    EXPECT_DOUBLE_EQ(ea["confidence"].get<double>(),
++                     eb["confidence"].get<double>());
++  }
++
++  // Optimization result: converged, deterministic GTSAM LM numerics; the fresh
++  // result_id/graph_id are runtime-only and the graph linkage is re-checked.
++  void ExpectOptimizationCoreEqual(const Ac22TwinEvidence& a,
++                                   const Ac22TwinEvidence& b) const {
++    EXPECT_EQ(a.opt_payload["status"].get<std::string>(), "converged");
++    EXPECT_EQ(b.opt_payload["status"].get<std::string>(), "converged");
++    EXPECT_EQ(a.opt_payload["trajectory_id"].get<std::string>(),
++              std::string(kAc22TrajectoryId));
++    EXPECT_EQ(b.opt_payload["trajectory_id"].get<std::string>(),
++              std::string(kAc22TrajectoryId));
++    EXPECT_NE(a.opt_payload["result_id"], b.opt_payload["result_id"]);
++    EXPECT_NE(a.opt_payload["graph_id"], b.opt_payload["graph_id"]);
++    EXPECT_EQ(a.opt_payload["graph_id"], a.graph_doc["graph_id"]);
++    EXPECT_EQ(b.opt_payload["graph_id"], b.graph_doc["graph_id"]);
++    EXPECT_GT(a.opt_payload["iterations"].get<std::int64_t>(), 0);
++    EXPECT_EQ(a.opt_payload["iterations"].get<std::int64_t>(),
++              b.opt_payload["iterations"].get<std::int64_t>());
++    EXPECT_NEAR(a.opt_payload["initial_error"].get<double>(),
++                b.opt_payload["initial_error"].get<double>(), kAc22PoseTol);
++    EXPECT_GT(a.opt_payload["initial_error"].get<double>(), 0.0);
++    EXPECT_LT(a.opt_payload["final_error"].get<double>(),
++              a.opt_payload["initial_error"].get<double>());
++    EXPECT_NEAR(a.opt_payload["final_error"].get<double>(),
++                b.opt_payload["final_error"].get<double>(), kAc22PoseTol);
++    EXPECT_NEAR(a.opt_payload["error_reduction"].get<double>(),
++                b.opt_payload["error_reduction"].get<double>(), kAc22PoseTol);
++    ASSERT_EQ(a.opt_payload["nodes"].size(), 2u);
++    ASSERT_EQ(b.opt_payload["nodes"].size(), 2u);
++    for (int i = 0; i < 2; ++i) {
++      const json& na = a.opt_payload["nodes"][i];
++      const json& nb = b.opt_payload["nodes"][i];
++      EXPECT_EQ(na["frame_id"], nb["frame_id"]);
++      EXPECT_EQ(na["timestamp_ns"], nb["timestamp_ns"]);
++      EXPECT_EQ(na["sequence_index"], nb["sequence_index"]);
++      for (int k = 0; k < 3; ++k)
++        EXPECT_NEAR(na["position_xyz"][k].get<double>(),
++                    nb["position_xyz"][k].get<double>(), kAc22PoseTol);
++      for (int k = 0; k < 4; ++k)
++        EXPECT_NEAR(na["rotation_xyzw"][k].get<double>(),
++                    nb["rotation_xyzw"][k].get<double>(), kAc22PoseTol);
++      ASSERT_EQ(na["covariance_position"].size(),
++                nb["covariance_position"].size());
++      for (std::size_t k = 0; k < na["covariance_position"].size(); ++k)
++        EXPECT_NEAR(na["covariance_position"][k].get<double>(),
++                    nb["covariance_position"][k].get<double>(), kAc22PoseTol);
++      ASSERT_EQ(na["covariance_rotation"].size(),
++                nb["covariance_rotation"].size());
++      for (std::size_t k = 0; k < na["covariance_rotation"].size(); ++k)
++        EXPECT_NEAR(na["covariance_rotation"][k].get<double>(),
++                    nb["covariance_rotation"][k].get<double>(), kAc22PoseTol);
++    }
++  }
++
++  // Semantic equality of two reconstruction revision documents for the AC-22
++  // comparison: structure/identity-field exact, numeric geometry within the
++  // documented tolerances (identity is runtime-only and asserted different).
++  void ExpectRevisionNumericEqual(const json& x, const json& y) const {
++    EXPECT_EQ(x["status"], y["status"]);
++    EXPECT_EQ(x["scene_id"], y["scene_id"]);
++    EXPECT_EQ(x["coordinate_frame"], y["coordinate_frame"]);
++    EXPECT_EQ(x["cameras"], y["cameras"]);  // D3: intrinsics pass through verbatim
++    ASSERT_EQ(x["images"].size(), y["images"].size());
++    for (std::size_t i = 0; i < x["images"].size(); ++i) {
++      const json& ix = x["images"][i];
++      const json& iy = y["images"][i];
++      EXPECT_EQ(ix["image_id"], iy["image_id"]);
++      EXPECT_EQ(ix["camera_id"], iy["camera_id"]);
++      EXPECT_EQ(ix["frame_id"], iy["frame_id"]);
++      EXPECT_EQ(ix["name"], iy["name"]);
++      EXPECT_EQ(ix["detected"], iy["detected"]);
++      for (int k = 0; k < 3; ++k)
++        EXPECT_NEAR(ix["pose"]["translation_xyz"][k].get<double>(),
++                    iy["pose"]["translation_xyz"][k].get<double>(),
++                    kAc22PoseTol);
++      for (int k = 0; k < 4; ++k)
++        EXPECT_NEAR(ix["pose"]["rotation_xyzw"][k].get<double>(),
++                    iy["pose"]["rotation_xyzw"][k].get<double>(), kAc22PoseTol);
++    }
++    ASSERT_EQ(x["points3D"].size(), y["points3D"].size());
++    for (std::size_t i = 0; i < x["points3D"].size(); ++i) {
++      const json& px = x["points3D"][i];
++      const json& py = y["points3D"][i];
++      EXPECT_EQ(px["point3d_id"], py["point3d_id"]);
++      EXPECT_EQ(px["track"], py["track"]);
++      for (int k = 0; k < 3; ++k)
++        EXPECT_NEAR(px["xyz"][k].get<double>(), py["xyz"][k].get<double>(),
++                    kAc22GeometryTol);
++      if (px.contains("error") && py.contains("error"))
++        EXPECT_NEAR(px["error"].get<double>(), py["error"].get<double>(),
++                    kAc22GeometryTol);
++    }
++  }
++
++  // Applied / v3 / v4 semantic comparison plus the deterministic clock chain.
++  void ExpectCorrectionRevisionsEqual(const Ac22TwinEvidence& a,
++                                      const Ac22TwinEvidence& b) const {
++    // applied (pose-corrected revision)
++    EXPECT_EQ(a.applied["provenance"]["backend"]["name"].get<std::string>(),
++              "spatial_optimizer");
++    EXPECT_EQ(b.applied["provenance"]["backend"]["name"].get<std::string>(),
++              "spatial_optimizer");
++    // created_at_ns is the wall-clock revision stamp: runtime-only by contract
++    EXPECT_NE(a.applied["created_at_ns"].get<std::int64_t>(),
++              b.applied["created_at_ns"].get<std::int64_t>());
++    EXPECT_NE(a.applied["reconstruction_id"], b.applied["reconstruction_id"]);
++    ExpectRevisionNumericEqual(a.applied, b.applied);
++    // v3 (retriangulated geometry)
++    EXPECT_EQ(a.v3["provenance"]["backend"]["name"].get<std::string>(),
++              "spatial_retriangulator");
++    EXPECT_EQ(b.v3["provenance"]["backend"]["name"].get<std::string>(),
++              "spatial_retriangulator");
++    EXPECT_NE(a.v3["created_at_ns"].get<std::int64_t>(),
++              b.v3["created_at_ns"].get<std::int64_t>());
++    EXPECT_EQ(a.v3["provenance"]["backend_specific_json"].get<std::string>(),
++              b.v3["provenance"]["backend_specific_json"].get<std::string>());
++    EXPECT_NE(a.v3["reconstruction_id"], b.v3["reconstruction_id"]);
++    ExpectRevisionNumericEqual(a.v3, b.v3);
++    // v4 (real-GTSAM-refined terminal revision)
++    EXPECT_EQ(a.v4["provenance"]["backend"]["name"].get<std::string>(),
++              "spatial_gtsam_bundle_adjuster");
++    EXPECT_EQ(b.v4["provenance"]["backend"]["name"].get<std::string>(),
++              "spatial_gtsam_bundle_adjuster");
++    EXPECT_NE(a.v4["created_at_ns"].get<std::int64_t>(),
++              b.v4["created_at_ns"].get<std::int64_t>());
++    EXPECT_EQ(a.v4["created_at_ns"].get<std::int64_t>(),
++              a.v3["created_at_ns"].get<std::int64_t>() + 100);
++    // the adapter configuration hash is a pure function of (source data,
++    // options, pinned seed) тАФ deliberately NOT the project-specific pipeline
++    // hash тАФ so it agrees across the twins and pins the D6 seed.
++    EXPECT_EQ(a.v4["provenance"]["configuration_hash"],
++              b.v4["provenance"]["configuration_hash"]);
++    EXPECT_NE(a.v4["reconstruction_id"], b.v4["reconstruction_id"]);
++    ExpectRevisionNumericEqual(a.v4, b.v4);
++    const json ta = json::parse(
++        a.v4["provenance"]["backend_specific_json"].get<std::string>());
++    const json tb = json::parse(
++        b.v4["provenance"]["backend_specific_json"].get<std::string>());
++    EXPECT_EQ(ta["optimizer"].get<std::string>(), "LevenbergMarquardt");
++    EXPECT_EQ(tb["optimizer"].get<std::string>(), "LevenbergMarquardt");
++    EXPECT_EQ(ta["seed"].get<std::string>(), std::string(kAc22Seed));
++    EXPECT_EQ(tb["seed"].get<std::string>(), std::string(kAc22Seed));
++    EXPECT_EQ(ta["iterations"].get<std::int64_t>(),
++              tb["iterations"].get<std::int64_t>());
++    EXPECT_EQ(ta["converged"].get<bool>(), tb["converged"].get<bool>());
++    EXPECT_NEAR(ta["rms_before"].get<double>(), tb["rms_before"].get<double>(),
++                kAc22TelemetryTol);
++    EXPECT_NEAR(ta["rms_after"].get<double>(), tb["rms_after"].get<double>(),
++                kAc22TelemetryTol);
++    EXPECT_NEAR(ta["mean_before"].get<double>(), tb["mean_before"].get<double>(),
++                kAc22TelemetryTol);
++    EXPECT_NEAR(ta["mean_after"].get<double>(), tb["mean_after"].get<double>(),
++                kAc22TelemetryTol);
++    EXPECT_EQ(ta["inlier_count_before"].get<std::int64_t>(),
++              tb["inlier_count_before"].get<std::int64_t>());
++    EXPECT_EQ(ta["inlier_count_after"].get<std::int64_t>(),
++              tb["inlier_count_after"].get<std::int64_t>());
++    EXPECT_EQ(ta["outlier_count_before"].get<std::int64_t>(),
++              tb["outlier_count_before"].get<std::int64_t>());
++    EXPECT_EQ(ta["outlier_count_after"].get<std::int64_t>(),
++              tb["outlier_count_after"].get<std::int64_t>());
++    EXPECT_LT(ta["rms_after"].get<double>(), ta["rms_before"].get<double>());
++  }
++};
++
++TEST_F(Ac22DeterminismTest,
++       AC22_DeterministicSecondRunThroughProductionSurface) {
++  const RenderedScene scene = RenderScene(36, 7u, /*noise_px=*/0.4);
++  const CommittedGeometry committed = CommittedPointsUnderDrift(scene);
++  ASSERT_GT(committed.points.size(), 10u);  // fixture sanity
++
++  Ac22TwinEvidence ev_a;
++  Ac22TwinEvidence ev_b;
++  auto engine_a =
++      RunAc22Twin("ac22_a", kAc22ProjectA, committed, scene, &ev_a);
++  auto engine_b =
++      RunAc22Twin("ac22_b", kAc22ProjectB, committed, scene, &ev_b);
++  auto& store_a = engine_a->project().artifacts();
++  auto& store_b = engine_b->project().artifacts();
++  ASSERT_EQ(ev_a.manifest.status, "succeeded");
++  ASSERT_EQ(ev_b.manifest.status, "succeeded");
++  ASSERT_EQ(ev_a.manifest.stages.size(), 2u);
++  ASSERT_EQ(ev_b.manifest.stages.size(), 2u);
++  EXPECT_EQ(ev_a.manifest.stages[0].status, "succeeded");
++  EXPECT_EQ(ev_a.manifest.stages[1].status, "succeeded");
++  EXPECT_EQ(ev_b.manifest.stages[0].status, "succeeded");
++  EXPECT_EQ(ev_b.manifest.stages[1].status, "succeeded");
++
++  CollectEvidence(*engine_a, ParseUuid(kAc22ProjectA), &ev_a);
++  CollectEvidence(*engine_b, ParseUuid(kAc22ProjectB), &ev_b);
++
++  // тФАтФА Input identity: the ONLY config divergence is the owning project.
++  ASSERT_EQ(ev_a.recon_hash, ev_b.recon_hash);  // bit-identical committed input
++  ASSERT_EQ(ev_a.src_art_hash, ev_b.src_art_hash);
++  ASSERT_EQ(ev_a.tgt_art_hash, ev_b.tgt_art_hash);
++  EXPECT_NE(ev_a.cfg.dump(), ev_b.cfg.dump());  // project id and the runtime
++  // feature-artifact UUIDs differ; normalizing those three runtime-only
++  // coordinates makes the configs byte-identical...
++  json a_cfg_as_b = ev_a.cfg;
++  a_cfg_as_b["project_id"] = kAc22ProjectB;
++  a_cfg_as_b["loop_closure"]["source_frame"]["feature_artifact_uuid"] =
++      "pinned-ac22";
++  a_cfg_as_b["loop_closure"]["target_frame"]["feature_artifact_uuid"] =
++      "pinned-ac22";
++  json b_cfg = ev_b.cfg;
++  b_cfg["loop_closure"]["source_frame"]["feature_artifact_uuid"] =
++      "pinned-ac22";
++  b_cfg["loop_closure"]["target_frame"]["feature_artifact_uuid"] =
++      "pinned-ac22";
++  EXPECT_EQ(a_cfg_as_b.dump(), b_cfg.dump());  // ...everything else agrees
++  EXPECT_EQ(ev_a.manifest.config_hash, Sha256Hex(ev_a.cfg.dump()));
++  EXPECT_EQ(ev_b.manifest.config_hash, Sha256Hex(ev_b.cfg.dump()));
++  EXPECT_EQ(Sha256Hex(a_cfg_as_b.dump()), Sha256Hex(b_cfg.dump()));
++  EXPECT_NE(ev_a.manifest.config_hash, ev_b.manifest.config_hash);
++  EXPECT_NE(ev_a.manifest.pipeline_hash, ev_b.manifest.pipeline_hash);
++  EXPECT_FALSE(ev_a.manifest.pipeline_hash.empty());
++  EXPECT_FALSE(ev_b.manifest.pipeline_hash.empty());
++
++  // тФАтФА Level A semantics: measurement -> graph -> optimization -> revisions.
++  ExpectClosureCoreEqual(ev_a, ev_b);
++  ExpectPoseGraphCoreEqual(ev_a, ev_b);
++  ExpectOptimizationCoreEqual(ev_a, ev_b);
++  ExpectCorrectionRevisionsEqual(ev_a, ev_b);
++
++  // тФАтФА Level B provenance + lineage: identical chain topology and roots.
++  ASSERT_EQ(ev_a.rows.size(), 4u);
++  ASSERT_EQ(ev_b.rows.size(), 4u);
++  {
++    std::map<std::string, std::string> sa, sb;
++    for (const auto& row : ev_a.rows)
++      sa[FormatUuid(row.reconstruction_id)] = row.status;
++    for (const auto& row : ev_b.rows)
++      sb[FormatUuid(row.reconstruction_id)] = row.status;
++    const json committed_a = FindDocByBackend(ev_a.rows, "colmap");
++    const json committed_b = FindDocByBackend(ev_b.rows, "colmap");
++    ASSERT_FALSE(committed_a.is_null());
++    ASSERT_FALSE(committed_b.is_null());
++    EXPECT_EQ(committed_a["reconstruction_id"].get<std::string>(),
++              std::string(kAc22ReconId));
++    EXPECT_EQ(committed_a, committed_b);  // committed revision byte-identical
++    EXPECT_EQ(sa[committed_a["reconstruction_id"].get<std::string>()],
++              "superseded");
++    EXPECT_EQ(sb[committed_b["reconstruction_id"].get<std::string>()],
++              "superseded");
++    EXPECT_EQ(sa[ev_a.applied["reconstruction_id"].get<std::string>()],
++              "superseded");
++    EXPECT_EQ(sb[ev_b.applied["reconstruction_id"].get<std::string>()],
++              "superseded");
++    EXPECT_EQ(sa[ev_a.v3["reconstruction_id"].get<std::string>()],
++              "superseded");
++    EXPECT_EQ(sb[ev_b.v3["reconstruction_id"].get<std::string>()],
++              "superseded");
++    EXPECT_EQ(sa[ev_a.v4["reconstruction_id"].get<std::string>()],
++              "succeeded");
++    EXPECT_EQ(sb[ev_b.v4["reconstruction_id"].get<std::string>()],
++              "succeeded");
++    int succeeded = 0;
++    for (const auto& entry : sb) succeeded += (entry.second == "succeeded");
++    EXPECT_EQ(succeeded, 1);
++  }
++
++  // Provenance: the chain's deterministic root тАФ the committed reconstruction
++  // payload, whose CAS content hash is bit-identical across the twins тАФ is
++  // present in every downstream lineage. The remaining lineage entries are hash
++  // references to runtime-identity artifacts (fresh revision ids, the
++  // optimization-result payload carrying result_id/graph_id) and therefore
++  // differ between the twins by contract; what must agree is the topology.
++  {
++    const json applied_a = ev_a.applied;
++    std::vector<std::string> applied_hashes_a;
++    for (const auto& h : applied_a["provenance"]["input_artifact_hashes"])
++      applied_hashes_a.push_back(h.get<std::string>());
++    const json applied_b = ev_b.applied;
++    std::vector<std::string> applied_hashes_b;
++    for (const auto& h : applied_b["provenance"]["input_artifact_hashes"])
++      applied_hashes_b.push_back(h.get<std::string>());
++    // applied (spatial_optimizer) lineage = { committed payload, freshly
++    // persisted optimization-result payload } (reconstruction_feedback.h ┬з8.1).
++    EXPECT_EQ(applied_hashes_a.size(), 2u);
++    EXPECT_EQ(applied_hashes_b.size(), 2u);
++    EXPECT_NE(std::find(applied_hashes_a.begin(), applied_hashes_a.end(),
++                        ev_a.recon_hash),
++              applied_hashes_a.end());
++    EXPECT_NE(std::find(applied_hashes_b.begin(), applied_hashes_b.end(),
++                        ev_b.recon_hash),
++              applied_hashes_b.end());
++    // The companion entry references exactly the optimization-result artifact
++    // this test independently resolved (same bytes -> same hash -> same doc).
++    for (const auto& h : applied_hashes_a) {
++      if (h == ev_a.recon_hash) continue;
++      const auto ref_a = store_a.Get(h);
++      ASSERT_TRUE(ref_a.has_value());
++      EXPECT_EQ(json::parse(std::string(ref_a->begin(), ref_a->end())),
++                ev_a.opt_payload);
++    }
++    for (const auto& h : applied_hashes_b) {
++      if (h == ev_b.recon_hash) continue;
++      const auto ref_b = store_b.Get(h);
++      ASSERT_TRUE(ref_b.has_value());
++      EXPECT_EQ(json::parse(std::string(ref_b->begin(), ref_b->end())),
++                ev_b.opt_payload);
++    }
++
++    const json v3_a = ev_a.v3;
++    const json v3_b = ev_b.v3;
++    std::vector<std::string> v3_hashes_a;
++    for (const auto& h : v3_a["provenance"]["input_artifact_hashes"])
++      v3_hashes_a.push_back(h.get<std::string>());
++    std::vector<std::string> v3_hashes_b;
++    for (const auto& h : v3_b["provenance"]["input_artifact_hashes"])
++      v3_hashes_b.push_back(h.get<std::string>());
++    // v3 (spatial_retriangulator) lineage = applied lineage + the applied
++    // reconstruction id (triangulation.h ┬з4.11): same topology in both twins,
++    // the only cross-twin difference being the two runtime revision ids.
++    EXPECT_EQ(v3_hashes_a.size(), 3u);
++    EXPECT_EQ(v3_hashes_b.size(), 3u);
++    for (const std::string& h : applied_hashes_a) {
++      EXPECT_NE(std::find(v3_hashes_a.begin(), v3_hashes_a.end(), h),
++                v3_hashes_a.end());
++    }
++    for (const std::string& h : applied_hashes_b) {
++      EXPECT_NE(std::find(v3_hashes_b.begin(), v3_hashes_b.end(), h),
++                v3_hashes_b.end());
++    }
++    EXPECT_NE(std::find(v3_hashes_a.begin(), v3_hashes_a.end(),
++                        applied_a["reconstruction_id"].get<std::string>()),
++              v3_hashes_a.end());
++    EXPECT_NE(std::find(v3_hashes_b.begin(), v3_hashes_b.end(),
++                        applied_b["reconstruction_id"].get<std::string>()),
++              v3_hashes_b.end());
++  }
++
++  // тФАтФА Latest-succeeded view agrees (only the fresh v4 id differs).
++  {
++    const auto scene_a =
++        engine_a->project().db().FindSceneByProject(ParseUuid(kAc22ProjectA));
++    const auto scene_b =
++        engine_b->project().db().FindSceneByProject(ParseUuid(kAc22ProjectB));
++    ASSERT_TRUE(scene_a.has_value());
++    ASSERT_TRUE(scene_b.has_value());
++    const auto latest_a = engine_a->project().db()
++                              .QueryLatestReconstructionByScene(scene_a->scene_id);
++    const auto latest_b = engine_b->project().db()
++                              .QueryLatestReconstructionByScene(scene_b->scene_id);
++    ASSERT_TRUE(latest_a.has_value());
++    ASSERT_TRUE(latest_b.has_value());
++    EXPECT_EQ(latest_a->reconstruction_id,
++              ParseUuid(ev_a.v4["reconstruction_id"].get<std::string>()));
++    EXPECT_EQ(latest_b->reconstruction_id,
++              ParseUuid(ev_b.v4["reconstruction_id"].get<std::string>()));
++    EXPECT_NE(latest_a->reconstruction_id, latest_b->reconstruction_id);
++  }
++
++  // тФАтФА N5 replay with the REAL seams, inside run A's project: an identical
++  // invocation (same payload + same config) re-executes the kNever stage and
++  // FAILS CLOSED at the duplicate committed identity тАФ never a cache hit, never
++  // a second/divergent reconstruction. The revision lineage stays byte-identical.
++  {
++    const auto replay = engine_a->RunPipeline(kSparseCorrectionPipelineId,
++                                              {ev_a.recon_hash},
++                                              ev_a.cfg.dump());
++    EXPECT_EQ(replay.status, "failed");
++    ASSERT_EQ(replay.stages.size(), 2u);
++    EXPECT_EQ(replay.stages[0].status, "succeeded");
++    EXPECT_EQ(replay.stages[1].status, "failed");
++    EXPECT_EQ(replay.stages[0].output_refs, ev_a.manifest.stages[0].output_refs);
++    ASSERT_EQ(replay.stages[0].output_refs.size(), 1u);
++    EXPECT_EQ(replay.stages[0].output_refs.front(), ev_a.recon_hash);
++    EXPECT_FALSE(replay.stages[1].cache_hit);  // kNever: recomputed, not cached
++    EXPECT_FALSE(replay.pipeline_hash.empty());
++    EXPECT_EQ(replay.pipeline_hash, ev_a.manifest.pipeline_hash);
++
++    const auto scene_a =
++        engine_a->project().db().FindSceneByProject(ParseUuid(kAc22ProjectA));
++    ASSERT_TRUE(scene_a.has_value());
++    const auto after = engine_a->project().db().FindReconstructionsByScene(
++        scene_a->scene_id);
++    ASSERT_EQ(after.size(), 4u);
++    for (std::size_t i = 0; i < after.size(); ++i) {
++      EXPECT_EQ(after[i].reconstruction_id, ev_a.rows[i].reconstruction_id);
++      EXPECT_EQ(after[i].status, ev_a.rows[i].status);
++      EXPECT_EQ(after[i].document_json, ev_a.rows[i].document_json);
++    }
++    const auto latest = engine_a->project().db()
++                            .QueryLatestReconstructionByScene(scene_a->scene_id);
++    ASSERT_TRUE(latest.has_value());
++    EXPECT_EQ(latest->reconstruction_id,
++              ParseUuid(ev_a.v4["reconstruction_id"].get<std::string>()));
++  }
++}
++
+ }  // namespace
+ 
+ // GTSAM's transitive Boost dependency pulls in boost_test_exec_monitor which// expects this symbol. We define main() ourselves instead of using gtest_main

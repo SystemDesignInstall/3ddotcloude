@@ -1,0 +1,65 @@
+﻿diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
+index f7d1db8..ab59107 100644
+--- a/tests/CMakeLists.txt
++++ b/tests/CMakeLists.txt
+@@ -447,35 +447,32 @@ if(SPATIAL_HAS_GTSAM)
+     )
+   endif()
+ 
+-  # Step 12 (real providers): CLI E2E. TEMPORARILY DISABLED: the test source
+-  # `unit/test_cli_sparse_correction_e2e.cpp` does not exist yet (the P3.1
+-  # Step 12 work is in progress; see P3.1-production-sparse-correction-
+-  # verification-report.md тАФ the full v4 chain is still NOT PROVEN). Re-enable
+-  # this block when the test file lands. Spawns the REAL `spatial` executable
++  # Step 12 (real providers): CLI E2E. Spawns the REAL `spatial` executable
+   # (the Engine composition root) with `run p3_sparse_correction --project
+-  # --input --config` and asserts the succeeded manifest, the non-zero exit on a
+-  # failed manifest, and the FULL v4 chain persisted (committed/applied/v3
+-  # superseded, real-GTSAM v4 the sole succeeded + latest). No direct internal
+-  # pipeline-stage calls. Requires the GTSAM-enabled CLI, so it lives in this
+-  # block; the runtime DLLs the spawned CLI needs are copied next to it by
+-  # cli/CMakeLists.txt.
+-  # add_executable(spatial_cli_sparse_correction_e2e_tests
+-  #   unit/test_cli_sparse_correction_e2e.cpp
+-  # )
+-  # target_link_libraries(spatial_cli_sparse_correction_e2e_tests PRIVATE
+-  #   spatial_core
+-  #   spatial_engine
+-  #   GTest::gtest
+-  #   GTest::gtest_main
+-  # )
+-  # add_dependencies(spatial_cli_sparse_correction_e2e_tests spatial)
+-  # target_include_directories(spatial_cli_sparse_correction_e2e_tests PRIVATE
+-  #   ${CMAKE_SOURCE_DIR}
+-  # )
+-  # target_compile_definitions(spatial_cli_sparse_correction_e2e_tests PRIVATE
+-  #   SPATIAL_CLI_EXECUTABLE="$<TARGET_FILE:spatial>"
+-  # )
+-  # gtest_discover_tests(spatial_cli_sparse_correction_e2e_tests)
++  # --input --config` and asserts the succeeded manifest (both stages), the
++  # non-zero exit on a failed manifest, and the FULL v4 chain persisted
++  # (committed/applied/v3 superseded, real-GTSAM v4 the sole succeeded +
++  # latest, committed byte-identical to the submitted document). No direct
++  # internal pipeline-stage calls. Requires the GTSAM-enabled CLI, so it lives
++  # in this block; the runtime DLLs the spawned CLI needs are copied next to it
++  # by cli/CMakeLists.txt.
++  add_executable(spatial_cli_sparse_correction_e2e_tests
++    unit/test_cli_sparse_correction_e2e.cpp
++  )
++  target_link_libraries(spatial_cli_sparse_correction_e2e_tests PRIVATE
++    spatial_core
++    spatial_engine
++    GTest::gtest
++    GTest::gtest_main
++  )
++  add_dependencies(spatial_cli_sparse_correction_e2e_tests spatial)
++  target_include_directories(spatial_cli_sparse_correction_e2e_tests PRIVATE
++    ${CMAKE_SOURCE_DIR}
++  )
++  target_compile_definitions(spatial_cli_sparse_correction_e2e_tests PRIVATE
++    SPATIAL_CLI_EXECUTABLE="$<TARGET_FILE:spatial>"
++  )
++  gtest_discover_tests(spatial_cli_sparse_correction_e2e_tests)
+ endif()
+ 
+ # ---------------------------------------------------------------------------

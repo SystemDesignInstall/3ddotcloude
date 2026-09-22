@@ -1,0 +1,65 @@
+PARENT Step-11 L136: full_len=2916
+  AC-22 NOT-started anchor @ offset 2889
+  contextual tail: [es this run). `git diff --check` clean. Remaining P3.1 acceptance items: CLI real providers, AC-22 (NOT started per GO).]
+  FULL tail-from-anchor: [Remaining P3.1 acceptance items: CLI real providers, AC-22 (NOT started per GO).]
+
+REPLACE-OLD exact-match-in-L136 = True
+new_tail in ac22_mil=True ; old gone=True
+ac22_mil: bytes=17600 lines=165
+Step-12 present in ac22_mil = False (must be False)
+WROTE tmp/ac22_milestone_only.md
+REPORT AC-22 rows added: 1
+  + +| AC-22: Deterministic second run | Twin double-run via `Engine::RunPipeline` (two fresh projects, real GTSAM seams), Debug EXIT 0 + Release EXIT 0 | PROVEN |
+
+ALL changed paths fbef42b..72b88d2:
+  A	ac22_both_docs_full.txt
+  A	ac22_commit_preview_gen.py
+  A	ac22_docs_diff_utf8.txt
+  A	ac22_dump_diffs.py
+  A	ac22_final_truth_gen.py
+  A	ac22_ground_truth_dump.py
+  A	ac22_ground_truth_dump.txt
+  A	ac22_head_docs_lines.txt
+  A	ac22_lines_dump.py
+  A	ac22_milestone.diff
+  A	ac22_purity_check.py
+  A	ac22_report.diff
+  A	ac22_report_utf8.diff.txt
+  A	ac22_scratch/dump_hunks.py
+  A	ac22_truth_check_report.txt
+  A	ac22_truth_final.txt
+  A	cli_preview_milestone.diff
+  A	cli_preview_milestone.diff.txt
+  A	cli_preview_report.diff
+  A	cli_preview_report.diff.txt
+  M	docs/architecture/P3-milestone-status.md
+  M	docs/architecture/P3.1-production-sparse-correction-verification-report.md
+  A	gen_ac22_docs_diff_utf8.py
+  A	gen_ac22_fresh.py
+  A	gen_ac22_fresh_truth.py
+  A	gen_ac22_head_lines.py
+  A	milestone_hunks_gen.py
+  A	ms_diff_here.diff
+  A	rep_diff_here.diff
+  M	tests/CMakeLists.txt
+  A	tests/unit/test_cli_sparse_correction_e2e.cpp
+  M	tests/unit/test_p3_trajectory_optimization.cpp
+  A	tmp/ac22_fresh_truth.txt
+  A	tmp/ac22_ground_truth_gen.py
+  A	tmp/ac22_milestone_dump.py
+  A	tmp/ac22_milestone_full.txt
+  A	tmp/ac22_milestone_full_fresh.txt
+  A	tmp/ac22_milestone_working_block.txt
+  A	tmp/ac22_purity_scan.py
+  A	tmp/ac22_purity_scan.txt
+  A	tmp/gen_ac22_fresh_truth.py
+  A	tmp/gen_ac22_milestone_fresh.py
+  A	tmp/truth_final_gen.py
+  A	tmp_ac22_hunklines.py
+  A	tmp_ac22_preview.py
+  A	tmp_dump_milestone_utf8.py
+  
+
+LOG fbef42b..72b88d2 messages:
+  72b88d2 feat(tests): AC-22 deterministic second-run block + Step 12 CLI E2E enabled - test_p3_trajectory_optimization gains AC-22 twin-project determinism suite (two independent Engine::RunPipeline('p3_sparse_correction') runs over bit-identical pinned inputs, exact measurement equality, small absolute GTSAM/DLT tolerances, N5 duplicate-refusal re-proven with real seams); Step 12 CLI E2E target spatial_cli_sparse_correction_e2e_tests re-enabled with new unit/test_cli_sparse_correction_e2e.cpp (real spatial executable spawn, succeeded manifest both stages, non-zero exit on failed manifest, full v4 chain persisted); P3.1 milestone status and verification report updated; ac22/cli-preview scratch generators, truth dumps and diffs retained for AC-22 traceability
+  

@@ -1,0 +1,24 @@
+===== 0) shape pins =====
+parent milestone: bytes=17345 lines=165
+HEAD   milestone: bytes=20426 lines=198 ; "Step 12" count=1 ; AC-22-PROVEN-present=True
+parent report  : bytes=20170 lines=239
+HEAD   report  : bytes=20264 lines=239
+parent test    : bytes=87473 lines=1949
+HEAD   test    : bytes=127937 lines=2747
+
+===== 1) MILESTONE AC-22-ONLY = parent + SINGLE Step-11 tail flip (pure; no Step-12) =====
+  AC-22-only milestone: bytes=17656 lines=165 ; Step-12 absent=True ; PROVEN twin present=True
+
+===== 2) REPORT AC-22-ONLY = verify parent..HEAD report diff == EXACTLY one AC-22 row; use HEAD report =====
+  report parent..HEAD: +1 -1
+  - parent row: | AC-22: Deterministic second run | No double-run | NOT PROVEN |
+  + HEAD  row: | AC-22: Deterministic second run | Twin double-run via `Engine::RunPipeline` (two fresh projects, real GTSAM seams), Debug EXIT 0 + Release EXIT 0 | PROVEN |
+
+===== 3) TEST AC-22-ONLY = parent + pure AC-22 twin add (assert: no CLI/Step-12 refs) =====
+  test parent..HEAD: +798 -0
+  twin add lines=798 ; CLI/Step-12 refs=0
+
+===== 4) md5 pins (commit-A aim) =====
+  milestone AC-22-only md5=d5376a2555dc86ff7e323e011c69d7c0
+  report    AC-22-only md5=c1e2b6667ab9fccd9b5efedda19be956
+  test      AC-22-only md5=cad1efcd171b09712ea036451861b7f6

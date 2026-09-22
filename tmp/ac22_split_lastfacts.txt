@@ -1,0 +1,67 @@
+========== A) REPORT diff fbef42b..72b88d2 : full +/- ==========
+  -| AC-22: Deterministic second run | No double-run | NOT PROVEN |
+  +| AC-22: Deterministic second run | Twin double-run via `Engine::RunPipeline` (two fresh projects, real GTSAM seams), Debug EXIT 0 + Release EXIT 0 | PROVEN |
+
+========== B) PARENT milestone: region after Step-11 (L136) ==========
+parent total lines=164
+  L136(2916)|- **Step 11 (failure/recovery N1–N6 through `Engine::RunPipeline` ONLY, PROVEN):** the milestone's negative/recovery acceptance, a…
+  L137(0)|
+  L138(3)|---
+  L139(0)|
+  L140(83)|## Deferred debt — P3-impl-7a.1 Loop Closure Capability Executor Integration (OPEN)
+  L141(0)|
+  L142(50)|Deliberately deferred, NOT a defect of P3-impl-7a:
+  L143(0)|
+  L144(85)|- `"loop_closure"` is registered as a **declarative** pipeline stage and the producer
+  L145(92)|  (`DetectLoopClosureCandidates`) is tested and callable, but the full `Engine::RunPipeline`
+
+========== C) HEAD milestone Step-12 paragraph: full exact lines ==========
+head total lines=197
+Step-12 paragraph spans HEAD lines 137..170 (1-indexed 137..170)
+HEAD Step-11 line == parent Step-11 line : True
+HEAD L137 first chars: '- **Step 12 (CLI real providers + CLI E2E through the SOLE user entry point, PROVEN):**  the CLI'
+HEAD last-4 lines:
+   |produce `PoseGraphEdge` constraints (`BuildLoopClosureEdge`, 6c scaffolding) into a PoseGraph, then
+   |optimize via the existing GTSAM adapter. Do **not** start automatically; requires explicit
+   |authorization.
+   |
+
+  HL137(96) | - **Step 12 (CLI real providers + CLI E2E through the SOLE user entry point, PROVEN):**  the CLI
+  HL138(79) |   composition root injects the REAL seam implementations — `L2NearestMatcher` +
+  HL139(94) |   `EssentialGeometricVerifier` + `GtsamTrajectoryOptimizer` + `GtsamBundleAdjustmentOptimizer`
+  HL140(96) |   (owned by the engine handle so the seam objects outlive the in-process runner's value-captured
+  HL141(97) |   pointers; code committed at HEAD `fbef42b` alongside the adapter links in `cli/CMakeLists.txt`,
+  HL142(98) |   the `--input <file>`/`--config <json>` run path, and the exit code — `RunCommand` returns 0 ONLY
+  HL143(96) |   on a succeeded manifest). GTSAM's runtime DLLs (tbb12/tbbmalloc) are copied post-build next to
+  HL144(75) |   `spatial.exe` so every child-spawned CLI works without a manual PATH. New
+  HL145(95) |   `tests/unit/test_cli_sparse_correction_e2e.cpp` (`spatial_cli_sparse_correction_e2e_tests`, 2
+  HL146(92) |   tests, discovery) spawns the REAL binary `spatial run p3_sparse_correction --project <dir>
+  HL147(81) |   --input <recon.json> --config <json>` and never calls internal stages directly:
+  HL148(95) |   **positive** — exit 0, manifest "succeeded" with BOTH stages succeeded, and the FULL v4 chain
+  HL149(96) |   persisted (4 rows: committed `colmap` superseded and byte-identical to the submitted document,
+  HL150(88) |   `spatial_optimizer` applied superseded, `spatial_retriangulator` v3 superseded with v3
+  HL151(93) |   images/cameras verbatim, real-GTSAM `spatial_gtsam_bundle_adjuster` v4 the SOLE succeeded +
+  HL152(99) |   latest with LM `rms_after < rms_before`, byte-identical intrinsics, `created_at_ns == v3 + 100`);
+  HL153(96) |   the geometry really changed through the CLI (mean v3 error < committed error > 5 cm, v3 moved)
+  HL154(92) |   and the GTSAM trajectory optimization converged with the node pulled ≥ 5 cm off the drift;
+  HL155(91) |   **negative** — a fail-closed config (missing `random_seed`, D6) yields exit code 1 with a
+  HL156(97) |   "failed" manifest (stage 0 succeeded, stage 1 failed) and NO database writes (P12: no scene, no
+  HL157(97) |   revision rows). The GTSAM LM damping diagnostic (`Partial Cholesky on HessianFactor failed`) is
+  HL158(97) |   emitted to stdout before the manifest and is tolerated by the test's JSON scanner (identical to
+  HL159(98) |   the in-process E2E behaviour). Full batteries **Debug 719/719** and **Release 719/719** (Step 11
+  HL160(79) |   was 717/717; the +2 are the CLI E2E cases); the pre-existing CLI-spawn suites
+  HL161(91) |   (`CliImportTest` 4/4, `CliFeatureExtractionTest` 4/4) still pass against the GTSAM-linked
+  HL162(91) |   `spatial.exe` via the copied DLLs. Gates 7/7 PASS (`check_dependencies`, `check_schemas`,
+  HL163(100) |   `check_worker_boundary`, `check_arch_debt`, `check_domain_types`, `check_rfc`, `check_constitution
+  HL164(95) |   --base HEAD --rfc RFC-0000`); `git diff --check` clean (tracked diff = `tests/CMakeLists.txt`
+  HL165(96) |   block activation only) and the new test file has no trailing whitespace. Remaining P3.1 items:
+  HL166(98) |   AC-22 (PROVEN 2026-09-12: `AC22_DeterministicSecondRunThroughProductionSurface` twin — two fresh
+  HL167(92) |   `Engine::RunPipeline` invocations through REAL GTSAM seams, semantic equivalence asserted,
+  HL168(90) |   N5 duplicate-refusal re-proven; Debug EXIT 0 Release EXIT 0; full trajectory 23/23 + CLI
+  HL169(66) |   sparse-correction e2e 2/2 + production e2e 8/8 in both configs).
+  HL170(0) | 
+
+========== D) REPORT: HEAD AC-22 PROVEN row vs parent NOT-PROVEN row ==========
+  REPORT L225  PARENT:'| AC-22: Deterministic second run | No double-run | NOT PROVEN |'
+  REPORT L225  HEAD:  '| AC-22: Deterministic second run | Twin double-run via `Engine::RunPipeline` (two fresh projects, real GTSAM seams), Debug EXIT 0 + Release EXIT 0 | PROVEN |'
+

@@ -1,0 +1,8 @@
+﻿py : C:\Users\Alexandr A.Fedorov\AppData\Local\Programs\Python\Python311\python.exe: can't open file 'C:\\Code\\ClaudeD
+ot\\spatial-platform\\tmp\\ac22_split_exec.py': [Errno 2] No such file or directory
+строка:2 знак:1
++ py tmp/ac22_split_exec.py 2>&1 | Out-File -Encoding UTF8 tmp/ac22_spl ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (C:\Users\Alexan...le or directory:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 

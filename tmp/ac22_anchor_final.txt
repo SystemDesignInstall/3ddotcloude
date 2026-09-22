@@ -1,0 +1,13 @@
+== MIL-PARENT lines=164 ==
+  L136:  to the Step 10 21/21). Full batteries this run: **Debug 717/717** and **Release 717/717** (no MetadataDb flakes this run). `git diff --check` clean. Remaining P3.1 acceptance items: CLI real providers, AC-22 (NOT started per GO).
+
+== MIL-HEAD lines=197 ==
+  L136:  to the Step 10 21/21). Full batteries this run: **Debug 717/717** and **Release 717/717** (no MetadataDb flakes this run). `git diff --check` clean. Remaining P3.1 acceptance items: CLI real providers, AC-22 (NOT started per GO).
+
+
+== REP-PARENT lines=238 ==
+  L225: | AC-22: Deterministic second run | No double-run | NOT PROVEN |
+
+== REP-HEAD lines=238 ==
+  L225: | AC-22: Deterministic second run | Twin double-run via `Engine::RunPipeline` (two fresh projects, real GTSAM seams), Debug EXIT 0 + Release EXIT 0 | PROVEN |
+

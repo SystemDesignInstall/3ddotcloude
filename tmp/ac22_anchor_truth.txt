@@ -1,0 +1,217 @@
+===== AC-22 anchor truth: grep each milestone file @ each rev =====
+##### FILE P3-milestone-status.md #####
+--- @fbef42b (PARENT) ---
+  Ldocs/architecture/P3-milestone-status.md|133:- **Step 8 (retriangulation, PROVEN):** new tests RT1–RT8 in `tests/unit/test_p3_trajectory_optimization.cpp` (18/18 in `spatial_p3_trajectory_optimization_tests`, serial ctest #710). RT1 proves r…
+  Ldocs/architecture/P3-milestone-status.md|134:- **Step 9 (Bundle Adjustment, PROVEN):** real GTSAM BA over the injected `ReconstructionOptimizer` seam. Adapter suite GA1–GA6 in `tests/unit/test_gtsam_bundle_adjustment.cpp` (`spatial_gtsam_ada…
+  Ldocs/architecture/P3-milestone-status.md|135:- **Step 10 (Production visual-loop → GTSAM E2E, PROVEN):** the SAME chain, entered ONLY through `Engine::RunPipeline("p3_sparse_correction", …)` — one invocation per case, no direct host-stage ca…
+  Ldocs/architecture/P3-milestone-status.md|136:- **Step 11 (failure/recovery N1–N6 through `Engine::RunPipeline` ONLY, PROVEN):** the milestone's negative/recovery acceptance, all entered through the same surface with NO direct host-stage call…
+
+--- @72b88d2 (HEAD) ---
+  Ldocs/architecture/P3-milestone-status.md|133:- **Step 8 (retriangulation, PROVEN):** new tests RT1–RT8 in `tests/unit/test_p3_trajectory_optimization.cpp` (18/18 in `spatial_p3_trajectory_optimization_tests`, serial ctest #710). RT1 proves r…
+  Ldocs/architecture/P3-milestone-status.md|134:- **Step 9 (Bundle Adjustment, PROVEN):** real GTSAM BA over the injected `ReconstructionOptimizer` seam. Adapter suite GA1–GA6 in `tests/unit/test_gtsam_bundle_adjustment.cpp` (`spatial_gtsam_ada…
+  Ldocs/architecture/P3-milestone-status.md|135:- **Step 10 (Production visual-loop → GTSAM E2E, PROVEN):** the SAME chain, entered ONLY through `Engine::RunPipeline("p3_sparse_correction", …)` — one invocation per case, no direct host-stage ca…
+  Ldocs/architecture/P3-milestone-status.md|136:- **Step 11 (failure/recovery N1–N6 through `Engine::RunPipeline` ONLY, PROVEN):** the milestone's negative/recovery acceptance, all entered through the same surface with NO direct host-stage call…
+  Ldocs/architecture/P3-milestone-status.md|137:- **Step 12 (CLI real providers + CLI E2E through the SOLE user entry point, PROVEN):**  the CLI
+  Ldocs/architecture/P3-milestone-status.md|166:  AC-22 (PROVEN 2026-09-12: `AC22_DeterministicSecondRunThroughProductionSurface` twin — two fresh
+
+
+##### FILE P3.1-production-sparse-correction-verification-report.md #####
+--- @fbef42b (PARENT) ---
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|7:This replaces the earlier incorrect COMPLETE declaration and renumbered acceptance table. The original GO AC-01..AC-31 remain authoritative. No required stage or negative is deferred to another mile…
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|35:Required, **NOT PROVEN**:
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|46:**PROVEN by source inspection:** a real registered definition exists; the current golden enters `engine->RunPipeline(kSparseCorrectionPipelineId, ...)` (`tests/unit/test_p3_sparse_correction_pipeli…
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|48:Both CLI spellings route through `RunCommand`, which invokes `engine.RunPipeline` (`cli/main.cpp:216-219,525-531,594-602`). **NOT PROVEN:** successful production CLI execution. Its composition root…
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|56:**NOT PROVEN.** The runner does not use `matcher` or `verifier`. `VerifyLoopClosureGeometry` is an existing lower-level orchestrator, but it copies the injected verifier's output rather than genera…
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|64:**NOT PROVEN through P3.1.** `GtsamTrajectoryOptimizer` exists behind `TrajectoryOptimizer`, but the runner never invokes it. Its lower-level tests consume supplied graph measurements, not measured…
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|68:**NOT PROVEN through P3.1.** The existing implementation (`core/trajectory/reconstruction_feedback.h:103-225`) is unchanged and not called by the runner. Continuation must resolve frame IDs, explic…
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|72:**NOT PROVEN through P3.1.** Frozen `core/geometry/triangulation.h:269-571` is not invoked. The runner supplies the committed source directly as `source_v3` (`sparse_correction_runner.cpp:351-357`)…
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|78:**NOT PROVEN with an actual backend through P3.1.** The current golden injects `StubOptimizer`, which copies geometry and sets trace fields (`tests/unit/test_p3_sparse_correction_pipeline.cpp:123-1…
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|84:Required: `rms_after < 0.9 * rms_before`, with both values measured on the same pinned observation set. The existing host-stage gate is present (`engine/pipeline/bundle_adjustment_optimize_pipeline…
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|90:**NOT PROVEN for the full chain.** Current goldens check terminal `Has(hash)` and parse a reconstruction document. They do not verify all intermediate feature/calibration/metric/trajectory/revision…
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|96:**NOT PROVEN for all required transitions and failure cases.** The BA wrapper transaction protects its insert/supersede pair (`bundle_adjustment_optimize_pipeline.cpp:139-147`). The runner commits …
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|102:**NOT PROVEN for the required v2/v3/v4 chain.** Current tests assert only two reconstruction rows (`tests/unit/test_p3_sparse_correction_pipeline.cpp:256-272,309-320`). No retriangulated v3 exists…
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|108:**NOT PROVEN for the original GO.** Existing lower-level and partial-pipeline tests are retained; none is relabeled as the required geometric golden.
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|112:| A: Engine pipeline success | Historical success of truncated stub-backed path only | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|113:| B: All required stages in manifest | Only sparse/commit-BA subset | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|114:| C: Actual implementation metadata | Nested process exists in code; full backend trace absent | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|115:| D: Real worker/probe process | Source delegates to ProcessExecutor; historical partial-path evidence, not full golden | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|116:| E: Every output in CAS | Terminal output only checked | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|117:| F: Verified metric loop | No calibrated provider | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|118:| G: PoseGraph | Not called by runner | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|119:| H: GTSAM | Not called by runner | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|120:| I: Corrected drifted trajectory | No trajectory correction | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|121:| J: New corrected reconstruction | Stub creates a new identity without measured correction | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|122:| K: v3 geometry | No retriangulation | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|123:| L: BA optimizer path | Stub replaces actual adapter | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|124:| M: Measured D5 improvement | Hardcoded trace | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|125:| N: v4 after BA gate | Stub-backed subset only | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|126:| O: Revision statuses | Two rows, not required chain | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|127:| P: QueryLatest final revision | Partial-path assertion only | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|128:| Q: Predecessor provenance | Complete chain not asserted | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|129:| R: All lineage refs resolve | Not asserted | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|130:| S: Two-run derived determinism | One invocation and seed assertion only | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|131:| T: Expected cache behavior | No full pipeline double-run | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|137:| N1 | `test_p3_sparse_correction_pipeline.cpp:326-350`: stub gate fails and retains committed source | Actual v3, measured gate, no partial v4 CAS/domain state | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|138:| N2 | `:355-371`: dangling input through passthrough; failed manifest/no reconstruction | Complete production preflight and downstream/CAS state assertions | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|139:| N3 | `:376-397`: validly hashed non-succeeded document | Actual payload modification with original hash, integrity rejection and failure state | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|140:| N4 | No top-level test | Audit-only closure, no metric edge/optimizer/correction/supersede | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|141:| N5 | `:400-420`: absent seed, no reconstruction rows in partial route | Complete pre-mutation contract and no backend/partial-revision execution | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|142:| N6 | No top-level test or all-status preflight | Newest failed/reconstructing row rejected with domain state unchanged | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|148:**NOT PROVEN.** Existing goldens invoke the pipeline once; observing a seed at a stub is not double-run evidence. `CachePolicy::kNever` prevents serving a host task from cache, but does not make w…
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|154:Historical partial-pipeline result: **676/676**. No new build or CTest was run during this documentation-only Phase 1 audit. The required new full-chain Debug matrix is **NOT PROVEN**.
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|158:Historical partial-pipeline result: **676/676**. No new build or CTest was run during this documentation-only Phase 1 audit. The required new full-chain Release matrix is **NOT PROVEN**.
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|190:**PROVEN IN CI:** no new full-chain claim from this audit. Historical tests remain limited to their actual stage/transport/stub scope.
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|192:**NOT PROVEN:** full P3.1 execution, measured metric closure/BA improvement and the required negative/replay matrix.
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|204:| AC-01: Engine top-level execution | Registered definition exists; original full chain not implemented (`production_pipelines.cpp:62-86`) | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|205:| AC-02: CLI invokes pipeline | Source inspection: both routes call `RunCommand` -> `RunPipeline` (`cli/main.cpp:216-219,525-531,594-602`); provider/exit-code defects remain | PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|206:| AC-03: Production executor path | Sparse segment delegates to ProcessExecutor; complete backend path/manifest not proven | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|207:| AC-04: Golden has no direct correction bypass | Source inspection: current test calls `RunPipeline` (`test_p3_sparse_correction_pipeline.cpp:245-247,299-301`), not lower-level correction functio…
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|208:| AC-05: Loop verification through orchestration | Runner never consumes verifier | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|209:| AC-06: Metric LC to PoseGraph | Missing calibrated source and runner handoff | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|210:| AC-07: TrajectoryOptimizer/GTSAM | Dependency declared but unused | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|211:| AC-08: ApplyOptimizedTrajectory | Not called by runner | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|212:| AC-09: 8b retriangulation | No v3 construction | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|213:| AC-10: ReconstructionOptimizer/BA | Stub in golden, empty CLI provider, no observations | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|214:| AC-11: D5 | Gate exists; real geometry-derived improvement not proven | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|215:| AC-12: Expected final revision | No full correction/BA result | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|216:| AC-13: Revision lineage | Required v2/v3/v4 chain absent | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|217:| AC-14: CAS lineage | All intermediate/predecessor references not verified | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|218:| AC-15: Atomic DB writes | Only existing BA pair transaction; missing production failure injection | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|219:| AC-16: N1 | Stub-only quality failure, no retriangulated v3 | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|220:| AC-17: N2 | Partial dangling-input proof, full state matrix missing | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|221:| AC-18: N3 | Existing test is not content mismatch | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|222:| AC-19: N4 | Top-level negative absent | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|223:| AC-20: N5 | Partial seed validation proof, full path not implemented | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|224:| AC-21: N6 | Top-level negative/all-status check absent | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|225:| AC-22: Deterministic second run | No double-run | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|226:| AC-23: Debug full suite | 676/676 historical; new completed-implementation matrix not run | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|227:| AC-24: Release full suite | 676/676 historical; new completed-implementation matrix not run | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|228:| AC-25: Architecture gates | Fresh execution of all seven gates in section 21 | PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|229:| AC-26: No new migration | Source inspection and schema gate: no P3.1 schema/migration additions | PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|230:| AC-27: Core/backend isolation | Source inspection and domain/dependency checks: no Core/backend dependency introduced by P3.1 | PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|231:| AC-28: No worker MetadataDb | Fresh worker-boundary check: PASS, 29 files | PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|232:| AC-29: No 8d | Source scope review: no intrinsic-refinement work in P3.1 changes | PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|233:| AC-30: No dense | Source scope review: no dense/OpenMVS work in P3.1 changes | PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|234:| AC-31: No AI | Source scope review: no AI work in P3.1 changes | PROVEN |
+
+--- @72b88d2 (HEAD) ---
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|7:This replaces the earlier incorrect COMPLETE declaration and renumbered acceptance table. The original GO AC-01..AC-31 remain authoritative. No required stage or negative is deferred to another mile…
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|35:Required, **NOT PROVEN**:
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|46:**PROVEN by source inspection:** a real registered definition exists; the current golden enters `engine->RunPipeline(kSparseCorrectionPipelineId, ...)` (`tests/unit/test_p3_sparse_correction_pipeli…
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|48:Both CLI spellings route through `RunCommand`, which invokes `engine.RunPipeline` (`cli/main.cpp:216-219,525-531,594-602`). **NOT PROVEN:** successful production CLI execution. Its composition root…
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|56:**NOT PROVEN.** The runner does not use `matcher` or `verifier`. `VerifyLoopClosureGeometry` is an existing lower-level orchestrator, but it copies the injected verifier's output rather than genera…
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|64:**NOT PROVEN through P3.1.** `GtsamTrajectoryOptimizer` exists behind `TrajectoryOptimizer`, but the runner never invokes it. Its lower-level tests consume supplied graph measurements, not measured…
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|68:**NOT PROVEN through P3.1.** The existing implementation (`core/trajectory/reconstruction_feedback.h:103-225`) is unchanged and not called by the runner. Continuation must resolve frame IDs, explic…
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|72:**NOT PROVEN through P3.1.** Frozen `core/geometry/triangulation.h:269-571` is not invoked. The runner supplies the committed source directly as `source_v3` (`sparse_correction_runner.cpp:351-357`)…
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|78:**NOT PROVEN with an actual backend through P3.1.** The current golden injects `StubOptimizer`, which copies geometry and sets trace fields (`tests/unit/test_p3_sparse_correction_pipeline.cpp:123-1…
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|84:Required: `rms_after < 0.9 * rms_before`, with both values measured on the same pinned observation set. The existing host-stage gate is present (`engine/pipeline/bundle_adjustment_optimize_pipeline…
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|90:**NOT PROVEN for the full chain.** Current goldens check terminal `Has(hash)` and parse a reconstruction document. They do not verify all intermediate feature/calibration/metric/trajectory/revision…
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|96:**NOT PROVEN for all required transitions and failure cases.** The BA wrapper transaction protects its insert/supersede pair (`bundle_adjustment_optimize_pipeline.cpp:139-147`). The runner commits …
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|102:**NOT PROVEN for the required v2/v3/v4 chain.** Current tests assert only two reconstruction rows (`tests/unit/test_p3_sparse_correction_pipeline.cpp:256-272,309-320`). No retriangulated v3 exists…
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|108:**NOT PROVEN for the original GO.** Existing lower-level and partial-pipeline tests are retained; none is relabeled as the required geometric golden.
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|112:| A: Engine pipeline success | Historical success of truncated stub-backed path only | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|113:| B: All required stages in manifest | Only sparse/commit-BA subset | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|114:| C: Actual implementation metadata | Nested process exists in code; full backend trace absent | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|115:| D: Real worker/probe process | Source delegates to ProcessExecutor; historical partial-path evidence, not full golden | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|116:| E: Every output in CAS | Terminal output only checked | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|117:| F: Verified metric loop | No calibrated provider | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|118:| G: PoseGraph | Not called by runner | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|119:| H: GTSAM | Not called by runner | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|120:| I: Corrected drifted trajectory | No trajectory correction | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|121:| J: New corrected reconstruction | Stub creates a new identity without measured correction | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|122:| K: v3 geometry | No retriangulation | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|123:| L: BA optimizer path | Stub replaces actual adapter | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|124:| M: Measured D5 improvement | Hardcoded trace | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|125:| N: v4 after BA gate | Stub-backed subset only | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|126:| O: Revision statuses | Two rows, not required chain | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|127:| P: QueryLatest final revision | Partial-path assertion only | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|128:| Q: Predecessor provenance | Complete chain not asserted | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|129:| R: All lineage refs resolve | Not asserted | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|130:| S: Two-run derived determinism | One invocation and seed assertion only | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|131:| T: Expected cache behavior | No full pipeline double-run | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|137:| N1 | `test_p3_sparse_correction_pipeline.cpp:326-350`: stub gate fails and retains committed source | Actual v3, measured gate, no partial v4 CAS/domain state | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|138:| N2 | `:355-371`: dangling input through passthrough; failed manifest/no reconstruction | Complete production preflight and downstream/CAS state assertions | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|139:| N3 | `:376-397`: validly hashed non-succeeded document | Actual payload modification with original hash, integrity rejection and failure state | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|140:| N4 | No top-level test | Audit-only closure, no metric edge/optimizer/correction/supersede | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|141:| N5 | `:400-420`: absent seed, no reconstruction rows in partial route | Complete pre-mutation contract and no backend/partial-revision execution | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|142:| N6 | No top-level test or all-status preflight | Newest failed/reconstructing row rejected with domain state unchanged | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|148:**NOT PROVEN.** Existing goldens invoke the pipeline once; observing a seed at a stub is not double-run evidence. `CachePolicy::kNever` prevents serving a host task from cache, but does not make w…
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|154:Historical partial-pipeline result: **676/676**. No new build or CTest was run during this documentation-only Phase 1 audit. The required new full-chain Debug matrix is **NOT PROVEN**.
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|158:Historical partial-pipeline result: **676/676**. No new build or CTest was run during this documentation-only Phase 1 audit. The required new full-chain Release matrix is **NOT PROVEN**.
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|190:**PROVEN IN CI:** no new full-chain claim from this audit. Historical tests remain limited to their actual stage/transport/stub scope.
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|192:**NOT PROVEN:** full P3.1 execution, measured metric closure/BA improvement and the required negative/replay matrix.
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|204:| AC-01: Engine top-level execution | Registered definition exists; original full chain not implemented (`production_pipelines.cpp:62-86`) | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|205:| AC-02: CLI invokes pipeline | Source inspection: both routes call `RunCommand` -> `RunPipeline` (`cli/main.cpp:216-219,525-531,594-602`); provider/exit-code defects remain | PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|206:| AC-03: Production executor path | Sparse segment delegates to ProcessExecutor; complete backend path/manifest not proven | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|207:| AC-04: Golden has no direct correction bypass | Source inspection: current test calls `RunPipeline` (`test_p3_sparse_correction_pipeline.cpp:245-247,299-301`), not lower-level correction functio…
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|208:| AC-05: Loop verification through orchestration | Runner never consumes verifier | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|209:| AC-06: Metric LC to PoseGraph | Missing calibrated source and runner handoff | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|210:| AC-07: TrajectoryOptimizer/GTSAM | Dependency declared but unused | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|211:| AC-08: ApplyOptimizedTrajectory | Not called by runner | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|212:| AC-09: 8b retriangulation | No v3 construction | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|213:| AC-10: ReconstructionOptimizer/BA | Stub in golden, empty CLI provider, no observations | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|214:| AC-11: D5 | Gate exists; real geometry-derived improvement not proven | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|215:| AC-12: Expected final revision | No full correction/BA result | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|216:| AC-13: Revision lineage | Required v2/v3/v4 chain absent | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|217:| AC-14: CAS lineage | All intermediate/predecessor references not verified | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|218:| AC-15: Atomic DB writes | Only existing BA pair transaction; missing production failure injection | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|219:| AC-16: N1 | Stub-only quality failure, no retriangulated v3 | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|220:| AC-17: N2 | Partial dangling-input proof, full state matrix missing | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|221:| AC-18: N3 | Existing test is not content mismatch | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|222:| AC-19: N4 | Top-level negative absent | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|223:| AC-20: N5 | Partial seed validation proof, full path not implemented | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|224:| AC-21: N6 | Top-level negative/all-status check absent | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|225:| AC-22: Deterministic second run | Twin double-run via `Engine::RunPipeline` (two fresh projects, real GTSAM seams), Debug EXIT 0 + Release EXIT 0 | PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|226:| AC-23: Debug full suite | 676/676 historical; new completed-implementation matrix not run | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|227:| AC-24: Release full suite | 676/676 historical; new completed-implementation matrix not run | NOT PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|228:| AC-25: Architecture gates | Fresh execution of all seven gates in section 21 | PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|229:| AC-26: No new migration | Source inspection and schema gate: no P3.1 schema/migration additions | PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|230:| AC-27: Core/backend isolation | Source inspection and domain/dependency checks: no Core/backend dependency introduced by P3.1 | PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|231:| AC-28: No worker MetadataDb | Fresh worker-boundary check: PASS, 29 files | PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|232:| AC-29: No 8d | Source scope review: no intrinsic-refinement work in P3.1 changes | PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|233:| AC-30: No dense | Source scope review: no dense/OpenMVS work in P3.1 changes | PROVEN |
+  Ldocs/architecture/P3.1-production-sparse-correction-verification-report.md|234:| AC-31: No AI | Source scope review: no AI work in P3.1 changes | PROVEN |
+
+
+####### MILESTONE P3-milestone-status.md — tail region diff-anchored #######
+  ==== @fbef42b (PARENT) total=164 lines ====
+   L157|---
+   L158|
+   L159|## Next step
+   L160|
+   L161|**P3-impl-7c — Visual Loop → GTSAM E2E.** Consume 7b's **accepted** `LoopClosure` records and
+   L162|produce `PoseGraphEdge` constraints (`BuildLoopClosureEdge`, 6c scaffolding) into a PoseGraph, then
+   L163|optimize via the existing GTSAM adapter. Do **not** start automatically; requires explicit
+   L164|authorization.
+
+  ==== @72b88d2 (HEAD) total=197 lines ====
+   L190|---
+   L191|
+   L192|## Next step
+   L193|
+   L194|**P3-impl-7c — Visual Loop → GTSAM E2E.** Consume 7b's **accepted** `LoopClosure` records and
+   L195|produce `PoseGraphEdge` constraints (`BuildLoopClosureEdge`, 6c scaffolding) into a PoseGraph, then
+   L196|optimize via the existing GTSAM adapter. Do **not** start automatically; requires explicit
+   L197|authorization.
+
+####### MILESTONE P3.1-production-sparse-correction-verification-report.md — tail region diff-anchored #######
+  ==== @fbef42b (PARENT) total=238 lines ====
+   L231|| AC-28: No worker MetadataDb | Fresh worker-boundary check: PASS, 29 files | PROVEN |
+   L232|| AC-29: No 8d | Source scope review: no intrinsic-refinement work in P3.1 changes | PROVEN |
+   L233|| AC-30: No dense | Source scope review: no dense/OpenMVS work in P3.1 changes | PROVEN |
+   L234|| AC-31: No AI | Source scope review: no AI work in P3.1 changes | PROVEN |
+   L235|
+   L236|**P3.1 = INCOMPLETE.** Phase 1 did not establish a usable calibrated provider. No fake provider, hardcoded improvement, replacement geometry math or weakened ac…
+   L237|
+   L238|STOP — P3.1 incomplete. No next milestone started.
+
+  ==== @72b88d2 (HEAD) total=238 lines ====
+   L231|| AC-28: No worker MetadataDb | Fresh worker-boundary check: PASS, 29 files | PROVEN |
+   L232|| AC-29: No 8d | Source scope review: no intrinsic-refinement work in P3.1 changes | PROVEN |
+   L233|| AC-30: No dense | Source scope review: no dense/OpenMVS work in P3.1 changes | PROVEN |
+   L234|| AC-31: No AI | Source scope review: no AI work in P3.1 changes | PROVEN |
+   L235|
+   L236|**P3.1 = INCOMPLETE.** Phase 1 did not establish a usable calibrated provider. No fake provider, hardcoded improvement, replacement geometry math or weakened ac…
+   L237|
+   L238|STOP — P3.1 incomplete. No next milestone started.
+

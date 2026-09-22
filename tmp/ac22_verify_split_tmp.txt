@@ -1,0 +1,12 @@
+tmp/ac22_milestone_only.md: bytes=17600 lines=165
+  == parent (lines=165)?. Step 12 not in only_mil = True
+  AC-22 anchor PROVEN-in-only = True
+  AC-22 NOT-started-gone     = True
+
+MISSING tmp/ac22_report_only.md
+
+HEAD twin test bytes=127937 lines=2747
+  contains AC22 twin anchor : True
+  contains "Step 12"        : False
+  contains "CLI"            : False
+  contains "cli/"           : False

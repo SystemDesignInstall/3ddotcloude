@@ -1,0 +1,52 @@
+HEAD      = fbef42be4f36e8fdde3f4a2817ff3799e2f53347
+parent^   = a3768c390e858bb4ef6c40876f8703a140f4ce11
+
+===== git status --short =====
+ M docs/architecture/P3-milestone-status.md
+ M docs/architecture/P3.1-production-sparse-correction-verification-report.md
+ M tests/CMakeLists.txt
+ M tests/unit/test_p3_trajectory_optimization.cpp
+?? ac22_both_docs_full.txt
+?? ac22_commit_preview_gen.py
+?? ac22_docs_diff_utf8.txt
+?? ac22_dump_diffs.py
+?? ac22_final_truth_gen.py
+?? ac22_ground_truth_dump.py
+?? ac22_ground_truth_dump.txt
+?? ac22_head_docs_lines.txt
+?? ac22_lines_dump.py
+?? ac22_milestone.diff
+?? ac22_purity_check.py
+?? ac22_report.diff
+?? ac22_report_utf8.diff.txt
+?? ac22_scratch/
+?? ac22_truth_check_report.txt
+?? ac22_truth_final.txt
+?? cli_preview_milestone.diff
+?? cli_preview_milestone.diff.txt
+?? cli_preview_report.diff
+?? cli_preview_report.diff.txt
+?? gen_ac22_docs_diff_utf8.py
+?? gen_ac22_fresh.py
+?? gen_ac22_fresh_truth.py
+?? gen_ac22_head_lines.py
+?? milestone_hunks_gen.py
+?? ms_diff_here.diff
+?? rep_diff_here.diff
+?? tests/unit/test_cli_sparse_correction_e2e.cpp
+?? tmp/
+?? tmp_ac22_hunklines.py
+?? tmp_ac22_preview.py
+?? tmp_dump_milestone_utf8.py
+
+===== staged name-only =====
+(none)
+
+milestone worktree bytes=20426 lines=198
+  contains "Step 12"                  : True
+  contains AC-22 PROVEN twin anchor   : True
+  contains "NOT started per GO"       : True
+
+report worktree bytes=20264 lines=239
+  contains AC-22 PROVEN row          : True
+
