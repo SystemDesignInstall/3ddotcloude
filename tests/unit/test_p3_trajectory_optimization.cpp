@@ -334,8 +334,8 @@ class TrajectoryOptimizationTest : public ::testing::Test {
  protected:
   void SetUp() override {
     root_ = std::filesystem::temp_directory_path() /
-            ("spatial_p3_traj_opt_" + std::to_string(std::time(nullptr)) +
-             "_" + std::to_string(rand()));
+            ("spatial_p3_traj_opt_" +
+             spatial::core::FormatUuid(spatial::core::GenerateUuid()));
     ProjectInfo info;
     info.uuid = GenerateUuid();
     info.name = "p3-traj-opt";

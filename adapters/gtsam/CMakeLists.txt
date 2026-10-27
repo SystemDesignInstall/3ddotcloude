@@ -48,4 +48,6 @@ set_target_properties(spatial_gtsam_adapter PROPERTIES
 
 # GTSAM headers produce warnings in our /W4 /WX build; suppress them since
 # they are third-party code not ours to fix (same pattern as protobuf and engine).
-target_compile_options(spatial_gtsam_adapter PRIVATE /WX-)
+target_compile_options(spatial_gtsam_adapter PRIVATE
+  $<IF:$<CXX_COMPILER_ID:MSVC>,/WX-,-Wno-error>
+)

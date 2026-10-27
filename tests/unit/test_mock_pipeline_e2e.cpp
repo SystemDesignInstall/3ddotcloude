@@ -17,6 +17,7 @@
 #include <sqlite3.h>
 
 #include "core/artifacts/artifact_manifest.h"
+#include "core/errors/project_error.h"
 #include "core/project/project.h"
 #include "core/utils/uuid.h"
 #include "engine/engine.h"
@@ -38,8 +39,8 @@ class MockPipelineE2eTest : public ::testing::Test {
  protected:
   void SetUp() override {
     root_ = std::filesystem::temp_directory_path() /
-            ("spatial_mock_e2e_" + std::to_string(std::time(nullptr)) + "_" +
-             std::to_string(rand()));
+            ("spatial_mock_e2e_" +
+             spatial::core::FormatUuid(spatial::core::GenerateUuid()));
     ProjectInfo info;
     info.uuid = GenerateUuid();
     info.name = "mock-e2e";
@@ -165,6 +166,33 @@ TEST_F(MockPipelineE2eTest, SecondRunIsACacheHitAcrossAllStages) {
     EXPECT_EQ(sqlite3_column_int64(stmt, 0), 0)
         << "cache-hit stage " << stage.stage_id << " must not have a run row";
     sqlite3_finalize(stmt);
+  }
+}
+
+TEST_F(MockPipelineE2eTest, SkippedStagesAreNotReportedAsCacheHits) {
+  const ArtifactRef input = PutInput("image-a");
+  Engine engine(std::move(*project_), [](const auto&, auto, auto) {
+    throw spatial::core::ValidationError(
+        spatial::core::ErrorCode::kValidationDomain, "invalid reconstruction");
+  });
+  RegisterMockPhotogrammetry(engine.registry());
+
+  const auto manifest = engine.RunPipeline("photogrammetry", {input}, "{}");
+
+  ASSERT_EQ(manifest.status, "failed");
+  ASSERT_GT(manifest.stages.size(), 1u);
+  EXPECT_EQ(manifest.stages[0].status, "failed");
+  for (std::size_t i = 1; i < manifest.stages.size(); ++i) {
+    EXPECT_EQ(manifest.stages[i].status, "skipped");
+  }
+  for (const auto& stage : manifest.stages) {
+    EXPECT_FALSE(stage.cache_hit) << stage.stage_id;
+    EXPECT_TRUE(stage.output_refs.empty()) << stage.stage_id;
+  }
+  const auto reloaded = engine.LoadManifest(manifest.manifest_id);
+  ASSERT_TRUE(reloaded.has_value());
+  for (const auto& stage : reloaded->stages) {
+    EXPECT_FALSE(stage.cache_hit) << stage.stage_id;
   }
 }
 

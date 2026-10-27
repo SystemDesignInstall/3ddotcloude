@@ -9,6 +9,8 @@
 // contract holds (a calibration value in config_json is rejected, RFC-0009
 // §6).
 
+#include "core/utils/uuid.h"
+
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -214,8 +216,8 @@ TEST(ColmapAdapterTest, ExecuteReportsDeterministicProgressPerStage) {
   // the mapper produces the sparse-model payload artifact.
   const std::filesystem::path workspace =
       std::filesystem::temp_directory_path() /
-      ("spatial_colmap_exec_" + std::to_string(std::time(nullptr)) + "_" +
-       std::to_string(rand()));
+      ("spatial_colmap_exec_" +
+       spatial::core::FormatUuid(spatial::core::GenerateUuid()));
   std::filesystem::create_directories(workspace);
 
   auto context = std::make_shared<ExecutionContext>();

@@ -131,8 +131,8 @@ class MultiInputDispatchTest : public ::testing::Test {
  protected:
   void SetUp() override {
     root_ = std::filesystem::temp_directory_path() /
-            ("spatial_multi_input_" + std::to_string(std::time(nullptr)) + "_" +
-             std::to_string(rand()));
+            ("spatial_multi_input_" +
+             spatial::core::FormatUuid(spatial::core::GenerateUuid()));
     ProjectInfo info;
     info.uuid = GenerateUuid();
     info.name = "multi-input";

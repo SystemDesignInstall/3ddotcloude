@@ -17,8 +17,10 @@
 #include <string>
 #include <vector>
 
+#if defined(SPATIAL_HAS_GTSAM)
 #include "adapters/gtsam/gtsam_bundle_adjustment_optimizer.h"
 #include "adapters/gtsam/gtsam_optimizer_adapter.h"
+#endif
 #include "adapters/visual_geometry/essential_verifier.h"
 #include "adapters/visual_matching/visual_matcher_adapter.h"
 #include "core/artifacts/artifact_manifest.h"
@@ -177,14 +179,14 @@ const char* GetEnv(const char* name) {
 // handle so they outlive the Engine (the in-process runner captures the seam
 // POINTERS by value inside its task lambda).
 struct SparseCorrectionEngineHandle {
-  // Engine is neither copyable nor movable, so it is owned through a pointer
-  // and constructed in place (make_unique) inside OpenSparseCorrectionEngine.
-  std::unique_ptr<Engine> engine;
   std::unique_ptr<spatial::core::LoopClosureFeatureMatcher> matcher;
   std::unique_ptr<spatial::core::GeometricVerifier> verifier;
   std::unique_ptr<spatial::core::TrajectoryOptimizer> trajectory_optimizer;
   std::unique_ptr<spatial::core::geometry::ReconstructionOptimizer>
       ba_optimizer;
+  // Members are destroyed in reverse declaration order. Join the Engine's
+  // worker before releasing any provider captured by its runner.
+  std::unique_ptr<Engine> engine;
 };
 
 SparseCorrectionEngineHandle OpenSparseCorrectionEngine(
@@ -213,10 +215,12 @@ SparseCorrectionEngineHandle OpenSparseCorrectionEngine(
   handle.verifier =
       std::make_unique<spatial::adapters::visual_geometry::
                            EssentialGeometricVerifier>();
+#if defined(SPATIAL_HAS_GTSAM)
   handle.trajectory_optimizer =
       std::make_unique<spatial::adapters::gtsam::GtsamTrajectoryOptimizer>();
   handle.ba_optimizer = std::make_unique<
       spatial::adapters::gtsam::GtsamBundleAdjustmentOptimizer>();
+#endif
   spatial::engine::SparseCorrectionSeams seams;
   seams.matcher = handle.matcher.get();
   seams.verifier = handle.verifier.get();

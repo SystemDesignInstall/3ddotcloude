@@ -27,10 +27,12 @@ set_target_properties(spatial PROPERTIES
 # targets (autolinking would pull boost_test_exec_monitor).
 if(TARGET spatial_gtsam_adapter)
   target_link_libraries(spatial PRIVATE spatial_gtsam_adapter)
-  target_compile_definitions(spatial PRIVATE BOOST_ALL_NO_LIB)
-  add_custom_command(TARGET spatial POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_RUNTIME_DLLS:spatial> $<TARGET_FILE_DIR:spatial>
-    COMMAND_EXPAND_LISTS
-  )
+  target_compile_definitions(spatial PRIVATE BOOST_ALL_NO_LIB SPATIAL_HAS_GTSAM=1)
+  if(WIN32)
+    add_custom_command(TARGET spatial POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+              $<TARGET_RUNTIME_DLLS:spatial> $<TARGET_FILE_DIR:spatial>
+      COMMAND_EXPAND_LISTS
+    )
+  endif()
 endif()

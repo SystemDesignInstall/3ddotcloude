@@ -62,7 +62,7 @@ add_custom_command(
 set_source_files_properties(
   "${SPATIAL_GENERATED_PROTO_DIR}/worker.pb.cc"
   "${SPATIAL_GENERATED_PROTO_DIR}/errors.pb.cc"
-  PROPERTIES COMPILE_OPTIONS "/WX-")
+  PROPERTIES COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/WX-,-Wno-error>")
 
 # Runtime paths for the demo worker (used by tests and the ProcessExecutor).
 # Paths are normalized to forward slashes so they are valid in string literals.

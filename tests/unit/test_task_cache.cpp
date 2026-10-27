@@ -30,8 +30,8 @@ class TaskCacheTest : public ::testing::Test {
  protected:
   void SetUp() override {
     root_ = std::filesystem::temp_directory_path() /
-            ("spatial_cache_" + std::to_string(std::time(nullptr)) + "_" +
-             std::to_string(rand()));
+            ("spatial_cache_" +
+             spatial::core::FormatUuid(spatial::core::GenerateUuid()));
     std::filesystem::create_directories(root_);
     db_ = std::make_unique<MetadataDb>(MetadataDb::Create(root_ / "project.db"));
     store_ = std::make_unique<ArtifactStore>(root_ / "artifacts", *db_);

@@ -5,6 +5,8 @@
 // mandatory terminate-and-reap behavior on timeout and cooperative
 // cancellation (no orphan process is ever left behind).
 
+#include "core/utils/uuid.h"
+
 #include <gtest/gtest.h>
 
 #include <chrono>
@@ -32,8 +34,8 @@ class TempDir {
  public:
   TempDir() {
     path_ = std::filesystem::temp_directory_path() /
-            ("spatial_proc_" + std::to_string(std::time(nullptr)) + "_" +
-             std::to_string(rand()));
+            ("spatial_proc_" +
+             spatial::core::FormatUuid(spatial::core::GenerateUuid()));
     std::filesystem::create_directories(path_);
   }
   ~TempDir() {

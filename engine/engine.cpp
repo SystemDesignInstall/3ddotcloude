@@ -97,7 +97,8 @@ ExecutionManifest Engine::RunPipeline(
   // (AC-8, pipeline_cache).
   for (std::size_t i = 0; i < plan.stages.size(); ++i) {
     const auto& task = plan.graph->GetTask(plan.stages[i].task_id);
-    const bool cache_hit = state_store_->LoadRuns(task.id).empty();
+    const bool cache_hit = task.state == TaskStatus::kSucceeded &&
+                           state_store_->LoadRuns(task.id).empty();
     manifest_store_->UpdateStage(plan.job_id, static_cast<int>(i), task.state,
                                  cache_hit, task.outputs,
                                  task.metadata.created_at_ns,

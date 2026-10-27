@@ -13,6 +13,8 @@
 // failures map to typed AdapterError codes (exit, timeout, cancellation,
 // missing/corrupt CAS input, missing store, unknown plan step).
 
+#include "core/utils/uuid.h"
+
 #include <gtest/gtest.h>
 
 #include <chrono>
@@ -87,8 +89,8 @@ class ColmapExecutionTest : public ::testing::Test {
 
   void SetUp() override {
     root_ = std::filesystem::temp_directory_path() /
-            ("spatial_colmap_ex_" + std::to_string(std::time(nullptr)) + "_" +
-             std::to_string(rand()));
+            ("spatial_colmap_ex_" +
+             spatial::core::FormatUuid(spatial::core::GenerateUuid()));
     std::filesystem::create_directories(root_);
     db_ = spatial::core::MetadataDb::Create(root_ / "project.db");
     store_ = std::make_unique<spatial::core::ArtifactStore>(

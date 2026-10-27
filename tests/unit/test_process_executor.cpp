@@ -296,8 +296,8 @@ TEST_F(ProcessExecutorTest, StalledWorkerTripsHeartbeatTimeout) {
 // C++ scheduler <-> Python worker end-to-end (RFC-0003 P1.3 integration).
 TEST_F(ProcessExecutorTest, SchedulerRunsDemoWorkerEndToEnd) {
   const auto root = std::filesystem::temp_directory_path() /
-                    ("spatial_e2e_" + std::to_string(std::time(nullptr)) + "_" +
-                     std::to_string(std::rand()));
+                    ("spatial_e2e_" +
+                     spatial::core::FormatUuid(spatial::core::GenerateUuid()));
   std::filesystem::create_directories(root);
   {
     auto db = std::make_unique<MetadataDb>(MetadataDb::Create(root / "p.db"));
@@ -366,8 +366,7 @@ std::filesystem::path WriteFixtureWorker(const std::string& tag,
                                          const std::string& script) {
   const auto path = std::filesystem::temp_directory_path() /
                     ("spatial_" + tag + "_" +
-                     std::to_string(std::time(nullptr)) + "_" +
-                     std::to_string(std::rand()) + ".py");
+                     spatial::core::FormatUuid(spatial::core::GenerateUuid()) + ".py");
   std::ofstream out(path);
   out << script;
   return path;
@@ -375,8 +374,8 @@ std::filesystem::path WriteFixtureWorker(const std::string& tag,
 
 TEST_F(ProcessExecutorTest, IngestSucceedsPayloadLandsInCasAndDedupes) {
   const auto root = std::filesystem::temp_directory_path() /
-                    ("spatial_ingest_" + std::to_string(std::time(nullptr)) +
-                     "_" + std::to_string(std::rand()));
+                    ("spatial_ingest_" +
+                     spatial::core::FormatUuid(spatial::core::GenerateUuid()));
   std::filesystem::create_directories(root);
   {
     auto db = MetadataDb::Create(root / "p.db");
@@ -430,8 +429,8 @@ write(spatial_wire.task_completed(req['task_id'], []))
 
 TEST_F(ProcessExecutorTest, IngestFailClosedNoPayloadPath) {
   const auto root = std::filesystem::temp_directory_path() /
-                    ("spatial_ingest_" + std::to_string(std::time(nullptr)) +
-                     "_" + std::to_string(std::rand()));
+                    ("spatial_ingest_" +
+                     spatial::core::FormatUuid(spatial::core::GenerateUuid()));
   std::filesystem::create_directories(root);
   {
     auto db = MetadataDb::Create(root / "p.db");
@@ -466,8 +465,8 @@ write(spatial_wire.task_completed(req['task_id'], []))
 
 TEST_F(ProcessExecutorTest, IngestFailClosedMissingPayloadFile) {
   const auto root = std::filesystem::temp_directory_path() /
-                    ("spatial_ingest_" + std::to_string(std::time(nullptr)) +
-                     "_" + std::to_string(std::rand()));
+                    ("spatial_ingest_" +
+                     spatial::core::FormatUuid(spatial::core::GenerateUuid()));
   std::filesystem::create_directories(root);
   {
     auto db = MetadataDb::Create(root / "p.db");
@@ -502,8 +501,8 @@ write(spatial_wire.task_completed(req['task_id'], []))
 
 TEST_F(ProcessExecutorTest, IngestFailClosedHashMismatch) {
   const auto root = std::filesystem::temp_directory_path() /
-                    ("spatial_ingest_" + std::to_string(std::time(nullptr)) +
-                     "_" + std::to_string(std::rand()));
+                    ("spatial_ingest_" +
+                     spatial::core::FormatUuid(spatial::core::GenerateUuid()));
   std::filesystem::create_directories(root);
   {
     auto db = MetadataDb::Create(root / "p.db");
@@ -537,8 +536,8 @@ write(spatial_wire.task_completed(req['task_id'], []))
 
 TEST_F(ProcessExecutorTest, IngestFailClosedMalformedManifest) {
   const auto root = std::filesystem::temp_directory_path() /
-                    ("spatial_ingest_" + std::to_string(std::time(nullptr)) +
-                     "_" + std::to_string(std::rand()));
+                    ("spatial_ingest_" +
+                     spatial::core::FormatUuid(spatial::core::GenerateUuid()));
   std::filesystem::create_directories(root);
   {
     auto db = MetadataDb::Create(root / "p.db");
@@ -573,8 +572,8 @@ write(spatial_wire.task_completed(req['task_id'], []))
 
 TEST_F(ProcessExecutorTest, MaterializesInputsIntoWorkspace) {
   const auto root = std::filesystem::temp_directory_path() /
-                    ("spatial_mat_" + std::to_string(std::time(nullptr)) +
-                     "_" + std::to_string(std::rand()));
+                    ("spatial_mat_" +
+                     spatial::core::FormatUuid(spatial::core::GenerateUuid()));
   std::filesystem::create_directories(root);
   {
     auto db = MetadataDb::Create(root / "p.db");
@@ -619,8 +618,8 @@ TEST_F(ProcessExecutorTest, MaterializesInputsIntoWorkspace) {
 
 TEST_F(ProcessExecutorTest, MaterializeMissingInputFailsClosed) {
   const auto root = std::filesystem::temp_directory_path() /
-                    ("spatial_mat_" + std::to_string(std::time(nullptr)) +
-                     "_" + std::to_string(std::rand()));
+                    ("spatial_mat_" +
+                     spatial::core::FormatUuid(spatial::core::GenerateUuid()));
   std::filesystem::create_directories(root);
   {
     auto db = MetadataDb::Create(root / "p.db");

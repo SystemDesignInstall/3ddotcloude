@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -83,6 +84,70 @@ TEST(InProcessExecutor, CustomRunnerCanFailRecoverable) {
   ASSERT_GE(events.size(), 1u);
   EXPECT_EQ(events[0].type, WorkerEventType::kFailed);
   EXPECT_EQ(events[0].error_code, "ADAPTER_ERROR");
+  EXPECT_TRUE(events[0].recoverable);
+}
+
+TEST(InProcessExecutor, PreservesPermanentDomainFailure) {
+  const spatial::core::ValidationError error(
+      ErrorCode::kValidationDomain, "bundle adjustment quality gate rejected");
+  InProcessExecutor executor(test::BigWorker(),
+                            [error](const TaskRequest&, auto, auto) {
+                              throw error;
+                            });
+  const auto request = MakeRequest();
+  executor.Submit(request);
+
+  const auto events = Drain(executor, 1);
+  ASSERT_EQ(events.size(), 1u);
+  EXPECT_EQ(events[0].type, WorkerEventType::kFailed);
+  EXPECT_EQ(events[0].task_id, request.task_id);
+  EXPECT_EQ(events[0].error_code, "VALIDATION_DOMAIN");
+  EXPECT_EQ(events[0].error_message, error.what());
+  EXPECT_FALSE(events[0].recoverable);
+}
+
+TEST(InProcessExecutor, PreservesTransientDomainFailure) {
+  const spatial::core::StorageError error(
+      ErrorCode::kStorageLock, "storage temporarily locked", {}, true);
+  InProcessExecutor executor(test::BigWorker(),
+                            [error](const TaskRequest&, auto, auto) {
+                              throw error;
+                            });
+  executor.Submit(MakeRequest());
+
+  const auto events = Drain(executor, 1);
+  ASSERT_EQ(events.size(), 1u);
+  EXPECT_EQ(events[0].type, WorkerEventType::kFailed);
+  EXPECT_EQ(events[0].error_code, "STORAGE_LOCK");
+  EXPECT_EQ(events[0].error_message, error.what());
+  EXPECT_TRUE(events[0].recoverable);
+}
+
+TEST(InProcessExecutor, UnknownStandardExceptionRemainsRecoverableCrash) {
+  InProcessExecutor executor(test::BigWorker(),
+                            [](const TaskRequest&, auto, auto) {
+                              throw std::runtime_error("unclassified failure");
+                            });
+  executor.Submit(MakeRequest());
+
+  const auto events = Drain(executor, 1);
+  ASSERT_EQ(events.size(), 1u);
+  EXPECT_EQ(events[0].type, WorkerEventType::kFailed);
+  EXPECT_EQ(events[0].error_code, "WORKER_CRASHED");
+  EXPECT_NE(events[0].error_message.find("unclassified failure"),
+            std::string::npos);
+  EXPECT_TRUE(events[0].recoverable);
+}
+
+TEST(InProcessExecutor, UnknownExceptionRemainsRecoverableCrash) {
+  InProcessExecutor executor(test::BigWorker(),
+                            [](const TaskRequest&, auto, auto) { throw 17; });
+  executor.Submit(MakeRequest());
+
+  const auto events = Drain(executor, 1);
+  ASSERT_EQ(events.size(), 1u);
+  EXPECT_EQ(events[0].type, WorkerEventType::kFailed);
+  EXPECT_EQ(events[0].error_code, "WORKER_CRASHED");
   EXPECT_TRUE(events[0].recoverable);
 }
 

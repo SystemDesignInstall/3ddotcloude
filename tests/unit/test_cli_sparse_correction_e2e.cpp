@@ -300,8 +300,8 @@ class CliSparseCorrectionE2eTest : public ::testing::Test {
 
   void SetUp() override {
     root_ = std::filesystem::temp_directory_path() /
-            ("spatial_cli_e2e_p3_" + std::to_string(std::time(nullptr)) +
-             "_" + std::to_string(rand()));
+            ("spatial_cli_e2e_p3_" +
+             spatial::core::FormatUuid(spatial::core::GenerateUuid()));
     std::filesystem::create_directories(root_);
     project_path_ = root_ / "demo.spx";
     ProjectInfo info;

@@ -119,6 +119,18 @@ void InProcessExecutor::RunTask(TaskRequest request) {
   };
   try {
     runner_(request, emit, cancelled);
+  } catch (const spatial::core::ProjectError& ex) {
+    // ADR-014 / RFC-0003: deterministic input and quality failures are not
+    // worker crashes. Preserve the producer's classification so the scheduler
+    // retries only errors explicitly marked recoverable, and retains the
+    // original diagnosis in task_runs.
+    WorkerEvent failed;
+    failed.type = WorkerEventType::kFailed;
+    failed.task_id = request.task_id;
+    failed.error_code = spatial::core::StableErrorCode(ex.code());
+    failed.error_message = ex.what();
+    failed.recoverable = ex.recoverable();
+    emit(failed);
   } catch (const std::exception& ex) {
     WorkerEvent failed;
     failed.type = WorkerEventType::kFailed;

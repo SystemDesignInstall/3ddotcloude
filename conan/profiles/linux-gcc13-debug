@@ -1,0 +1,19 @@
+[settings]
+os=Linux
+arch=x86_64
+compiler=gcc
+compiler.version=13
+compiler.libcxx=libstdc++11
+compiler.cppstd=20
+build_type=Debug
+
+# Serial GTSAM avoids platform-specific TBB/hwloc runtime dependencies.
+[options]
+gtsam/*:build_unstable=False
+gtsam/*:install_cppunitlite=False
+gtsam/*:with_TBB=False
+gtsam/*:support_nested_dissection=False
+boost/*:without_stacktrace=True
+
+[conf]
+tools.cmake.cmaketoolchain:generator=Ninja
