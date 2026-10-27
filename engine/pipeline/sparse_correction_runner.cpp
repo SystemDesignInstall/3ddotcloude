@@ -222,11 +222,11 @@ void EmitProduced(ArtifactStore& store, const TaskRequest& request,
 // is NOT an error: it yields a verified-visual-only closure (INV-3).
 
 const json& RequireObjectMember(const json& doc, const char* key,
-                                const std::string& what) {
+                                const char* what) {
   if (!doc.is_object() || !doc.contains(key) || !doc.at(key).is_object()) {
     throw ValidationError(ErrorCode::kValidationDomain,
-                          "sparse correction: " + what + " requires object '" +
-                              key + "'");
+                          std::string("sparse correction: ") + what +
+                              " requires object '" + key + "'");
   }
   return doc.at(key);
 }

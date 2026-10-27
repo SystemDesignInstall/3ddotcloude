@@ -69,10 +69,10 @@ LoopClosureVerificationResult VerifyLoopClosureGeometry(
   LoopClosureVerificationResult result;
 
   // Resolve both FeatureArtifacts (keypoints + descriptors) from the CAS.
-  const auto src_loaded = spatial::core::LoadFeatureDescriptors(
+  auto src_loaded = spatial::core::LoadFeatureDescriptors(
       store, source.feature_artifact_uuid, FormatUuid(source.frame_id),
       source.timestamp_ns);
-  const auto tgt_loaded = spatial::core::LoadFeatureDescriptors(
+  auto tgt_loaded = spatial::core::LoadFeatureDescriptors(
       store, target.feature_artifact_uuid, FormatUuid(target.frame_id),
       target.timestamp_ns);
   if (!src_loaded || !tgt_loaded) {

@@ -54,3 +54,12 @@ upstream notices are committed under `LICENSES/` at P1.
 
 > **Placeholder:** full notice texts, copyright lines, and the complete table
 > of planned backends ship with P1, after the toolchain profiles are committed.
+
+## GTSAM build recipe compatibility
+
+The Windows build uses the ConanCenterIndex GTSAM 4.2.1 recipe derived from
+revision `e9afbb277c20b9f6340caf83c70ea652`, under the MIT license in
+`conan/recipes/gtsam/LICENSE-CII.txt`. The registered local patch removes an
+obsolete test-only include from GTSAM's MSVC precompiled header. GTSAM itself
+retains its BSD license and pinned upstream source archive. See
+`conan/recipes/gtsam/README.md` for the exact build scope.

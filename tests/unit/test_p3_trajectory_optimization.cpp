@@ -2436,9 +2436,10 @@ class Ac22DeterminismTest : public RealGtsamBundleAdjustmentTest {
       for (int k = 0; k < 3; ++k)
         EXPECT_NEAR(px["xyz"][k].get<double>(), py["xyz"][k].get<double>(),
                     kAc22GeometryTol);
-      if (px.contains("error") && py.contains("error"))
+      if (px.contains("error") && py.contains("error")) {
         EXPECT_NEAR(px["error"].get<double>(), py["error"].get<double>(),
                     kAc22GeometryTol);
+      }
     }
   }
 

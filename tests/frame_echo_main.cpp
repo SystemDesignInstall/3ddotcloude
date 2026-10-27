@@ -23,7 +23,7 @@ namespace {
 bool ReadExact(std::uint8_t* out, std::size_t n) {
   std::size_t got = 0;
   while (got < n) {
-    const int r = SPATIAL_READ(0, out + got, static_cast<unsigned>(n - got));
+    const auto r = SPATIAL_READ(0, out + got, static_cast<unsigned>(n - got));
     if (r <= 0) {
       return false;
     }
@@ -35,7 +35,7 @@ bool ReadExact(std::uint8_t* out, std::size_t n) {
 bool WriteExact(const std::uint8_t* data, std::size_t n) {
   std::size_t sent = 0;
   while (sent < n) {
-    const int w =
+    const auto w =
         SPATIAL_WRITE(1, data + sent, static_cast<unsigned>(n - sent));
     if (w <= 0) {
       return false;

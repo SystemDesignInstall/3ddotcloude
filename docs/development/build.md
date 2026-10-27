@@ -26,7 +26,16 @@ checkout; allow time and disk space for Boost, Protobuf and GTSAM.
 ## Windows
 
 Install the Visual Studio C++ workload and Windows SDK. The presets select
-the Visual Studio 17 2022 generator and x64 target. Debug:
+the Visual Studio 17 2022 generator and x64 target. Export the registered GTSAM
+packaging fix before installing dependencies (once per Conan cache):
+
+```sh
+conan export conan/recipes/gtsam --version=4.2.1 --user=spatial --channel=compat
+```
+
+Windows profiles select this separately locked recipe. Its one-line patch excludes
+an obsolete test helper from the MSVC precompiled header; see
+`conan/recipes/gtsam/README.md` for provenance and licensing. Debug:
 
 ```sh
 conan install . --lockfile=conan.lock --profile:host=conan/profiles/msvc2022-x64-debug --profile:build=conan/profiles/msvc2022-x64 --output-folder=build/conan-debug --build=missing --conf:all=tools.build:jobs=2
@@ -69,10 +78,11 @@ cmake --build --preset linux-release --parallel 2
 ctest --preset linux-release --parallel 2 --timeout 180
 ```
 
-The platform and adapters compile as C++20. Linux builds GTSAM itself as
+The platform and adapters compile as C++20. Both platforms build GTSAM itself as
 C++17: its bundled Spectra in 4.2.1 contains constructors rejected by GCC in
 C++20 mode. This is a dependency setting, not a vendor-source patch or a change
-to the platform language standard.
+to the platform language standard. The separately registered Windows PCH patch
+does not change the numerical algorithms.
 
 Linux profiles select stable, serial GTSAM: no unstable module, CppUnitLite,
 TBB/hwloc or METIS. Boost.Stacktrace is also disabled. These optional facilities

@@ -412,8 +412,6 @@ TEST(Reprojection8a, FixtureFailsClosedOnInvalidConstruction) {
   bad.fx = std::nan("");
   EXPECT_THROW(spatial::test::BuildClosedSquareScene(bad, 0.1, 0.05),
                ValidationError);
-  // Negative depth geometry would put corners behind the camera.
-  CameraIntrinsics good = spatial::test::BuildDefaultClosedSquareScene().intrinsics;
   // A pose set that is out of count fails via MakeReconstructionWithPoses.
   const auto scene = spatial::test::BuildDefaultClosedSquareScene();
   std::vector<spatial::core::ReconPose> too_few(scene.truth_poses.begin(),

@@ -550,7 +550,7 @@ TEST_F(LoopClosureVerificationTest, MissingArtifactFailsClosedWithTypedError) {
   const std::string traj = FormatUuid(GenerateUuid());
   VerificationFrameInput good =
       StoreFeature(f0, 10000, SourcePoints(30), {});
-  VerificationFrameInput missing = {f1, 2000, GenerateUuid()};  // not stored
+  VerificationFrameInput missing = {f1, 2000, GenerateUuid(), std::nullopt};
 
   const L2NearestMatcher matcher;
   const FundamentalGeometricVerifier verifier;

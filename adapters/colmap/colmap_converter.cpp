@@ -443,16 +443,6 @@ void ConjugateQuaternion(const std::array<double, 4>& q,
   out[3] =  q[3];
 }
 
-// Multiply two quaternions: result = a * b (scalar-last convention).
-void MultiplyQuaternion(const std::array<double, 4>& a,
-                        const std::array<double, 4>& b,
-                        std::array<double, 4>& out) {
-  out[0] = a[3]*b[0] + a[0]*b[3] + a[1]*b[2] - a[2]*b[1];
-  out[1] = a[3]*b[1] - a[0]*b[2] + a[1]*b[3] + a[2]*b[0];
-  out[2] = a[3]*b[2] + a[0]*b[1] - a[1]*b[0] + a[2]*b[3];
-  out[3] = a[3]*b[3] - a[0]*b[0] - a[1]*b[1] - a[2]*b[2];
-}
-
 // Rotate a 3D vector by a unit quaternion: v' = q * v * q*.
 void RotateVectorByQuaternion(const std::array<double, 4>& q,
                               const std::array<double, 3>& v,

@@ -8,6 +8,7 @@
         "nlohmann_json/3.12.0#2d634ab0ec8d9f56353e5ccef6d6612c%1744735883.94",
         "metis/5.2.1#85cfe7ee0dfc0cba7c0334e92efcbbc6%1711018572.817",
         "hwloc/2.14.0#3f665a66b37dae6cf3907a6814b75791%1785329290.236",
+        "gtsam/4.2.1@spatial/compat#b897d40f3199b560a5cd9562452db588",
         "gtsam/4.2.1#e9afbb277c20b9f6340caf83c70ea652%1781531578.747",
         "gtest/1.18.0#e2507fc4efe2ec9e2db9e5c91eefab9f%1786446847.733",
         "gklib/5.1.1#4d39dd79fe83a63c05abf487a2841d13%1743429921.126",

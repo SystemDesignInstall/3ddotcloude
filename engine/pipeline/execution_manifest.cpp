@@ -18,10 +18,6 @@ using spatial::core::FormatUuid;
 using spatial::core::SchedulerError;
 using nlohmann::json;
 
-std::string UuidToBlobBytes(const Uuid& uuid) {
-  return std::string(reinterpret_cast<const char*>(uuid.data()), uuid.size());
-}
-
 Uuid BlobBytesToUuid(const void* blob, int size) {
   Uuid out{};
   if (blob != nullptr && size == static_cast<int>(out.size())) {

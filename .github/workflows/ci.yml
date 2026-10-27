@@ -114,8 +114,11 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ~/.conan2/p
-          key: conan-${{ matrix.os }}-${{ matrix.config }}-${{ hashFiles('conan.lock', 'conanfile.txt', 'conan/profiles/*') }}
+          key: conan-${{ matrix.os }}-${{ matrix.config }}-${{ hashFiles('conan.lock', 'conanfile.txt', 'conan/profiles/*', 'conan/recipes/gtsam/**') }}
           restore-keys: conan-${{ matrix.os }}-${{ matrix.config }}-
+      - name: Export Windows GTSAM compatibility recipe
+        if: runner.os == 'Windows'
+        run: conan export conan/recipes/gtsam --version=4.2.1 --user=spatial --channel=compat
       - name: Install locked dependencies
         run: >-
           conan install .

@@ -601,7 +601,6 @@ TEST_F(TrajectoryDbTest, TrajectorySceneIsolation) {
 // --- PoseGraph CRUD ---
 
 TEST_F(TrajectoryDbTest, InsertAndQueryPoseGraph) {
-  const auto traj_id = Uuid{};  // Use a deterministic UUID for trajectory_id
   TrajectoryRow traj;
   traj.trajectory_id = GenerateUuid();
   traj.scene_id = scene_.scene_id;

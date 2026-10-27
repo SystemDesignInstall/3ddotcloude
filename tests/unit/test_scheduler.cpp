@@ -36,9 +36,9 @@ class FakeExecutor : public WorkerExecutor {
  public:
   struct Step {
     WorkerEventType type = WorkerEventType::kCompleted;
-    std::string artifact;
-    std::string code;
-    std::string message;
+    std::string artifact{};
+    std::string code{};
+    std::string message{};
     bool recoverable = false;
   };
 

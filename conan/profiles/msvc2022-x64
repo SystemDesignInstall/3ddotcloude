@@ -6,7 +6,11 @@ compiler.version=194
 compiler.runtime=dynamic
 compiler.runtime_type=Release
 compiler.cppstd=20
+gtsam/*:compiler.cppstd=17
 build_type=Release
+
+[replace_requires]
+gtsam/*: gtsam/4.2.1@spatial/compat
 
 [conf]
 tools.cmake.cmaketoolchain:generator=Visual Studio 17 2022

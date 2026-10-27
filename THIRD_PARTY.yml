@@ -19,8 +19,8 @@
 #   notes            Registration rationale and caveats.
 #   security_notes   Tracked security/CVSS considerations (null when none).
 #
-# Active = linked into the M0 kernel build. Planned = approved direction for a
-# later milestone, never built in M0 (ADR-031). Copyleft licenses on planned
+# Active = used by a current kernel, adapter or build-tool target. Adapter
+# dependencies do not become Core dependencies. Planned = later milestone. Copyleft licenses on planned
 # backends (AGPL-3.0, LGPL-2.1) are WARNINGS here: they may only enter the
 # product through the separate-adapter process after legal review.
 dependencies:
@@ -106,13 +106,13 @@ dependencies:
     security_notes: null
   - name: GTSAM
     repository: https://github.com/borglab/gtsam
-    version: planned
-    code_license: BSD-2-Clause
+    version: "4.2.1"
+    code_license: BSD-3-Clause
     model_license: null
     commercial_use: yes
     redistribution: yes
-    status: planned
-    notes: Unified sensor factor graph for SLAM / pose optimization (ADR-005).
+    status: active
+    notes: Real trajectory/BA adapter (ADR-005); isolated from Core. Linux uses the pinned CCI recipe; Windows uses gtsam/4.2.1@spatial/compat with the registered build-only PCH include patch under conan/recipes/gtsam. Dependency compiles as C++17; platform remains C++20.
     security_notes: null
   - name: Ceres Solver
     repository: https://github.com/ceres-solver/ceres-solver
@@ -233,4 +233,15 @@ dependencies:
     redistribution: yes
     status: planned
     notes: E57 (ASTM) point-cloud format importer/exporter.
+    security_notes: null
+
+  - name: conan-center-index-gtsam-recipe
+    repository: https://github.com/conan-io/conan-center-index
+    version: "e9afbb277c20b9f6340caf83c70ea652"
+    code_license: MIT
+    model_license: null
+    commercial_use: yes
+    redistribution: yes
+    status: active
+    notes: Vendored GTSAM build recipe and two original packaging patches; MIT notice retained in conan/recipes/gtsam/LICENSE-CII.txt. Native GTSAM source remains fetched by its pinned SHA-256 and is not copied into Core.
     security_notes: null

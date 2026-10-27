@@ -116,13 +116,16 @@ TEST_F(EngineTest, PermanentRunnerFailureIsRecordedOnceWithoutRetry) {
 TEST_F(EngineTest, TransientRunnerFailureRetriesAndRetainsItsErrorCode) {
   std::atomic<int> calls{0};
   Engine engine(std::move(*project_),
-                [&calls](const TaskRequest& request, auto emit, auto cancelled) {
+                [&calls](const TaskRequest& request, auto emit, auto) {
                   if (++calls == 1) {
                     throw spatial::core::StorageError(
                         spatial::core::ErrorCode::kStorageLock,
                         "storage temporarily locked", {}, true);
                   }
-                  DefaultInProcessRunner(request, emit, cancelled);
+                  WorkerEvent completed;
+                  completed.type = WorkerEventType::kCompleted;
+                  completed.task_id = request.task_id;
+                  emit(completed);
                 }, test::BigWorker());
   TaskGraph graph(GenerateUuid());
   auto task = test::MakeTask("feature_extract");
