@@ -161,16 +161,15 @@ TEST_F(ColmapE2eTest, MissingCasInputFailsClosedInManifest) {
 
   // The stage cannot materialize a CAS hash that does not exist: the task
   // fails closed on the host before any worker dispatch, and the failure is
-  // reflected in the manifest (no exception escapes RunPipeline). The stage's
-  // output_refs keep their compile-time placeholder — never a real CAS ref.
+  // reflected in the manifest (no exception escapes RunPipeline). The failed
+  // stage cannot advertise output or a cache hit.
   const auto manifest =
       engine.RunPipeline("sparse_reconstruction", {bogus}, "{}");
   EXPECT_EQ(manifest.status, "failed");
   ASSERT_EQ(manifest.stages.size(), 1u);
   EXPECT_EQ(manifest.stages[0].status, "failed");
-  ASSERT_EQ(manifest.stages[0].output_refs.size(), 1u);
-  EXPECT_FALSE(engine.project().artifacts().Has(
-      manifest.stages[0].output_refs.front()));
+  EXPECT_TRUE(manifest.stages[0].output_refs.empty());
+  EXPECT_FALSE(manifest.stages[0].cache_hit);
 }
 
 }  // namespace
