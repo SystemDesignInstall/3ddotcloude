@@ -40,6 +40,7 @@
 #include "engine/pipeline/production_pipelines.h"
 #include "engine/pipeline/sparse_correction_runner.h"
 #include "engine/pipeline/quality/quality_report.h"
+#include "engine/scheduler/scheduler_state_store.h"
 #include "engine/task/task_serialization.h"
 #include "importers/images/image_importer.h"
 
@@ -265,6 +266,18 @@ int RunCommand(const std::vector<std::string>& args, Engine& engine,
   const auto manifest =
       engine.RunPipeline(pipeline_id, refs, config);
   std::cout << spatial::engine::ToJson(manifest) << "\n";
+  if (manifest.status == "failed") {
+    spatial::engine::SchedulerStateStore state(engine.project().db());
+    for (const auto& stage : manifest.stages) {
+      if (stage.status != "failed") continue;
+      const auto runs = state.LoadRuns(stage.task_id);
+      if (!runs.empty() && runs.back().error.has_value()) {
+        const auto& error = *runs.back().error;
+        std::cerr << "error: stage '" << stage.stage_id << "' [" << error.code
+                  << "]: " << error.message << "\n";
+      }
+    }
+  }
   // Step 12: 0 only when the pipeline succeeded; a failed manifest is an
   // error the caller can rely on.
   return manifest.status == "succeeded" ? 0 : 1;

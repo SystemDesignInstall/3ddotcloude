@@ -57,6 +57,7 @@
 #include "engine/pipeline/feature_extraction.h"
 #include "engine/pipeline/production_pipelines.h"
 #include "engine/pipeline/sparse_correction_runner.h"
+#include "engine/scheduler/scheduler_state_store.h"
 
 namespace {
 
@@ -1809,12 +1810,10 @@ TEST_F(RealGtsamBundleAdjustmentTest, E2E2_NoMetricBasisYieldsNoCorrection) {
   EXPECT_EQ(manifest.stages[0].status, "succeeded");  // sparse reconstruction
   EXPECT_EQ(manifest.stages[1].status, "failed");     // D5 gate refusal
 
-  // Essential PASS but visual-only: the loop closed geometrically, the basis
-  // gate refused a METRIC edge (INV-3). A failed run is retried while the
-  // failure is recoverable, so the closure may persist more than once — every
-  // instance must be accepted and visual-only.
+  // Essential PASS but visual-only: the basis gate refused a METRIC edge.
+  // D5 rejection is permanent, so exactly one audit payload is retained.
   const auto lcs = LoopClosurePayloads();
-  ASSERT_GE(lcs.size(), 1u);
+  ASSERT_EQ(lcs.size(), 1u);
   for (const auto& lc : lcs) {
     ASSERT_EQ(lc["closures"].size(), 1u);
     EXPECT_EQ(lc["closures"][0]["status"].get<std::string>(), "accepted");
@@ -1879,22 +1878,28 @@ TEST_F(RealGtsamBundleAdjustmentTest,
   ASSERT_EQ(manifest.stages.size(), 2u);
   EXPECT_EQ(manifest.stages[0].status, "succeeded");
   EXPECT_EQ(manifest.stages[1].status, "failed");
-  // Measurement evidence was legitimately produced before the gate (the
-  // accepted loop closure), but the stage published NO terminal reconstruction
-  // artifact: none of its outputs is a canonical reconstruction document.
-  const auto is_reconstruction_doc = [&](const std::string& ref) {
-    const auto bytes = engine_->project().artifacts().Get(ref);
-    if (!bytes.has_value()) return false;
-    try {
-      const json doc = json::parse(std::string(bytes->begin(), bytes->end()));
-      return doc.contains("cameras") && doc.contains("points3D");
-    } catch (const std::exception&) {
-      return false;
-    }
-  };
-  EXPECT_GE(manifest.stages[1].output_refs.size(), 1u);
-  for (const auto& ref : manifest.stages[1].output_refs)
-    EXPECT_FALSE(is_reconstruction_doc(ref));
+  // A failed stage publishes no terminal result or declared placeholder.
+  // Audit evidence is independently resolved from CAS and linked to its DB
+  // closure; an arbitrary non-resolving output ref is not proof of evidence.
+  EXPECT_TRUE(manifest.stages[1].output_refs.empty());
+  EXPECT_FALSE(manifest.stages[1].cache_hit);
+  const auto audit = LoopClosurePayloads();
+  ASSERT_EQ(audit.size(), 1u);
+  ASSERT_EQ(audit[0]["closures"].size(), 1u);
+  EXPECT_EQ(audit[0]["closures"][0]["status"].get<std::string>(), "accepted");
+  EXPECT_TRUE(audit[0]["closures"][0]["has_relative_pose"].get<bool>());
+  const auto closures = engine_->project().db().FindLoopClosuresByTrajectory(
+      ParseUuid(traj));
+  ASSERT_EQ(closures.size(), 1u);
+  EXPECT_EQ(audit[0]["closures"][0]["closure_id"].get<std::string>(),
+            FormatUuid(closures[0].closure_id));
+  spatial::engine::SchedulerStateStore state(engine_->project().db());
+  const auto runs = state.LoadRuns(manifest.stages[1].task_id);
+  ASSERT_EQ(runs.size(), 1u);
+  ASSERT_TRUE(runs[0].error.has_value());
+  EXPECT_EQ(runs[0].error->code, "VALIDATION_DOMAIN");
+  EXPECT_FALSE(runs[0].error->recoverable);
+  EXPECT_NE(runs[0].error->message.find("D5"), std::string::npos);
 
   // The corrected chain up to v3 materialized (retained, valid geometry).
   json v3;

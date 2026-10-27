@@ -1,6 +1,7 @@
 #include "engine/workers/in_process_executor.h"
 
 #include <algorithm>
+#include <optional>
 #include <utility>
 
 #include "core/errors/project_error.h"
@@ -106,9 +107,19 @@ void InProcessExecutor::Submit(const TaskRequest& request) {
 }
 
 void InProcessExecutor::RunTask(TaskRequest request) {
-  auto emit = [this](WorkerEvent event) {
+  // A terminal event releases the scheduler to submit another task. Publish
+  // it only after the runner returns and busy_ is cleared, in the same lock.
+  // Progress and artifact events continue to stream while the runner works.
+  std::optional<WorkerEvent> terminal;
+  auto emit = [this, &terminal](WorkerEvent event) {
     {
       std::lock_guard<std::mutex> lock(mutex_);
+      if (event.type == WorkerEventType::kCompleted ||
+          event.type == WorkerEventType::kFailed ||
+          event.type == WorkerEventType::kCancelled) {
+        terminal = std::move(event);
+        return;
+      }
       events_.push_back(std::move(event));
     }
     cv_.notify_all();
@@ -152,6 +163,9 @@ void InProcessExecutor::RunTask(TaskRequest request) {
     std::lock_guard<std::mutex> lock(mutex_);
     busy_ = false;
     running_task_ = {};
+    if (terminal.has_value()) {
+      events_.push_back(std::move(*terminal));
+    }
   }
   cv_.notify_all();
 }

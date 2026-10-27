@@ -93,14 +93,18 @@ ExecutionManifest Engine::RunPipeline(
 
   // Mirror the terminal per-stage state into the manifest. A stage served
   // from the task cache has no task_runs row (the scheduler records runs for
-  // executions only, RFC-0003 §5.10): that absence is the cache-hit signal
-  // (AC-8, pipeline_cache).
+  // executions only, RFC-0003 §5.10). Absence means a cache hit only for a
+  // succeeded task: skipped tasks have no execution rows either. Declared
+  // output placeholders from failed/skipped tasks are not published artifacts.
   for (std::size_t i = 0; i < plan.stages.size(); ++i) {
     const auto& task = plan.graph->GetTask(plan.stages[i].task_id);
     const bool cache_hit = task.state == TaskStatus::kSucceeded &&
                            state_store_->LoadRuns(task.id).empty();
     manifest_store_->UpdateStage(plan.job_id, static_cast<int>(i), task.state,
-                                 cache_hit, task.outputs,
+                                 cache_hit,
+                                 task.state == TaskStatus::kSucceeded
+                                     ? task.outputs
+                                     : std::vector<ArtifactRef>{},
                                  task.metadata.created_at_ns,
                                  task.metadata.updated_at_ns);
   }

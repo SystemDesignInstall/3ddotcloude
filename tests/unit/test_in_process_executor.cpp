@@ -1,7 +1,9 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -149,6 +151,50 @@ TEST(InProcessExecutor, UnknownExceptionRemainsRecoverableCrash) {
   EXPECT_EQ(events[0].type, WorkerEventType::kFailed);
   EXPECT_EQ(events[0].error_code, "WORKER_CRASHED");
   EXPECT_TRUE(events[0].recoverable);
+}
+
+TEST(InProcessExecutor, TerminalEventWaitsForRunnerCleanupAndAllowsNextSubmit) {
+  std::mutex cleanup_mutex;
+  std::condition_variable cleanup_cv;
+  bool cleanup_started = false;
+  bool release_cleanup = false;
+  InProcessExecutor executor(
+      test::BigWorker(), [&](const TaskRequest& request, auto emit, auto) {
+        WorkerEvent completed;
+        completed.type = WorkerEventType::kCompleted;
+        completed.task_id = request.task_id;
+        emit(completed);
+        std::unique_lock<std::mutex> lock(cleanup_mutex);
+        cleanup_started = true;
+        cleanup_cv.notify_all();
+        cleanup_cv.wait(lock, [&] { return release_cleanup; });
+      });
+  executor.Submit(MakeRequest());
+
+  WorkerEvent event;
+  bool reached_cleanup = false;
+  bool terminal_before_return = false;
+  {
+    std::unique_lock<std::mutex> lock(cleanup_mutex);
+    reached_cleanup = cleanup_cv.wait_for(
+        lock, std::chrono::seconds(5), [&] { return cleanup_started; });
+    terminal_before_return = executor.WaitForEvent(event, 0);
+    // Always release the runner before any fatal test assertion.
+    release_cleanup = true;
+  }
+  cleanup_cv.notify_all();
+
+  EXPECT_TRUE(reached_cleanup);
+  EXPECT_FALSE(terminal_before_return);
+  if (!terminal_before_return) {
+    ASSERT_TRUE(executor.WaitForEvent(event, 2000));
+  }
+  EXPECT_EQ(event.type, WorkerEventType::kCompleted);
+  const auto next = MakeRequest();
+  ASSERT_NO_THROW(executor.Submit(next));
+  ASSERT_TRUE(executor.WaitForEvent(event, 2000));
+  EXPECT_EQ(event.task_id, next.task_id);
+  EXPECT_EQ(event.type, WorkerEventType::kCompleted);
 }
 
 TEST(InProcessExecutor, RejectsSecondTaskWhileBusy) {

@@ -17,6 +17,7 @@ adapter. Core remains independent of GTSAM and COLMAP.
 python -m pip install conan==2.33.0 cmake==4.4.4 ninja==1.13.2
 ```
 
+Ensure the scripts installed by pip are available on `PATH`.
 Run the commands from the repository root. A named default Conan profile is
 not required: every install below supplies the committed host and build
 profiles explicitly. `--build=missing` may compile dependencies on a first
@@ -67,6 +68,11 @@ cmake --preset linux-release
 cmake --build --preset linux-release --parallel 2
 ctest --preset linux-release --parallel 2 --timeout 180
 ```
+
+The platform and adapters compile as C++20. Linux builds GTSAM itself as
+C++17: its bundled Spectra in 4.2.1 contains constructors rejected by GCC in
+C++20 mode. This is a dependency setting, not a vendor-source patch or a change
+to the platform language standard.
 
 Linux profiles select stable, serial GTSAM: no unstable module, CppUnitLite,
 TBB/hwloc or METIS. Boost.Stacktrace is also disabled. These optional facilities

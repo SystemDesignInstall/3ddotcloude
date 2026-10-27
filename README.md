@@ -91,11 +91,10 @@ cmake --build --preset linux-debug --parallel 2
 ctest --preset linux-debug --parallel 2 --timeout 180
 ```
 
-The C++ CLI is produced by the build. Project creation and inspection:
+The C++ CLI is produced by the build. Project creation:
 
 ```sh
-spatial project create demo.spx
-spatial project info demo.spx
+spatial init demo.spx
 ```
 
 ## Continuous validation

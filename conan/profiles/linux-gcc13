@@ -5,6 +5,8 @@ compiler=gcc
 compiler.version=13
 compiler.libcxx=libstdc++11
 compiler.cppstd=20
+# GTSAM 4.2.1 bundles Spectra constructors rejected in C++20 by GCC.
+gtsam/*:compiler.cppstd=17
 build_type=Release
 
 # Serial GTSAM avoids platform-specific TBB/hwloc runtime dependencies.
@@ -16,4 +18,5 @@ gtsam/*:support_nested_dissection=False
 boost/*:without_stacktrace=True
 
 [conf]
+tools.build:compiler_executables={"c": "gcc-13", "cpp": "g++-13"}
 tools.cmake.cmaketoolchain:generator=Ninja
