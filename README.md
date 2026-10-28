@@ -107,4 +107,6 @@ does not establish metric-scale evidence or align the trajectory to a scene.
 CI runs architecture gates and actual C++ configure/build/CTest jobs for
 Ubuntu 24.04 and Windows 2022 in Debug and Release. The gates check protected
 surface changes, RFC/ADR structure, domain types, worker isolation, architecture
-debt, dependencies and schemas. See `.github/workflows/ci.yml` and the build guide.
+debt, dependencies and schemas. The Constitution check verifies that a cited
+RFC exists and is ratified; Architecture Review must still assess its scope.
+See `.github/workflows/ci.yml` and the build guide.

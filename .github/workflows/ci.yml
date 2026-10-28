@@ -59,6 +59,8 @@ jobs:
               command += ["--rfc", match.group()]
           subprocess.run(command, check=True)
           PY
+      - name: Constitution gate regression tests
+        run: python -m unittest discover -s tests/python -p test_constitution_check.py
       - name: Domain types
         run: python scripts/check_domain_types.py
       - name: Worker boundary

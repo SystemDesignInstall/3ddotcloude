@@ -196,6 +196,7 @@ TEST_F(CliImportTest, TumTrajectoryImportsThroughCliAndReplays) {
       "--session", session, "--sensor", FormatUuid(sensor_id_),
       "--coordinate-frame", "slam_local", "--source-unit", "meters",
       "--clock-domain", "platform", "--pose-frame", "camera",
+      "--source-producer", "example-slam", "--source-version", "1.2",
       "--project", project_path_.string()};
   const auto first = RunCli(args);
   ASSERT_EQ(first.exit_code, 0);
@@ -216,6 +217,27 @@ TEST_F(CliImportTest, TumTrajectoryImportsThroughCliAndReplays) {
   EXPECT_EQ(payload["nodes"][0]["frame_id"], first_json["imported"][0]["frame_id"]);
   EXPECT_EQ(payload["nodes"][1]["frame_id"], second_json["imported"][0]["frame_id"]);
   EXPECT_FALSE(payload.contains("metric_basis"));
+  const auto config = project.artifacts().Get(result["configuration_hash"].get<std::string>());
+  ASSERT_TRUE(config.has_value());
+  const auto config_doc = nlohmann::json::parse(config->begin(), config->end());
+  EXPECT_EQ(config_doc["source_producer"], "example-slam");
+  EXPECT_EQ(config_doc["source_version"], "1.2");
+}
+
+TEST_F(CliImportTest, TrajectoryWithoutClockDeclarationDoesNotPublish) {
+  SeedSensor();
+  const std::string text = "1700000000.123456789 0 0 0 0 0 0 1\n";
+  const auto file = WriteFile("camera.txt", std::vector<std::uint8_t>(text.begin(), text.end()));
+  const std::vector<std::string> args = {
+      kCliExe, "import-trajectory", file.string(), "--format", "tum",
+      "--session", FormatUuid(GenerateUuid()), "--sensor", FormatUuid(sensor_id_),
+      "--coordinate-frame", "slam_local", "--source-unit", "meters",
+      "--pose-frame", "camera", "--project", project_path_.string()};
+  const auto run = RunCli(args);
+  EXPECT_EQ(run.exit_code, 1);
+  auto project = Project::Open(project_path_);
+  EXPECT_EQ(project.artifacts().PayloadCount(), 0u);
+  EXPECT_TRUE(project.db().FindArtifactsByType("trajectory").empty());
 }
 
 TEST_F(CliImportTest, ReimportThroughCliIsIdempotent) {
