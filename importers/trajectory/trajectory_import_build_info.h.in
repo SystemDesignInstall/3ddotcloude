@@ -1,0 +1,6 @@
+#pragma once
+
+namespace spatial::importers {
+inline constexpr const char* kTrajectoryImportVersion = "@SPATIAL_IMPORT_VERSION@";
+inline constexpr const char* kTrajectoryImportGitCommit = "@SPATIAL_IMPORT_GIT_COMMIT@";
+}  // namespace spatial::importers

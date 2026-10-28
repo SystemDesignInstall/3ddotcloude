@@ -22,3 +22,9 @@ configure_file(images/image_import_build_info.h.in
                @ONLY)
 
 add_subdirectory(images)
+
+configure_file(trajectory/trajectory_import_build_info.h.in
+               "${CMAKE_CURRENT_BINARY_DIR}/trajectory_import_build_info.h"
+               @ONLY)
+target_sources(spatial_importers PRIVATE trajectory/trajectory_importer.cpp)
+target_include_directories(spatial_importers PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
