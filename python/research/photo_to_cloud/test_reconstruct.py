@@ -1,0 +1,77 @@
+from pathlib import Path
+import sys
+import tempfile
+import unittest
+
+from PIL import Image
+
+import reconstruct
+
+
+class PhotoCloudSafetyTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.images = self.root / "photos"
+        self.images.mkdir()
+        for index in range(3):
+            Image.new("RGB", (16, 16), (index * 40, 10, 20)).save(self.images / f"{index}.png")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_existing_output_is_never_overwritten(self):
+        output = self.root / "existing"
+        output.mkdir()
+        marker = output / "keep.txt"
+        marker.write_text("keep", encoding="utf-8")
+        with self.assertRaisesRegex(reconstruct.ReconstructionError, "уже существует"):
+            reconstruct.reconstruct(self.images, output, "sparse-cpu", 1)
+        self.assertEqual(marker.read_text(encoding="utf-8"), "keep")
+
+    def test_result_cannot_be_inside_input_folder(self):
+        with self.assertRaisesRegex(reconstruct.ReconstructionError, "вне папки фотографий"):
+            reconstruct.reconstruct(self.images, self.images / "result", "sparse-cpu", 1)
+        self.assertFalse((self.images / "result").exists())
+
+    def test_corrupt_image_fails_before_creating_output(self):
+        (self.images / "1.png").write_bytes(b"not a png")
+        output = self.root / "result"
+        with self.assertRaisesRegex(reconstruct.ReconstructionError, "Не удалось прочитать"):
+            reconstruct.reconstruct(self.images, output, "sparse-cpu", 1)
+        self.assertFalse(output.exists())
+
+    def test_missing_openmvs_fails_before_creating_output(self):
+        output = self.root / "result"
+        with self.assertRaisesRegex(reconstruct.ReconstructionError, "OpenMVS"):
+            reconstruct.reconstruct(self.images, output, "dense-cpu", 1, self.root / "missing")
+        self.assertFalse(output.exists())
+
+    def test_ply_must_have_nonzero_vertex_count_and_complete_header(self):
+        ply = self.root / "cloud.ply"
+        for content in (b"garbage\n", b"ply\nelement vertex 0\nend_header\n", b"ply\nelement vertex 7\n",
+                        b"ply\nformat ascii 1.0\nelement vertex 1\nproperty float x\nend_header\n"):
+            ply.write_bytes(content)
+            with self.assertRaises(reconstruct.ReconstructionError):
+                reconstruct.ply_vertex_count(ply)
+        ply.write_bytes(b"ply\nformat ascii 1.0\nelement vertex 7\nproperty float x\nend_header\n" + b"1\n" * 7)
+        self.assertEqual(reconstruct.ply_vertex_count(ply), 7)
+
+    def test_ply_rejects_truncated_binary_variable_lists(self):
+        ply = self.root / "cloud.ply"
+        header = (b"ply\nformat binary_little_endian 1.0\nelement vertex 1\n"
+                  b"property float x\nproperty list uint8 uint32 views\nend_header\n")
+        ply.write_bytes(header + b"\x00\x00\x00\x00\x02\x00\x00\x00\x00")
+        with self.assertRaises(reconstruct.ReconstructionError):
+            reconstruct.ply_vertex_count(ply)
+        with ply.open("ab") as stream:
+            stream.write(b"\x00\x00\x00\x00")
+        self.assertEqual(reconstruct.ply_vertex_count(ply), 1)
+
+    def test_backend_exit_failure_is_not_reported_as_success(self):
+        with self.assertRaisesRegex(reconstruct.ReconstructionError, "кодом 9"):
+            reconstruct.run_program([sys.executable, "-c", "raise SystemExit(9)"], self.root)
+
+
+if __name__ == "__main__":
+    unittest.main()
