@@ -72,6 +72,11 @@ class PhotoCloudSafetyTests(unittest.TestCase):
         with self.assertRaisesRegex(reconstruct.ReconstructionError, "кодом 9"):
             reconstruct.run_program([sys.executable, "-c", "raise SystemExit(9)"], self.root)
 
+    def test_windows_launcher_has_crlf_lines(self):
+        data = Path(__file__).with_name("start-windows.bat").read_bytes()
+        self.assertIn(b"\r\n", data)
+        self.assertNotIn(b"\n", data.replace(b"\r\n", b""))
+
 
 if __name__ == "__main__":
     unittest.main()

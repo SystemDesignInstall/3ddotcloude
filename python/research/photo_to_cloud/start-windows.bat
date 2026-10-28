@@ -2,6 +2,11 @@
 setlocal
 cd /d "%~dp0"
 
+if /I "%~1"=="--check" (
+  echo PHOTO_CLOUD_LAUNCHER_OK
+  exit /b 0
+)
+
 if not exist ".venv\Scripts\python.exe" (
   py -3.14 -m venv .venv
   if errorlevel 1 py -3.13 -m venv .venv
