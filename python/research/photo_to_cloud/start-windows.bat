@@ -3,7 +3,8 @@ setlocal
 cd /d "%~dp0"
 
 if not exist ".venv\Scripts\python.exe" (
-  py -3.13 -m venv .venv
+  py -3.14 -m venv .venv
+  if errorlevel 1 py -3.13 -m venv .venv
   if errorlevel 1 py -3.12 -m venv .venv
   if errorlevel 1 py -3.11 -m venv .venv
   if errorlevel 1 goto python_error
@@ -17,7 +18,7 @@ if errorlevel 1 goto app_error
 exit /b 0
 
 :python_error
-echo Python 3.11, 3.12 or 3.13 was not found. Install 64-bit Python and its launcher.
+echo Python 3.11 to 3.14 was not found. Install 64-bit Python and its launcher.
 pause
 exit /b 1
 

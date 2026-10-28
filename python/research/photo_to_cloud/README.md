@@ -7,7 +7,7 @@
 
 ## Что требуется
 
-- 64-битный Python 3.11, 3.12 или 3.13 с Tkinter и интернет для первоначальной установки пакетов. Для новой установки рекомендуем Python 3.13.
+- 64-битный Python 3.11–3.14 с Tkinter и интернет для первоначальной установки пакетов. Для новой установки рекомендуем Python 3.14.
 - Для плотного облака на CPU: [OpenMVS 2.4.0](https://github.com/cdcseacave/openMVS/releases/tag/v2.4.0), **обычный архив без CUDA**, распакованный отдельно. На Windows выбрать `OpenMVS_Windows_x64.zip`; необходимые `.exe` находятся в `vc17/x64/Release`. На Linux выбрать `OpenMVS_Ubuntu_x64.zip` и убедиться, что `InterfaceCOLMAP` и `DensifyPointCloud` запускаются.
 - Для просмотра `.ply` можно использовать [CloudCompare](https://www.cloudcompare.org/).
 
@@ -23,19 +23,19 @@ OpenMVS распространяется по AGPL-3.0. Он не включён
 ## Установка и запуск на Windows
 
 Скачайте репозиторий с веткой `codex/photo-cloud-mvp`, затем откройте PowerShell в
-папке репозитория. С установленным Python 3.11–3.13 можно также дважды нажать
+папке репозитория. С установленным Python 3.11–3.14 можно также дважды нажать
 `python/research/photo_to_cloud/start-windows.bat`: при первом запуске скрипт
 создаст окружение и скачает зависимости.
 
 Для ручного запуска из PowerShell:
 
 ```powershell
-py -3.13 -m venv .venv
+py -3.14 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r python\research\photo_to_cloud\requirements.txt
 .\.venv\Scripts\python.exe python\research\photo_to_cloud\app.py
 ```
 
-Если установлен Python 3.11 или 3.12, в первой строке замените `-3.13` на нужную версию.
+Если установлен Python 3.11–3.13, в первой строке замените `-3.14` на нужную версию.
 На Linux аналогично используйте `python3 -m venv .venv`,
 `.venv/bin/python -m pip install -r python/research/photo_to_cloud/requirements.txt`
 и `.venv/bin/python python/research/photo_to_cloud/app.py`. Для Tkinter может
