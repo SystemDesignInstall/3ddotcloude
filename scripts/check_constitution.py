@@ -83,7 +83,14 @@ def _git_required(repo: str, *args: str) -> str:
 def _changed_vs_base(repo: str, base: str) -> list[str]:
     """Return repo-relative paths changed between ``base`` and the working tree."""
     paths: list[str] = []
-    tracked = _git_required(repo, "diff", "--name-only", "--no-ext-diff", base)
+    # Resolve a real commit first. Passing caller-supplied text directly to
+    # `git diff` would allow an option-looking base to change its behavior.
+    resolved = _git_required(
+        repo, "rev-parse", "--verify", "--end-of-options", f"{base}^{{commit}}"
+    ).strip()
+    if not re.fullmatch(r"[0-9a-f]{40,64}", resolved):
+        raise RuntimeError("base did not resolve to a commit")
+    tracked = _git_required(repo, "diff", "--name-only", "--no-ext-diff", resolved, "--")
     for line in tracked.splitlines():
         line = line.strip()
         if line:

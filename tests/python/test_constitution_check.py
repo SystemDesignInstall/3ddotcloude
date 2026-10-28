@@ -88,6 +88,14 @@ class ConstitutionCheckTest(unittest.TestCase):
         result = self.check("--base", "missing-base", "--rfc", "RFC-0002")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("cannot compare against base", result.stderr)
+        subprocess.run(["git", "-C", str(self.repo), "add", "engine/changed.cpp"], check=True)
+        subprocess.run(["git", "-C", str(self.repo), "-c", "user.name=Test", "-c",
+                        "user.email=test@example.invalid", "commit", "-qm", "base"], check=True)
+        (self.repo / "engine" / "changed.cpp").write_text("// modified\n")
+        output = self.repo / "must-not-be-created"
+        result = self.check(f"--base=--output={output}", "--rfc", "RFC-0002")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(output.exists())
 
     def test_single_commit_reference_is_checked_against_governance(self) -> None:
         self.put_rfc("RFC-0002", "ratified")
