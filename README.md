@@ -64,6 +64,7 @@ still open. The runtime is substantially beyond the M0 skeleton:
 - Capability-based pipeline compiler, scheduler, process workers, retries and cache.
 - COLMAP CLI adapter and canonical sparse Reconstruction v2 conversion.
 - Trajectory / PoseGraph / loop-closure domain types, calibrated essential verification.
+- TUM camera trajectory import with explicit frame association and CAS provenance.
 - Real GTSAM trajectory optimization and fixed-intrinsic bundle adjustment.
 - `p3_sparse_correction` through Engine and CLI: loop verification → graph optimization
   → pose feedback → retriangulation → BA quality gate → revision lineage.
@@ -97,9 +98,15 @@ The C++ CLI is produced by the build. Project creation:
 spatial init demo.spx
 ```
 
+For a trajectory captured with a registered camera, see the
+[trajectory import guide](docs/development/trajectory-import.md). Import alone
+does not establish metric-scale evidence or align the trajectory to a scene.
+
 ## Continuous validation
 
 CI runs architecture gates and actual C++ configure/build/CTest jobs for
 Ubuntu 24.04 and Windows 2022 in Debug and Release. The gates check protected
 surface changes, RFC/ADR structure, domain types, worker isolation, architecture
-debt, dependencies and schemas. See `.github/workflows/ci.yml` and the build guide.
+debt, dependencies and schemas. The Constitution check verifies that a cited
+RFC exists and is ratified; Architecture Review must still assess its scope.
+See `.github/workflows/ci.yml` and the build guide.
