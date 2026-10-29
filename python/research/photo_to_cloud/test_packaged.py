@@ -26,7 +26,8 @@ def check_cancel(executable: Path, images: Path, root: Path) -> None:
         while True:
             line = lines.get(timeout=120)
             if line is None:
-                raise RuntimeError("worker exited before feature extraction")
+                raise RuntimeError(f"worker exited before feature extraction (code {process.wait()})")
+            print(line, end="", flush=True)
             if "1/4." in line:
                 cancel.write_text("cancel\n", encoding="ascii")
                 break

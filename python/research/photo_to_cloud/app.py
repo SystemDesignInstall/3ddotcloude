@@ -287,6 +287,11 @@ class App:
 
 def main() -> int:
     if sys.argv[1:2] == ["--worker"]:
+        # A frozen Windows executable does not necessarily honor PYTHONUTF8.
+        # The GUI reads this subprocess through a UTF-8 pipe.
+        for stream in (sys.stdout, sys.stderr):
+            if stream is not None and hasattr(stream, "reconfigure"):
+                stream.reconfigure(encoding="utf-8", errors="replace")
         import reconstruct
         sys.argv = [sys.argv[0], *sys.argv[2:]]
         return reconstruct.main()

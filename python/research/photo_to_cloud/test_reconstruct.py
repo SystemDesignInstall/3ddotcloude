@@ -131,9 +131,9 @@ class PhotoCloudSafetyTests(unittest.TestCase):
         with self.assertRaises(InstallError):
             install_archive(archive, output, "0" * 64)
         self.assertFalse(output.exists())
-        self.assertEqual(install_archive(archive, output, digest), output)
+        self.assertEqual(install_archive(archive, output, digest), output.resolve())
         self.assertEqual((output / "InterfaceCOLMAP.exe").read_bytes(), b"test converter")
-        self.assertEqual(install_archive(archive, output, digest), output)
+        self.assertEqual(install_archive(archive, output, digest), output.resolve())
         (output / "InterfaceCOLMAP.exe").write_bytes(b"modified")
         with self.assertRaises(InstallError):
             install_archive(archive, output, digest)
