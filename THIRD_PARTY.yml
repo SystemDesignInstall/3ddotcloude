@@ -114,6 +114,16 @@ dependencies:
     status: planned
     notes: Transitive dependency of the isolated pycolmap research prototype; wheel-bundled components require distribution review.
     security_notes: null
+  - name: PyInstaller
+    repository: https://github.com/pyinstaller/pyinstaller
+    version: "6.22.3"
+    code_license: GPL-2.0-or-later with PyInstaller bootloader exception
+    model_license: null
+    commercial_use: conditional
+    redistribution: conditional
+    status: planned
+    notes: Build-time tool for the research test package; the bootloader exception and bundled component licenses require review before product distribution.
+    security_notes: null
   - name: OpenMVS
     repository: https://github.com/cdcseacave/openMVS
     version: planned

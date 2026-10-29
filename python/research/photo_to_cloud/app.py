@@ -9,8 +9,10 @@ from pathlib import Path
 import queue
 import subprocess
 import sys
+import tempfile
 import threading
 import uuid
+import webbrowser
 
 import tkinter as tk
 from tkinter import filedialog, font, messagebox, scrolledtext, ttk
@@ -23,14 +25,27 @@ MODES = {
 }
 
 
+def worker_command(images: str, output: Path, mode: str, cancel_file: Path) -> list[str]:
+    if getattr(sys, "frozen", False):
+        command = [sys.executable, "--worker"]
+    else:
+        command = [sys.executable, "-u", str(Path(__file__).with_name("reconstruct.py"))]
+    return command + ["--images", images, "--output", str(output), "--mode", mode,
+                      "--cancel-file", str(cancel_file)]
+
+
 class App:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         root.title("Spatial Photo Cloud — эксперимент")
-        root.geometry("760x630")
-        root.minsize(650, 510)
+        root.geometry("800x700")
+        root.minsize(680, 600)
         self.events: queue.Queue = queue.Queue()
         self.process: subprocess.Popen | None = None
+        self.cancel_dir: tempfile.TemporaryDirectory | None = None
+        self.cancel_file: Path | None = None
+        self.installing = False
+        self.close_after_cancel = False
         self.result_dir: Path | None = None
         self.images = tk.StringVar()
         self.destination = tk.StringVar()
@@ -57,6 +72,13 @@ class App:
         ttk.Label(frame, text="Режим").pack(anchor="w", pady=(8, 2))
         ttk.Combobox(frame, state="readonly", values=list(MODES), textvariable=self.mode).pack(fill="x")
         self.path_row(frame, "Папка OpenMVS (для плотного облака на CPU)", self.openmvs, self.choose_openmvs)
+        install_row = ttk.Frame(frame)
+        install_row.pack(fill="x", pady=(3, 0))
+        self.install_button = ttk.Button(install_row, text="Установить OpenMVS (22 МБ)", command=self.install_openmvs)
+        self.install_button.pack(side="left")
+        if os.name != "nt":
+            self.install_button.configure(state="disabled")
+        ttk.Label(install_row, text="OpenMVS: AGPL-3.0; загружается отдельно").pack(side="left", padx=8)
         self.path_row(frame, "COLMAP с HIP/ROCm (только для режима AMD)", self.colmap, self.choose_colmap)
         ttk.Label(frame, text="Масштаб результата по одним фотографиям неизвестен.").pack(anchor="w", pady=(10, 4))
 
@@ -66,7 +88,11 @@ class App:
         self.start_button.pack(side="left")
         self.open_button = ttk.Button(actions, text="Открыть папку результата", command=self.open_result, state="disabled")
         self.open_button.pack(side="left", padx=8)
-        ttk.Label(actions, textvariable=self.status).pack(side="left", padx=8)
+        self.preview_button = ttk.Button(actions, text="Просмотр", command=self.open_preview, state="disabled")
+        self.preview_button.pack(side="left")
+        self.cancel_button = ttk.Button(actions, text="Остановить", command=self.cancel, state="disabled")
+        self.cancel_button.pack(side="left", padx=8)
+        ttk.Label(frame, textvariable=self.status).pack(anchor="w", pady=(0, 4))
         self.progress = ttk.Progressbar(frame, mode="indeterminate")
         self.progress.pack(fill="x", pady=(0, 8))
         self.log = scrolledtext.ScrolledText(frame, height=11, state="disabled", wrap="word")
@@ -102,6 +128,23 @@ class App:
         if value:
             self.colmap.set(value)
 
+    def install_openmvs(self) -> None:
+        if self.installing or self.process:
+            return
+        self.installing = True
+        self.install_button.configure(state="disabled")
+        self.start_button.configure(state="disabled")
+        self.status.set("Установка OpenMVS…")
+        self.progress.start(15)
+        def install() -> None:
+            try:
+                from openmvs_install import default_destination, download_and_install
+                path = download_and_install(default_destination(), lambda text: self.events.put(("line", text + "\n")))
+                self.events.put(("install_done", str(path)))
+            except Exception as exc:
+                self.events.put(("install_error", str(exc)))
+        threading.Thread(target=install, daemon=True).start()
+
     def append_log(self, text: str) -> None:
         self.log.configure(state="normal")
         self.log.insert("end", text)
@@ -109,7 +152,7 @@ class App:
         self.log.configure(state="disabled")
 
     def start(self) -> None:
-        if self.process:
+        if self.process or self.installing:
             return
         if not self.images.get().strip() or not self.destination.get().strip():
             messagebox.showerror("Не выбраны папки", "Выберите папку с фотографиями и папку результата.")
@@ -123,8 +166,10 @@ class App:
             return
         label = datetime.datetime.now().strftime("photo-cloud-%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:8]
         self.result_dir = Path(self.destination.get()).expanduser().resolve() / label
-        command = [sys.executable, "-u", str(Path(__file__).with_name("reconstruct.py")),
-                   "--images", self.images.get(), "--output", str(self.result_dir), "--mode", mode]
+        self.cancel_dir = tempfile.TemporaryDirectory(prefix="spatial-cancel-")
+        self.cancel_file = Path(self.cancel_dir.name) / "cancel"
+        self.close_after_cancel = False
+        command = worker_command(self.images.get(), self.result_dir, mode, self.cancel_file)
         if mode == "dense-cpu":
             command += ["--openmvs-dir", self.openmvs.get()]
         elif mode == "dense-amd":
@@ -136,11 +181,17 @@ class App:
                                             text=True, encoding="utf-8", errors="replace", env=environment,
                                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         except OSError as exc:
+            self.cancel_dir.cleanup()
+            self.cancel_dir = None
+            self.cancel_file = None
             messagebox.showerror("Не удалось запустить", str(exc))
             return
         self.append_log(f"\nПапка результата: {self.result_dir}\n")
         self.start_button.configure(state="disabled")
         self.open_button.configure(state="disabled")
+        self.preview_button.configure(state="disabled")
+        self.cancel_button.configure(state="normal")
+        self.install_button.configure(state="disabled")
         self.status.set("Обработка…")
         self.progress.start(15)
         threading.Thread(target=self.consume, args=(self.process,), daemon=True).start()
@@ -157,18 +208,43 @@ class App:
                 kind, value = self.events.get_nowait()
                 if kind == "line":
                     self.append_log(value)
+                elif kind in {"install_done", "install_error"}:
+                    self.installing = False
+                    self.progress.stop()
+                    self.install_button.configure(state="normal" if os.name == "nt" else "disabled")
+                    self.start_button.configure(state="normal")
+                    if kind == "install_done":
+                        self.openmvs.set(value)
+                        self.status.set("OpenMVS установлен")
+                        self.append_log(f"OpenMVS: {value}\n")
+                    else:
+                        self.status.set("Ошибка установки OpenMVS")
+                        messagebox.showerror("OpenMVS", value)
                 else:
                     self.progress.stop()
                     self.process = None
+                    if self.cancel_dir is not None:
+                        self.cancel_dir.cleanup()
+                    self.cancel_dir = None
+                    self.cancel_file = None
                     self.start_button.configure(state="normal")
+                    self.cancel_button.configure(state="disabled")
+                    self.install_button.configure(state="normal" if os.name == "nt" else "disabled")
                     if self.result_dir and self.result_dir.exists():
                         self.open_button.configure(state="normal")
+                        if (self.result_dir / "preview.html").is_file() and value == 0:
+                            self.preview_button.configure(state="normal")
                     if value == 0:
                         self.status.set("Готово")
                         messagebox.showinfo("Готово", f"Результат сохранён в:\n{self.result_dir}")
+                    elif value == 130:
+                        self.status.set("Обработка остановлена")
                     else:
                         self.status.set("Ошибка — смотрите журнал")
                         messagebox.showerror("Обработка не завершена", "Подробности находятся в журнале окна.")
+                    if self.close_after_cancel:
+                        self.root.destroy()
+                        return
         except queue.Empty:
             pass
         self.root.after(100, self.read_events)
@@ -184,14 +260,56 @@ class App:
         except OSError as exc:
             messagebox.showerror("Не удалось открыть папку", str(exc))
 
+    def open_preview(self) -> None:
+        if self.result_dir is not None:
+            webbrowser.open((self.result_dir / "preview.html").resolve().as_uri())
+
+    def cancel(self) -> None:
+        if self.process and self.cancel_file is not None:
+            try:
+                self.cancel_file.write_text("cancel\n", encoding="ascii")
+                self.status.set("Останавливаем обработку…")
+                self.cancel_button.configure(state="disabled")
+            except OSError as exc:
+                messagebox.showerror("Не удалось остановить", str(exc))
+
     def close(self) -> None:
+        if self.installing:
+            messagebox.showinfo("Установка", "Дождитесь завершения установки OpenMVS.")
+            return
         if self.process:
-            messagebox.showinfo("Идёт обработка", "Дождитесь завершения обработки, затем закройте окно.")
+            if messagebox.askyesno("Идёт обработка", "Остановить обработку и закрыть окно?"):
+                self.close_after_cancel = True
+                self.cancel()
             return
         self.root.destroy()
 
 
-if __name__ == "__main__":
+def main() -> int:
+    if sys.argv[1:2] == ["--worker"]:
+        import reconstruct
+        sys.argv = [sys.argv[0], *sys.argv[2:]]
+        return reconstruct.main()
+    if sys.argv[1:2] == ["--self-test"]:
+        import pycolmap
+        import PIL
+        import preview
+        import openmvs_install
+        print(f"Spatial Photo Cloud: pycolmap {pycolmap.__version__}; Pillow {PIL.__version__}")
+        return 0
+    if sys.argv[1:2] == ["--ui-smoke-test"]:
+        window = tk.Tk()
+        window.withdraw()
+        App(window)
+        window.update()
+        window.destroy()
+        print("Spatial Photo Cloud: GUI initialized")
+        return 0
     window = tk.Tk()
     App(window)
     window.mainloop()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
