@@ -1,3 +1,5 @@
+#include "core/utils/uuid.h"
+
 #include <gtest/gtest.h>
 
 #include <cstdio>
@@ -17,8 +19,7 @@ class ProjectTest : public ::testing::Test {
  protected:
   void SetUp() override {
     root_ = std::filesystem::temp_directory_path() /
-            ("spatial_prj_" + std::to_string(std::time(nullptr)) + "_" +
-             std::to_string(rand()));
+            ("spatial_prj_" + spatial::core::FormatUuid(spatial::core::GenerateUuid()));
   }
 
   void TearDown() override {

@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
@@ -9,8 +10,10 @@
 #include <vector>
 
 #include "core/project/project.h"
+#include "core/errors/project_error.h"
 #include "core/utils/uuid.h"
 #include "engine/engine.h"
+#include "engine/scheduler/scheduler_state_store.h"
 #include "engine/task/task_graph.h"
 #include "engine/workers/in_process_executor.h"
 #include "tests/unit/engine_test_helpers.h"
@@ -27,8 +30,8 @@ class EngineTest : public ::testing::Test {
  protected:
   void SetUp() override {
     root_ = std::filesystem::temp_directory_path() /
-            ("spatial_engine_" + std::to_string(std::time(nullptr)) + "_" +
-             std::to_string(rand()));
+            ("spatial_engine_" +
+             spatial::core::FormatUuid(spatial::core::GenerateUuid()));
     project_path_ = root_ / "demo.spx";
     ProjectInfo info;
     info.uuid = GenerateUuid();
@@ -75,6 +78,74 @@ TEST_F(EngineTest, InjectedWorkerExecutorRunsTasks) {
   EXPECT_EQ(tasks[0].state, TaskStatus::kSucceeded);
   EXPECT_EQ(tasks[0].outputs.size(), 1u);
   EXPECT_EQ(tasks[0].outputs[0].size(), 64u);
+}
+
+TEST_F(EngineTest, PermanentRunnerFailureIsRecordedOnceWithoutRetry) {
+  std::atomic<int> calls{0};
+  Engine engine(std::move(*project_),
+                [&calls](const TaskRequest&, auto, auto) {
+                  ++calls;
+                  throw spatial::core::ValidationError(
+                      spatial::core::ErrorCode::kValidationDomain,
+                      "invalid pinned reconstruction input");
+                }, test::BigWorker());
+  TaskGraph graph(GenerateUuid());
+  auto task = test::MakeTask("feature_extract");
+  task.metadata.retry.max_attempts = 3;
+  task.metadata.retry.base_ns = 0;
+  task.metadata.cache = CachePolicy::kNever;
+  const auto task_id = graph.AddTask(std::move(task));
+  const auto dependent_id = graph.AddTask(test::MakeTask("reconstruct"));
+  graph.AddDependency(dependent_id, task_id);
+
+  engine.RunGraph(graph, {});
+
+  EXPECT_EQ(calls.load(), 1);
+  EXPECT_EQ(graph.GetTask(task_id).state, TaskStatus::kFailed);
+  EXPECT_EQ(graph.GetTask(dependent_id).state, TaskStatus::kSkipped);
+  SchedulerStateStore state(engine.project().db());
+  const auto runs = state.LoadRuns(task_id);
+  ASSERT_EQ(runs.size(), 1u);
+  ASSERT_TRUE(runs[0].error.has_value());
+  EXPECT_EQ(runs[0].error->code, "VALIDATION_DOMAIN");
+  EXPECT_FALSE(runs[0].error->recoverable);
+  EXPECT_TRUE(runs[0].outputs.empty());
+  EXPECT_TRUE(state.LoadRuns(dependent_id).empty());
+}
+
+TEST_F(EngineTest, TransientRunnerFailureRetriesAndRetainsItsErrorCode) {
+  std::atomic<int> calls{0};
+  Engine engine(std::move(*project_),
+                [&calls](const TaskRequest& request, auto emit, auto) {
+                  if (++calls == 1) {
+                    throw spatial::core::StorageError(
+                        spatial::core::ErrorCode::kStorageLock,
+                        "storage temporarily locked", {}, true);
+                  }
+                  WorkerEvent completed;
+                  completed.type = WorkerEventType::kCompleted;
+                  completed.task_id = request.task_id;
+                  emit(completed);
+                }, test::BigWorker());
+  TaskGraph graph(GenerateUuid());
+  auto task = test::MakeTask("feature_extract");
+  task.metadata.retry.base_ns = 0;
+  task.metadata.cache = CachePolicy::kNever;
+  const auto task_id = graph.AddTask(std::move(task));
+
+  engine.RunGraph(graph, {});
+
+  EXPECT_EQ(calls.load(), 2);
+  EXPECT_EQ(graph.GetTask(task_id).state, TaskStatus::kSucceeded);
+  SchedulerStateStore state(engine.project().db());
+  const auto runs = state.LoadRuns(task_id);
+  ASSERT_EQ(runs.size(), 2u);
+  ASSERT_TRUE(runs[0].error.has_value());
+  EXPECT_EQ(runs[0].error->code, "STORAGE_LOCK");
+  EXPECT_TRUE(runs[0].error->recoverable);
+  EXPECT_EQ(runs[0].terminal_state, TaskStatus::kFailed);
+  EXPECT_EQ(runs[1].terminal_state, TaskStatus::kSucceeded);
+  EXPECT_FALSE(runs[1].error.has_value());
 }
 
 }  // namespace

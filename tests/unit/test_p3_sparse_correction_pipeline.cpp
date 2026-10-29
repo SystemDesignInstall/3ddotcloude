@@ -44,6 +44,7 @@
 #include "engine/engine.h"
 #include "engine/pipeline/production_pipelines.h"
 #include "engine/pipeline/sparse_correction_runner.h"
+#include "engine/scheduler/scheduler_state_store.h"
 
 #ifndef SPATIAL_COLMAP_WORKER_EXECUTABLE
 #error SPATIAL_COLMAP_WORKER_EXECUTABLE must be defined by the test build
@@ -161,7 +162,7 @@ class P3SparseCorrectionTest : public ::testing::Test {
   void SetUp() override {
     root_ = std::filesystem::temp_directory_path() /
             ("spatial_p3_sparse_correction_" +
-             std::to_string(std::time(nullptr)) + "_" + std::to_string(rand()));
+             spatial::core::FormatUuid(spatial::core::GenerateUuid()));
     ProjectInfo info;
     info.uuid = GenerateUuid();
     info.name = "p3-sparse-correction";
@@ -339,6 +340,17 @@ TEST_F(P3SparseCorrectionTest, N1NonImprovingGateFailsThroughSurface) {
                                             RunConfig("p3_sparse_n1").dump());
   EXPECT_EQ(manifest.status, "failed");
   EXPECT_EQ(manifest.stages[0].status, "succeeded");
+
+  // A deterministic quality rejection is terminal. Retrying the host stage
+  // would overwrite this diagnosis with a duplicate-commit failure.
+  spatial::engine::SchedulerStateStore state(engine->project().db());
+  const auto runs = state.LoadRuns(manifest.stages[1].task_id);
+  ASSERT_EQ(runs.size(), 1u);
+  ASSERT_TRUE(runs[0].error.has_value());
+  EXPECT_EQ(runs[0].error->code, "VALIDATION_DOMAIN");
+  EXPECT_FALSE(runs[0].error->recoverable);
+  EXPECT_NE(runs[0].error->message.find("D5"), std::string::npos);
+  EXPECT_EQ(non_improving.seen_seeds_.size(), 1u);
 
   const auto scene = engine->project().db().FindSceneByProject(project_id_);
   ASSERT_TRUE(scene.has_value());

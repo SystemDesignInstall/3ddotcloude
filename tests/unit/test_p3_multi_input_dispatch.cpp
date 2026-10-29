@@ -131,8 +131,8 @@ class MultiInputDispatchTest : public ::testing::Test {
  protected:
   void SetUp() override {
     root_ = std::filesystem::temp_directory_path() /
-            ("spatial_multi_input_" + std::to_string(std::time(nullptr)) + "_" +
-             std::to_string(rand()));
+            ("spatial_multi_input_" +
+             spatial::core::FormatUuid(spatial::core::GenerateUuid()));
     ProjectInfo info;
     info.uuid = GenerateUuid();
     info.name = "multi-input";
@@ -298,9 +298,8 @@ TEST_F(MultiInputDispatchTest, MissingRequiredInputFailsClosed) {
   EXPECT_EQ(manifest.stages[0].status, "failed");
   // The runner preserves the declared multi-input vector even for the failure.
   EXPECT_EQ(scripted.LastInputRefs().size(), 2u);
-  // No artifact was produced into the CAS (output placeholder never realized).
-  EXPECT_FALSE(engine.project().artifacts().Has(
-      manifest.stages[0].output_refs.front()));
+  EXPECT_TRUE(manifest.stages[0].output_refs.empty());
+  EXPECT_FALSE(manifest.stages[0].cache_hit);
 }
 
 // An unrelated single-input worker stage remains compatible alongside the

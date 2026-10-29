@@ -14,11 +14,14 @@
 #include <iostream>
 #include <iterator>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
+#if defined(SPATIAL_HAS_GTSAM)
 #include "adapters/gtsam/gtsam_bundle_adjustment_optimizer.h"
 #include "adapters/gtsam/gtsam_optimizer_adapter.h"
+#endif
 #include "adapters/visual_geometry/essential_verifier.h"
 #include "adapters/visual_matching/visual_matcher_adapter.h"
 #include "core/artifacts/artifact_manifest.h"
@@ -38,8 +41,10 @@
 #include "engine/pipeline/production_pipelines.h"
 #include "engine/pipeline/sparse_correction_runner.h"
 #include "engine/pipeline/quality/quality_report.h"
+#include "engine/scheduler/scheduler_state_store.h"
 #include "engine/task/task_serialization.h"
 #include "importers/images/image_importer.h"
+#include "importers/trajectory/trajectory_importer.h"
 
 #include <nlohmann/json.hpp>
 
@@ -71,7 +76,11 @@ constexpr const char* kUsage =
     "  spatial status <run-id> [--project <dir>]\n"
     "  spatial report <run-id> [--project <dir>]\n"
     "  spatial import <file> ... [--sensor <uuid>] [--time <ns>]"
-    " [--session <uuid>] [--batch <name>] [--project <dir>]\n";
+    " [--session <uuid>] [--batch <name>] [--project <dir>]\n"
+    "  spatial import-trajectory <file> --format tum --session <uuid>"
+    " --sensor <uuid> --coordinate-frame <name> --source-unit meters"
+    " --clock-domain platform --pose-frame camera"
+    " [--source-producer <name>] [--source-version <version>] [--project <dir>]\n";
 
 void PrintError(const ProjectError& e) {
   std::cerr << "error: " << e.message() << "\n";
@@ -177,14 +186,14 @@ const char* GetEnv(const char* name) {
 // handle so they outlive the Engine (the in-process runner captures the seam
 // POINTERS by value inside its task lambda).
 struct SparseCorrectionEngineHandle {
-  // Engine is neither copyable nor movable, so it is owned through a pointer
-  // and constructed in place (make_unique) inside OpenSparseCorrectionEngine.
-  std::unique_ptr<Engine> engine;
   std::unique_ptr<spatial::core::LoopClosureFeatureMatcher> matcher;
   std::unique_ptr<spatial::core::GeometricVerifier> verifier;
   std::unique_ptr<spatial::core::TrajectoryOptimizer> trajectory_optimizer;
   std::unique_ptr<spatial::core::geometry::ReconstructionOptimizer>
       ba_optimizer;
+  // Members are destroyed in reverse declaration order. Join the Engine's
+  // worker before releasing any provider captured by its runner.
+  std::unique_ptr<Engine> engine;
 };
 
 SparseCorrectionEngineHandle OpenSparseCorrectionEngine(
@@ -213,10 +222,12 @@ SparseCorrectionEngineHandle OpenSparseCorrectionEngine(
   handle.verifier =
       std::make_unique<spatial::adapters::visual_geometry::
                            EssentialGeometricVerifier>();
+#if defined(SPATIAL_HAS_GTSAM)
   handle.trajectory_optimizer =
       std::make_unique<spatial::adapters::gtsam::GtsamTrajectoryOptimizer>();
   handle.ba_optimizer = std::make_unique<
       spatial::adapters::gtsam::GtsamBundleAdjustmentOptimizer>();
+#endif
   spatial::engine::SparseCorrectionSeams seams;
   seams.matcher = handle.matcher.get();
   seams.verifier = handle.verifier.get();
@@ -261,6 +272,18 @@ int RunCommand(const std::vector<std::string>& args, Engine& engine,
   const auto manifest =
       engine.RunPipeline(pipeline_id, refs, config);
   std::cout << spatial::engine::ToJson(manifest) << "\n";
+  if (manifest.status == "failed") {
+    spatial::engine::SchedulerStateStore state(engine.project().db());
+    for (const auto& stage : manifest.stages) {
+      if (stage.status != "failed") continue;
+      const auto runs = state.LoadRuns(stage.task_id);
+      if (!runs.empty() && runs.back().error.has_value()) {
+        const auto& error = *runs.back().error;
+        std::cerr << "error: stage '" << stage.stage_id << "' [" << error.code
+                  << "]: " << error.message << "\n";
+      }
+    }
+  }
   // Step 12: 0 only when the pipeline succeeded; a failed manifest is an
   // error the caller can rely on.
   return manifest.status == "succeeded" ? 0 : 1;
@@ -405,6 +428,95 @@ int ImportCommand(const std::vector<std::string>& args, Engine& engine) {
   std::cout << j.dump(2) << "\n";
 
   return result.failures.empty() ? 0 : 1;
+}
+
+int ImportTrajectoryCommand(const std::vector<std::string>& args, Engine& engine) {
+  using spatial::importers::TrajectoryClockDomain;
+  using spatial::importers::TrajectoryImportOptions;
+  using spatial::importers::TrajectoryLengthUnit;
+  using spatial::importers::TrajectoryPoseFrame;
+
+  TrajectoryImportOptions options;
+  std::filesystem::path input;
+  std::set<std::string> seen;
+  for (std::size_t i = 0; i < args.size(); ++i) {
+    const std::string& arg = args[i];
+    if (arg.rfind("--", 0) != 0) {
+      if (!input.empty()) {
+        throw ProjectError(spatial::core::ErrorCode::kValidationDomain,
+                           "import-trajectory expects exactly one input file");
+      }
+      input = arg;
+      continue;
+    }
+    if (!seen.insert(arg).second) {
+      throw ProjectError(spatial::core::ErrorCode::kValidationDomain,
+                         "duplicate argument: " + arg);
+    }
+    if (arg == "--session") {
+      options.session_id = ParseUuid(SingleValue(args, i));
+    } else if (arg == "--sensor") {
+      options.sensor_id = ParseUuid(SingleValue(args, i));
+    } else if (arg == "--coordinate-frame") {
+      options.coordinate_frame = SingleValue(args, i);
+    } else if (arg == "--source-producer") {
+      options.source_producer = SingleValue(args, i);
+    } else if (arg == "--source-version") {
+      options.source_version = SingleValue(args, i);
+    } else if (arg == "--format") {
+      if (SingleValue(args, i) != "tum") {
+        throw ProjectError(spatial::core::ErrorCode::kValidationDomain,
+                           "--format must be tum");
+      }
+    } else if (arg == "--source-unit") {
+      if (SingleValue(args, i) != "meters") {
+        throw ProjectError(spatial::core::ErrorCode::kValidationDomain,
+                           "--source-unit must be meters");
+      }
+      options.source_unit = TrajectoryLengthUnit::kMeters;
+    } else if (arg == "--clock-domain") {
+      if (SingleValue(args, i) != "platform") {
+        throw ProjectError(spatial::core::ErrorCode::kValidationDomain,
+                           "--clock-domain must be platform");
+      }
+      options.clock_domain = TrajectoryClockDomain::kPlatform;
+    } else if (arg == "--pose-frame") {
+      if (SingleValue(args, i) != "camera") {
+        throw ProjectError(spatial::core::ErrorCode::kValidationDomain,
+                           "--pose-frame must be camera");
+      }
+      options.pose_frame = TrajectoryPoseFrame::kCamera;
+    } else {
+      throw ProjectError(spatial::core::ErrorCode::kValidationDomain,
+                         "unknown argument: " + arg);
+    }
+  }
+  if (input.empty() || seen.count("--format") == 0) {
+    throw ProjectError(spatial::core::ErrorCode::kValidationDomain,
+                       "import-trajectory requires an input file and --format tum");
+  }
+  auto& project = engine.project();
+  const auto result = spatial::importers::ImportTumCameraTrajectory(
+      project.artifacts(), project.db(), project.info().uuid,
+      ReadFileBytes(input), options);
+  const nlohmann::json out = {
+      {"trajectory_id", spatial::core::FormatUuid(result.trajectory_id)},
+      {"trajectory_artifact_id", spatial::core::FormatUuid(result.artifact_id)},
+      {"trajectory_content_hash", result.content_hash},
+      {"source_artifact_id", spatial::core::FormatUuid(result.source_artifact_id)},
+      {"source_content_hash", result.source_content_hash},
+      {"configuration_artifact_id", spatial::core::FormatUuid(result.configuration_artifact_id)},
+      {"configuration_hash", result.configuration_hash},
+      {"scene_id", spatial::core::FormatUuid(result.scene_id)},
+      {"session_id", spatial::core::FormatUuid(options.session_id)},
+      {"sensor_id", spatial::core::FormatUuid(options.sensor_id)},
+      {"coordinate_frame", options.coordinate_frame},
+      {"node_count", result.node_count},
+      {"total_distance_m", result.total_distance_m},
+      {"metric_basis_declared", false},
+      {"reused", result.reused}};
+  std::cout << out.dump(2) << "\n";
+  return 0;
 }
 
 // `spatial run feature-extraction --session <uuid>` (P2.3, RFC-0007 §8): the
@@ -647,6 +759,12 @@ int main(int argc, char** argv) {
       // failure from the runner/manifest rather than a silent no-op.
       return RunCommand(rest, *handle.engine,
                         spatial::engine::kSparseCorrectionPipelineId);
+    }
+
+    if (args[0] == "import-trajectory") {
+      std::vector<std::string> rest(args.begin() + 1, args.end());
+      Engine engine = OpenProjectAndEngine(rest);
+      return ImportTrajectoryCommand(rest, engine);
     }
 
     if (args[0] == "import") {

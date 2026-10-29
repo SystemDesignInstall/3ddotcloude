@@ -236,8 +236,8 @@ class RunnerContextTest : public ::testing::Test {
  protected:
   void SetUp() override {
     root_ = std::filesystem::temp_directory_path() /
-            ("spatial_p3_runner_ctx_" + std::to_string(std::time(nullptr)) +
-             "_" + std::to_string(rand()));
+            ("spatial_p3_runner_ctx_" +
+             spatial::core::FormatUuid(spatial::core::GenerateUuid()));
     ProjectInfo info;
     info.uuid = GenerateUuid();
     info.name = "p3-runner-context";

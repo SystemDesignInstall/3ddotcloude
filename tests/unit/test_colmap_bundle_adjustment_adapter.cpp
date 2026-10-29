@@ -67,8 +67,8 @@ using spatial::test::ClosedSquareScene;
 std::filesystem::path UniqueWorkspace(const std::string& tag) {
   const std::filesystem::path root =
       std::filesystem::temp_directory_path() /
-      ("spatial_ba_" + tag + "_" + std::to_string(std::time(nullptr)) + "_" +
-       std::to_string(rand()));
+      ("spatial_ba_" + tag + "_" +
+       spatial::core::FormatUuid(spatial::core::GenerateUuid()));
   std::filesystem::create_directories(root);
   return root;
 }

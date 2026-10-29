@@ -36,6 +36,7 @@ set(SPATIAL_UNIT_TESTS
   unit/test_reconstruction_schema.cpp
   unit/test_reconstruction_feedback.cpp
   unit/test_trajectory.cpp
+  unit/test_trajectory_import.cpp
   unit/test_p3_schema.cpp
   unit/test_cli_import.cpp
   unit/test_cli_feature_extraction.cpp

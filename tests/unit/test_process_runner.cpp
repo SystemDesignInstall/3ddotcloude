@@ -12,6 +12,7 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <random>
 #include <string>
 #include <system_error>
 #include <thread>
@@ -31,9 +32,10 @@ namespace {
 class TempDir {
  public:
   TempDir() {
+    std::random_device entropy;
     path_ = std::filesystem::temp_directory_path() /
-            ("spatial_proc_" + std::to_string(std::time(nullptr)) + "_" +
-             std::to_string(rand()));
+            ("spatial_proc_" + std::to_string(entropy()) + "_" +
+             std::to_string(entropy()));
     std::filesystem::create_directories(path_);
   }
   ~TempDir() {
@@ -113,6 +115,38 @@ TEST(ProcessRunnerTest, SpawnFailureIsReported) {
   EXPECT_EQ(result.outcome, ProcessOutcome::kSpawnFailed);
   EXPECT_FALSE(result.error_message.empty());
 }
+
+#if !defined(_WIN32)
+TEST(ProcessRunnerTest, Exit127IsACompletion) {
+  ProcessSpec spec;
+  spec.argv = {"sh", "-c", "exit 127"};
+  const auto result = RunSubprocess(spec, 1000);
+  EXPECT_EQ(result.outcome, ProcessOutcome::kCompleted);
+  EXPECT_EQ(result.exit_code, 127);
+  EXPECT_TRUE(result.error_message.empty());
+}
+
+TEST(ProcessRunnerTest, FindsExecutableOnPathWithMergedEnvironment) {
+  ProcessSpec spec;
+  spec.argv = {"sh", "-c",
+               "test -n \"$PATH\" && printf '%s' \"$SPATIAL_SPAWN_TEST\""};
+  spec.env = {"SPATIAL_SPAWN_TEST=works"};
+  const auto result = RunSubprocess(spec, 1000);
+  EXPECT_EQ(result.outcome, ProcessOutcome::kCompleted);
+  EXPECT_EQ(result.exit_code, 0);
+  EXPECT_EQ(result.stdout_text, "works");
+}
+
+TEST(ProcessRunnerTest, MissingWorkingDirectoryIsASpawnFailure) {
+  TempDir tmp;
+  const auto result = RunSubprocess(
+      ShimSpec(tmp.path_ / "missing-directory",
+               {SPATIAL_COLMAP_PROBE_SHIM_EXECUTABLE, "--version"}), 1000);
+  EXPECT_EQ(result.outcome, ProcessOutcome::kSpawnFailed);
+  EXPECT_FALSE(result.error_message.empty());
+  EXPECT_TRUE(result.stdout_text.empty());
+}
+#endif
 
 TEST(ProcessRunnerTest, TimesOutAndTerminatesChild) {
   TempDir tmp;

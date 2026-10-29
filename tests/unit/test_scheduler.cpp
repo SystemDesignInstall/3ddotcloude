@@ -36,9 +36,9 @@ class FakeExecutor : public WorkerExecutor {
  public:
   struct Step {
     WorkerEventType type = WorkerEventType::kCompleted;
-    std::string artifact;
-    std::string code;
-    std::string message;
+    std::string artifact{};
+    std::string code{};
+    std::string message{};
     bool recoverable = false;
   };
 
@@ -105,8 +105,8 @@ class SchedulerTest : public ::testing::Test {
  protected:
   void SetUp() override {
     root_ = std::filesystem::temp_directory_path() /
-            ("spatial_sched_" + std::to_string(std::time(nullptr)) + "_" +
-             std::to_string(rand()));
+            ("spatial_sched_" +
+             spatial::core::FormatUuid(spatial::core::GenerateUuid()));
     std::filesystem::create_directories(root_);
     db_ = std::make_unique<MetadataDb>(MetadataDb::Create(root_ / "project.db"));
     artifact_store_ =

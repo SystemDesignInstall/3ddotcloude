@@ -4,6 +4,8 @@
 // then the parser must reconstruct the provisional canonical document and the
 // serializer must produce deterministic bytes (ADR-020).
 
+#include "core/utils/uuid.h"
+
 #include <gtest/gtest.h>
 
 #include <array>
@@ -90,8 +92,7 @@ class ColmapConverterTest : public ::testing::Test {
   void SetUp() override {
     root_ = std::filesystem::temp_directory_path() /
             ("spatial_colmap_conv_" +
-             std::to_string(std::time(nullptr)) + "_" +
-             std::to_string(rand()));
+             spatial::core::FormatUuid(spatial::core::GenerateUuid()));
     std::filesystem::create_directories(root_);
   }
 

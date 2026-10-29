@@ -41,7 +41,7 @@ using nlohmann::json;
 bool ReadExact(std::uint8_t* out, std::size_t count) {
   std::size_t got = 0;
   while (got < count) {
-    const int r =
+    const auto r =
         SPATIAL_WORKER_READ(0, out + got, static_cast<unsigned>(count - got));
     if (r <= 0) {
       return false;
@@ -54,7 +54,7 @@ bool ReadExact(std::uint8_t* out, std::size_t count) {
 bool WriteExact(const std::uint8_t* data, std::size_t count) {
   std::size_t sent = 0;
   while (sent < count) {
-    const int w =
+    const auto w =
         SPATIAL_WORKER_WRITE(1, data + sent, static_cast<unsigned>(count - sent));
     if (w <= 0) {
       return false;

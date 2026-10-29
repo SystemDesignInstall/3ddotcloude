@@ -143,8 +143,8 @@ class BundleAdjustmentOptimizePipelineTest : public ::testing::Test {
  protected:
   void SetUp() override {
     root_ = std::filesystem::temp_directory_path() /
-            ("spatial_baopt_" + std::to_string(std::time(nullptr)) + "_" +
-             std::to_string(rand()));
+            ("spatial_baopt_" +
+             spatial::core::FormatUuid(spatial::core::GenerateUuid()));
     std::filesystem::create_directories(root_);
     db_.emplace(MetadataDb::Create(root_ / "project.db"));
     project_id_ = GenerateUuid();

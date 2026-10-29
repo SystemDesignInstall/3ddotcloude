@@ -120,8 +120,6 @@ TEST(Triangulation8b, OpenCvCoefficientOrderPinsP1AndK1) {
   // slot 0 and p1 at slot 2. Swapping would change the output:
   const CameraModel swapped = CameraModel::OpenCvRadial(k, {0.01, 0.0, 0.05, 0.0});
   const Eigen::Vector2d xswap = swapped.DistortUnit(x);
-  // If k1 and p1 were swapped, output would be the radial model's output.
-  const Eigen::Vector2d if_swapped = radial.DistortUnit(x);
   EXPECT_GT((xswap - xr).norm(), 1e-6)
       << "coefficient slots must not be swapped";
 }

@@ -1,29 +1,3 @@
-# ci — Spatial Platform continuous validation and build pipeline
-#
-# Pipeline overview
-# ---------------
-#   validation:  P0 governance + static gates, Python 3.11 stdlib only.
-#                Runs the constitution change-control gate, the governance
-#                (RFC/ADR) validator, the domain-types gate, the worker-
-#                boundary gate, the architecture debt gate, the dependency-
-#                registry gate, and schema validation. Ruff/pytest over
-#                python/ are best-effort in P0.
-#   python-lint: Python SDK quality gates (ruff + mypy + pytest). P0 runs
-#                best-effort (failures are tolerated with `|| true`).
-#   build:       P1 placeholder for the C++ toolchain matrix. The matrix
-#                (os x config) is fixed now so P1 only fills in the steps.
-#
-# P1 build-job insertion point
-# ----------------------------
-# In the `build` job, replace the placeholder step body with the real
-# toolchain bootstrap defined in docs/development/build.md (ADR-022):
-#   conan install . --build=missing
-#   cmake --preset default           # or `release` for ${{ matrix.config }}
-#   cmake --build --preset default
-#   ctest --test-dir build/default --output-on-failure
-# Keep the matrix structure; it already covers ubuntu-latest/windows-latest
-# x Debug/Release.
-
 name: ci
 
 on:
@@ -31,72 +5,140 @@ on:
     branches: [main]
   pull_request:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   validation:
-    name: validation
-    runs-on: ubuntu-latest
+    name: architecture validation
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Checkout governance repo (spatial-rfcs)
+        with:
+          fetch-depth: 0
+      - name: Checkout governance
         uses: actions/checkout@v4
         with:
-          repository: spatial-platform/spatial-rfcs
-          path: spatial-rfcs
+          repository: SystemDesignInstall/spatial-rfcs
+          path: _governance
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-      - name: Governance validation (RFC / ADR)
-        run: python scripts/check_rfc.py --rfcs spatial-rfcs
-      - name: Constitution change-control gate
-        run: >-
-          python scripts/check_constitution.py
-          --repo .
-          --rfcs spatial-rfcs
-          --base "${{ github.event.pull_request.base.sha || github.event.before || '' }}"
-      - name: Domain-types gate
-        run: python scripts/check_domain_types.py
-      - name: Worker-boundary gate
-        run: python scripts/check_worker_boundary.py
-      - name: Architecture-debt gate
-        run: python scripts/check_arch_debt.py
-      - name: Dependency-registry gate
-        run: python scripts/check_dependencies.py
-      - name: Schema validation gate
-        run: python scripts/check_schemas.py
-      - name: Python lint (best-effort in P0)
-        run: python -m ruff check python/ 2>/dev/null || true
-      - name: Python tests (best-effort in P0)
-        run: python -m pytest python/ 2>/dev/null || true
+          python-version: '3.12'
+      - name: Governance validation
+        run: python scripts/check_rfc.py --rfcs _governance
+      - name: Constitution change control
+        env:
+          CHANGE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          CHANGE_TITLE: ${{ github.event.pull_request.title }}
+          CHANGE_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          import subprocess
+          import sys
 
-  python-lint:
-    name: python-lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Install Python tooling
-        run: python -m pip install ruff mypy pytest
-      - name: Ruff check
-        run: ruff check python/ --output-format=github || true
-      - name: Mypy check
-        run: mypy python/spatial_sdk --ignore-missing-imports || true
+          base = os.environ.get("CHANGE_BASE", "")
+          if base and set(base) == {"0"}:
+              base = ""
+          revision = f"{base}..HEAD" if base else "HEAD"
+          messages = subprocess.check_output(
+              ["git", "log", "--format=%B", revision], text=True
+          )
+          description = "\n".join([
+              os.environ.get("CHANGE_TITLE", ""),
+              os.environ.get("CHANGE_BODY", ""), messages
+          ])
+          match = re.search(r"\bRFC-\d{4}\b", description)
+          command = [sys.executable, "scripts/check_constitution.py",
+                     "--repo", ".", "--rfcs", "_governance"]
+          if base:
+              command += ["--base", base]
+          if match:
+              command += ["--rfc", match.group()]
+          subprocess.run(command, check=True)
+          PY
+      - name: Constitution gate regression tests
+        run: python -m unittest discover -s tests/python -p test_constitution_check.py
+      - name: Domain types
+        run: python scripts/check_domain_types.py
+      - name: Worker boundary
+        run: python scripts/check_worker_boundary.py
+      - name: Architecture debt
+        run: python scripts/check_arch_debt.py
+      - name: Dependency registry
+        run: python scripts/check_dependencies.py
+      - name: Schema validation
+        run: python scripts/check_schemas.py
 
   build:
     name: build (${{ matrix.os }} / ${{ matrix.config }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
-        config: [Debug, Release]
+        include:
+          - os: ubuntu-24.04
+            config: Debug
+            preset: linux-debug
+            host_profile: linux-gcc13-debug
+            build_profile: linux-gcc13
+            conan_output: conan-linux-debug
+          - os: ubuntu-24.04
+            config: Release
+            preset: linux-release
+            host_profile: linux-gcc13
+            build_profile: linux-gcc13
+            conan_output: conan-linux-release
+          - os: windows-2022
+            config: Debug
+            preset: default
+            host_profile: msvc2022-x64-debug
+            build_profile: msvc2022-x64
+            conan_output: conan-debug
+          - os: windows-2022
+            config: Release
+            preset: release
+            host_profile: msvc2022-x64
+            build_profile: msvc2022-x64
+            conan_output: conan
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-      - name: P0 placeholder (C++ build added in P1)
-        run: |
-          python scripts/check_arch_debt.py
-          echo "C++ build added in P1 (conan install + cmake --preset + ctest)"
+          python-version: '3.12'
+      - name: Install build tools
+        run: python -m pip install conan==2.33.0 cmake==4.4.4 ninja==1.13.2
+      - name: Restore Conan packages
+        id: conan-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.conan2/p
+          key: conan-${{ matrix.os }}-${{ matrix.config }}-${{ hashFiles('conan.lock', 'conanfile.txt', 'conan/profiles/*', 'conan/recipes/gtsam/**') }}
+          restore-keys: conan-${{ matrix.os }}-${{ matrix.config }}-
+      - name: Export Windows GTSAM compatibility recipe
+        if: runner.os == 'Windows'
+        run: conan export conan/recipes/gtsam --version=4.2.1 --user=spatial --channel=compat
+      - name: Install locked dependencies
+        run: >-
+          conan install .
+          --lockfile=conan.lock
+          --profile:host=conan/profiles/${{ matrix.host_profile }}
+          --profile:build=conan/profiles/${{ matrix.build_profile }}
+          --output-folder=build/${{ matrix.conan_output }}
+          --build=missing
+          --conf:all=tools.build:jobs=2
+      - name: Save installed Conan packages
+        if: steps.conan-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.conan2/p
+          key: ${{ steps.conan-cache.outputs.cache-primary-key }}
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }}
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }} --parallel 2
+      - name: Test
+        run: ctest --preset ${{ matrix.preset }} --parallel 2 --timeout 180

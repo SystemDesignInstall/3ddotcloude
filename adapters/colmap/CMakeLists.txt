@@ -70,7 +70,7 @@ set(SPATIAL_COLMAP_WORKER_PROTO_SOURCES
 # Generated protobuf output is third-party code: never fail on its warnings.
 set_source_files_properties(
   ${SPATIAL_COLMAP_WORKER_PROTO_SOURCES}
-  PROPERTIES COMPILE_OPTIONS "/WX-")
+  PROPERTIES COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/WX-,-Wno-error>")
 
 find_package(protobuf CONFIG REQUIRED)
 

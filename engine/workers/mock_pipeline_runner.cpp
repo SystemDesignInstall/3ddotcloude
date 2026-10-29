@@ -123,8 +123,8 @@ DeriveMockFeatures(const std::vector<std::uint8_t>& image_bytes,
   descriptors.reserve(count);
   for (std::size_t i = 0; i < count; ++i) {
     FeaturePoint p;
-    p.x = (i % side) * spacing + jitter() * spacing * 0.25;
-    p.y = (i / side) * spacing + jitter() * spacing * 0.25;
+    p.x = static_cast<double>(i % side) * spacing + jitter() * spacing * 0.25;
+    p.y = static_cast<double>(i / side) * spacing + jitter() * spacing * 0.25;
     p.size = 2.0 + jitter() * 4.0;
     p.angle = static_cast<double>(next() % 62831) / 100.0;
     p.response = static_cast<double>(next() % 100000) / 100000.0;

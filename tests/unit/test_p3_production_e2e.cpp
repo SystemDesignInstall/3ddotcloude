@@ -229,8 +229,8 @@ class P3ProductionE2eTest : public ::testing::Test {
  protected:
   void SetUp() override {
     root_ = std::filesystem::temp_directory_path() /
-            ("spatial_p3_prod_e2e_" + std::to_string(std::time(nullptr)) + "_" +
-             std::to_string(rand()));
+            ("spatial_p3_prod_e2e_" +
+             spatial::core::FormatUuid(spatial::core::GenerateUuid()));
     ProjectInfo info;
     info.uuid = GenerateUuid();
     info.name = "p3-prod-e2e";
@@ -490,8 +490,8 @@ TEST_F(P3ProductionE2eTest, N2MissingWorkerInputFailsClosedAndNothingCommitted) 
   EXPECT_EQ(manifest.status, "failed");
   ASSERT_EQ(manifest.stages.size(), 1u);
   EXPECT_EQ(manifest.stages[0].status, "failed");
-  EXPECT_FALSE(engine.project().artifacts().Has(
-      manifest.stages[0].output_refs.front()));
+  EXPECT_TRUE(manifest.stages[0].output_refs.empty());
+  EXPECT_FALSE(manifest.stages[0].cache_hit);
 
   EXPECT_TRUE(engine.project().db().FindReconstructionsByScene(scene.scene_id)
                   .empty());

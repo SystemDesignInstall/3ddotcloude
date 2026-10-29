@@ -115,5 +115,55 @@ TEST(ProtocolFraming, SpawnMissingProgramFails) {
   EXPECT_FALSE(error.empty());
 }
 
+#if !defined(_WIN32)
+TEST(ProtocolFraming, ClosedChildStdinReportsErrorWithoutTerminatingHost) {
+  std::string error;
+  auto child = ChildProcess::Spawn(
+      {"sh", "-c", "exec 0<&-; printf ready; exec sleep 30"}, error);
+  ASSERT_NE(child, nullptr) << error;
+  char buffer[64];
+  std::size_t nread = 0;
+  bool eof = false;
+  ASSERT_TRUE(child->ReadStdout(buffer, sizeof(buffer), 1000, nread, eof, error));
+  ASSERT_EQ(std::string(buffer, nread), "ready");
+  EXPECT_FALSE(child->Write("payload", 7, error));
+  EXPECT_NE(error.find("broken stdin pipe"), std::string::npos);
+}
+
+TEST(ProtocolFraming, ReadsBufferedOutputAfterChildExit) {
+  std::string error;
+  auto child = ChildProcess::Spawn(
+      {"sh", "-c", "printf final-output; printf final-diagnostic >&2"}, error);
+  ASSERT_NE(child, nullptr) << error;
+  ASSERT_EQ(child->Wait(), 0);
+
+  char buffer[128];
+  std::size_t nread = 0;
+  bool eof = false;
+  ASSERT_TRUE(child->ReadStdout(buffer, sizeof(buffer), 1000, nread, eof, error));
+  EXPECT_EQ(std::string(buffer, nread), "final-output");
+  EXPECT_FALSE(eof);
+  ASSERT_TRUE(child->ReadStderr(buffer, sizeof(buffer), 1000, nread, eof, error));
+  EXPECT_EQ(std::string(buffer, nread), "final-diagnostic");
+  EXPECT_FALSE(eof);
+  EXPECT_FALSE(child->ReadStdout(buffer, sizeof(buffer), 1000, nread, eof, error));
+  EXPECT_TRUE(eof);
+}
+
+TEST(ProtocolFraming, FindsExecutableOnPathWithMergedEnvironment) {
+  std::string error;
+  auto child = ChildProcess::Spawn(
+      {"sh", "-c", "test -n \"$PATH\" && printf '%s' \"$SPATIAL_SPAWN_TEST\""},
+      error, {"SPATIAL_SPAWN_TEST=works"});
+  ASSERT_NE(child, nullptr) << error;
+  ASSERT_EQ(child->Wait(), 0);
+  char buffer[64];
+  std::size_t nread = 0;
+  bool eof = false;
+  ASSERT_TRUE(child->ReadStdout(buffer, sizeof(buffer), 1000, nread, eof, error));
+  EXPECT_EQ(std::string(buffer, nread), "works");
+}
+#endif
+
 }  // namespace
 }  // namespace spatial::engine

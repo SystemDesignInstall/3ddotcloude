@@ -1,7 +1,14 @@
 # P3 Milestone Status & Verification Index
 
 **Status:** Living document
-**Updated:** 2026-09-16
+**Updated:** 2026-10-27
+
+Current source baseline: `69255f42a282e99858b42e158db3a57dc080b115`.
+The Phase-1 absence claims below are historical: calibrated essential verification,
+GTSAM optimization, feedback, retriangulation, BA and CLI wiring now exist in code.
+Their presence does not settle production acceptance, particularly metric-scale
+source authentication and native-dataset validation. The current continuation is
+[P3.1 reliability verification](P3.1-reliability-verification-2026-10-27.md).
 
 Tracks implementation milestone acceptance for the P3 trajectory / pose-graph / loop-closure work,
 and an index of the corresponding verification reports. A milestone is ACCEPTED/COMPLETE only when
@@ -22,8 +29,8 @@ its verification report passes in both Debug and Release.
 | **P3-impl-7a visual loop candidate generation** | ✅ **ACCEPTED/COMPLETE** | `P3-impl-7a-verification-report.md` (549/549) |
 | **7a.1 loop-closure capability executor integration** | ⏳ **DEFERRED debt** (not 7a defect) | — |
 | **P3-impl-7b geometric loop verification** | ✅ **ACCEPTED/COMPLETE** | `P3-impl-7b-verification-report.md` (564/564) |
-| **P3.1 production sparse-correction pipeline** | **INCOMPLETE** | `P3.1-production-sparse-correction-verification-report.md`; metric-source gate unresolved; 676/676 is historical partial-pipeline evidence |
-| P3-impl-7c visual loop → GTSAM E2E | ⏳ **← next** | — |
+| **P3.1 production sparse-correction pipeline** | **IMPLEMENTED; production acceptance OPEN** | [Current verification and remaining gaps](P3.1-reliability-verification-2026-10-27.md); earlier 676/676 and 719/719 counts are historical |
+| P3-impl-7c visual loop → GTSAM E2E | Integrated into P3.1; real-data acceptance open | `test_p3_trajectory_optimization.cpp`, `test_cli_sparse_correction_e2e.cpp` |
 | Multi-session registration | ⏳ | — |
 | LiDAR fusion | ⏳ | — |
 | Dense reconstruction | ⏳ | — |
@@ -121,7 +128,7 @@ CAS + Provenance
 
 ---
 
-## P3.1 — Current Record
+## P3.1 — Historical Implementation Records
 
 - **Verdict:** INCOMPLETE (2026-09-12). The earlier COMPLETE declaration is withdrawn against the original full-chain GO, without changing its scope.
 - **Implemented subset:** registered `p3_sparse_correction`, two-stage dispatch, per-stage cache policy, sparse worker/passthrough and host commit/BA route. CLI reaches `RunPipeline`, but injects empty providers and returns zero for a failed manifest.
@@ -191,7 +198,13 @@ Deliberately deferred, NOT a defect of P3-impl-7a:
 
 ## Next step
 
-**P3-impl-7c — Visual Loop → GTSAM E2E.** Consume 7b's **accepted** `LoopClosure` records and
-produce `PoseGraphEdge` constraints (`BuildLoopClosureEdge`, 6c scaffolding) into a PoseGraph, then
-optimize via the existing GTSAM adapter. Do **not** start automatically; requires explicit
-authorization.
+Continue P3.1 from the implemented full chain. The reliability increment preserves
+typed retryability, fixes skipped-stage cache telemetry, isolates parallel test
+workspaces, and restores an executable cross-platform build/CI matrix. See the
+current verification report for actually executed checks.
+
+Production acceptance still requires authenticated metric evidence instead of
+caller-declared scale, native COLMAP / real capture validation, and explicit
+recovery/publication proof for unfinished revision stages. These precede the
+first real photo + SLAM integration and multi-session registration. Dense and
+AI capabilities remain later milestones.

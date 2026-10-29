@@ -401,8 +401,7 @@ class LoopClosureVerificationTest : public ::testing::Test {
  protected:
   void SetUp() override {
     root_ = std::filesystem::temp_directory_path() /
-            ("spatial_lcv_" + std::to_string(std::time(nullptr)) + "_" +
-             std::to_string(rand()));
+            ("spatial_lcv_" + spatial::core::FormatUuid(spatial::core::GenerateUuid()));
     std::filesystem::create_directories(root_);
     db_ = MetadataDb::Create(root_ / "project.db");
     InsertTestProject(*db_);
@@ -551,7 +550,7 @@ TEST_F(LoopClosureVerificationTest, MissingArtifactFailsClosedWithTypedError) {
   const std::string traj = FormatUuid(GenerateUuid());
   VerificationFrameInput good =
       StoreFeature(f0, 10000, SourcePoints(30), {});
-  VerificationFrameInput missing = {f1, 2000, GenerateUuid()};  // not stored
+  VerificationFrameInput missing = {f1, 2000, GenerateUuid(), std::nullopt};
 
   const L2NearestMatcher matcher;
   const FundamentalGeometricVerifier verifier;

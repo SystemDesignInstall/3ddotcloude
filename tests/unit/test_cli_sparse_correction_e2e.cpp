@@ -242,6 +242,7 @@ double MeanDistanceToTruth(const CommittedGeometry& committed, const json& doc) 
 struct CliRun {
   int exit_code = -1;
   std::string stdout_text;
+  std::string stderr_text;
 };
 
 CliRun RunCli(const std::vector<std::string>& argv) {
@@ -249,7 +250,7 @@ CliRun RunCli(const std::vector<std::string>& argv) {
   auto child = ChildProcess::Spawn(argv, error);
   if (!child) {
     ADD_FAILURE() << "cli spawn failed: " << error;
-    return {-1, ""};
+    return {-1, "", ""};
   }
   CliRun run;
   std::vector<char> buf(16384);
@@ -268,6 +269,19 @@ CliRun RunCli(const std::vector<std::string>& argv) {
     }
   }
   run.exit_code = child->Wait();
+  for (;;) {
+    std::size_t n = 0;
+    bool eof = false;
+    std::string err;
+    const bool read =
+        child->ReadStderr(buf.data(), buf.size(), 1000, n, eof, err);
+    run.stderr_text.append(buf.data(), n);
+    if (eof) break;
+    if (!read) {
+      ADD_FAILURE() << "cli stderr read failed: " << err;
+      break;
+    }
+  }
   return run;
 }
 
@@ -300,8 +314,8 @@ class CliSparseCorrectionE2eTest : public ::testing::Test {
 
   void SetUp() override {
     root_ = std::filesystem::temp_directory_path() /
-            ("spatial_cli_e2e_p3_" + std::to_string(std::time(nullptr)) +
-             "_" + std::to_string(rand()));
+            ("spatial_cli_e2e_p3_" +
+             spatial::core::FormatUuid(spatial::core::GenerateUuid()));
     std::filesystem::create_directories(root_);
     project_path_ = root_ / "demo.spx";
     ProjectInfo info;
@@ -600,6 +614,8 @@ TEST_F(CliSparseCorrectionE2eTest, FailedManifestReturnsNonZeroAndWritesNothing)
 
   const CliRun run = RunCorrection(seed);
   EXPECT_EQ(run.exit_code, 1);
+  EXPECT_NE(run.stderr_text.find("VALIDATION_DOMAIN"), std::string::npos);
+  EXPECT_NE(run.stderr_text.find("random_seed"), std::string::npos);
 
   const json manifest = ParseStdoutJson(run.stdout_text);
   EXPECT_EQ(manifest["status"].get<std::string>(), "failed");

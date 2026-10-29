@@ -31,21 +31,61 @@
         "SPATIAL_WARNINGS_AS_ERRORS": "ON",
         "SPATIAL_HAS_GTSAM": "ON"
       }
+    },
+    {
+      "name": "linux-debug",
+      "displayName": "Spatial Platform Linux (Debug)",
+      "generator": "Ninja",
+      "toolchainFile": "${sourceDir}/build/conan-linux-debug/conan_toolchain.cmake",
+      "binaryDir": "${sourceDir}/build/linux-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "SPATIAL_ENABLE_TESTS": "ON",
+        "SPATIAL_WARNINGS_AS_ERRORS": "ON",
+        "SPATIAL_HAS_GTSAM": "ON"
+      }
+    },
+    {
+      "name": "linux-release",
+      "displayName": "Spatial Platform Linux (Release)",
+      "generator": "Ninja",
+      "toolchainFile": "${sourceDir}/build/conan-linux-release/conan_toolchain.cmake",
+      "binaryDir": "${sourceDir}/build/linux-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "SPATIAL_ENABLE_TESTS": "ON",
+        "SPATIAL_WARNINGS_AS_ERRORS": "ON",
+        "SPATIAL_HAS_GTSAM": "ON"
+      }
     }
   ],
   "buildPresets": [
     { "name": "default", "configurePreset": "default", "configuration": "Debug" },
-    { "name": "release", "configurePreset": "release", "configuration": "Release" }
+    { "name": "release", "configurePreset": "release", "configuration": "Release" },
+    { "name": "linux-debug", "configurePreset": "linux-debug" },
+    { "name": "linux-release", "configurePreset": "linux-release" }
   ],
   "testPresets": [
     {
       "name": "default",
       "configurePreset": "default",
+      "configuration": "Debug",
       "output": { "outputOnFailure": true }
     },
     {
       "name": "release",
       "configurePreset": "release",
+      "configuration": "Release",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "linux-debug",
+      "configurePreset": "linux-debug",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "linux-release",
+      "configurePreset": "linux-release",
       "output": { "outputOnFailure": true }
     }
   ]

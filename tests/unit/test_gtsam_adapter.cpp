@@ -1875,8 +1875,7 @@ TEST(LoopClosureGtsamE2E, DriftReductionWithLoop) {
 TEST(LoopClosureGtsamE2E, OptimizedTrajectoryPersistsToCasWithProvenance) {
   const std::filesystem::path root =
       std::filesystem::temp_directory_path() /
-      ("spatial_lc_" + std::to_string(std::time(nullptr)) + "_" +
-       std::to_string(rand()));
+      ("spatial_lc_" + spatial::core::FormatUuid(spatial::core::GenerateUuid()));
   std::filesystem::create_directories(root);
 
   {
@@ -2308,8 +2307,7 @@ TEST(LoopClosureMetricE2E, Inv3UndeclaredBasisNoEdgeOptimizerUnchanged) {
 TEST(LoopClosureMetricE2E, Inv4OptimizedTrajectoryAppliedAndSupersedesRecon) {
   const std::filesystem::path root =
       std::filesystem::temp_directory_path() /
-      ("spatial_inv4_" + std::to_string(std::time(nullptr)) + "_" +
-       std::to_string(rand()));
+      ("spatial_inv4_" + spatial::core::FormatUuid(spatial::core::GenerateUuid()));
   std::filesystem::create_directories(root);
 
   {

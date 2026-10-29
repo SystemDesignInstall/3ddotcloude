@@ -92,8 +92,7 @@ class CliImportTest : public ::testing::Test {
  protected:
   void SetUp() override {
     root_ = std::filesystem::temp_directory_path() /
-            ("spatial_cli_" + std::to_string(std::time(nullptr)) + "_" +
-             std::to_string(rand()));
+            ("spatial_cli_" + spatial::core::FormatUuid(spatial::core::GenerateUuid()));
     std::filesystem::create_directories(root_);
     project_path_ = root_ / "cli.spx";
     ProjectInfo info;
@@ -170,6 +169,75 @@ TEST_F(CliImportTest, ImportThroughCliWritesCanonicalRecords) {
   const Uuid obs_id = ParseUuid(e["observation_id"].get<std::string>());
   EXPECT_TRUE(p.db().FrameExists(frame_id));
   EXPECT_TRUE(p.db().ObservationExists(obs_id));
+}
+
+TEST_F(CliImportTest, TumTrajectoryImportsThroughCliAndReplays) {
+  SeedSensor();
+  const auto image = WriteFile("camera.jpg", kJpeg);
+  const auto first_frame = RunCli(ImportArgs({image.string()}, "1700000000123456789"));
+  ASSERT_EQ(first_frame.exit_code, 0);
+  const auto first_json = nlohmann::json::parse(first_frame.stdout_text);
+  const std::string session = first_json["session_id"];
+  auto second_jpeg = kJpeg;
+  second_jpeg[15] ^= 1;  // distinct source bytes, still a valid JPEG header
+  const auto image2 = WriteFile("camera2.jpg", second_jpeg);
+  auto second_args = ImportArgs({image2.string()}, "1700000000124456789");
+  second_args.insert(second_args.end(), {"--session", session});
+  const auto second_frame = RunCli(second_args);
+  ASSERT_EQ(second_frame.exit_code, 0);
+  const auto second_json = nlohmann::json::parse(second_frame.stdout_text);
+  const std::string text =
+      "1700000000.123456789 0 0 0 0 0 0 1\n"
+      "1700000000.124456789 3 4 0 0 0 0 1\n";
+  const auto trajectory = WriteFile(
+      "camera.txt", std::vector<std::uint8_t>(text.begin(), text.end()));
+  const std::vector<std::string> args = {
+      kCliExe, "import-trajectory", trajectory.string(), "--format", "tum",
+      "--session", session, "--sensor", FormatUuid(sensor_id_),
+      "--coordinate-frame", "slam_local", "--source-unit", "meters",
+      "--clock-domain", "platform", "--pose-frame", "camera",
+      "--source-producer", "example-slam", "--source-version", "1.2",
+      "--project", project_path_.string()};
+  const auto first = RunCli(args);
+  ASSERT_EQ(first.exit_code, 0);
+  const auto result = nlohmann::json::parse(first.stdout_text);
+  EXPECT_EQ(result["node_count"], 2);
+  EXPECT_FALSE(result["metric_basis_declared"].get<bool>());
+  EXPECT_FALSE(result["reused"].get<bool>());
+  const auto replay = RunCli(args);
+  ASSERT_EQ(replay.exit_code, 0);
+  const auto reused = nlohmann::json::parse(replay.stdout_text);
+  EXPECT_TRUE(reused["reused"].get<bool>());
+  EXPECT_EQ(reused["trajectory_id"], result["trajectory_id"]);
+
+  auto project = Project::Open(project_path_);
+  const auto rows = project.db().FindTrajectoriesBySession(ParseUuid(session));
+  ASSERT_EQ(rows.size(), 1u);
+  const auto payload = nlohmann::json::parse(rows.front().document_json);
+  EXPECT_EQ(payload["nodes"][0]["frame_id"], first_json["imported"][0]["frame_id"]);
+  EXPECT_EQ(payload["nodes"][1]["frame_id"], second_json["imported"][0]["frame_id"]);
+  EXPECT_FALSE(payload.contains("metric_basis"));
+  const auto config = project.artifacts().Get(result["configuration_hash"].get<std::string>());
+  ASSERT_TRUE(config.has_value());
+  const auto config_doc = nlohmann::json::parse(config->begin(), config->end());
+  EXPECT_EQ(config_doc["source_producer"], "example-slam");
+  EXPECT_EQ(config_doc["source_version"], "1.2");
+}
+
+TEST_F(CliImportTest, TrajectoryWithoutClockDeclarationDoesNotPublish) {
+  SeedSensor();
+  const std::string text = "1700000000.123456789 0 0 0 0 0 0 1\n";
+  const auto file = WriteFile("camera.txt", std::vector<std::uint8_t>(text.begin(), text.end()));
+  const std::vector<std::string> args = {
+      kCliExe, "import-trajectory", file.string(), "--format", "tum",
+      "--session", FormatUuid(GenerateUuid()), "--sensor", FormatUuid(sensor_id_),
+      "--coordinate-frame", "slam_local", "--source-unit", "meters",
+      "--pose-frame", "camera", "--project", project_path_.string()};
+  const auto run = RunCli(args);
+  EXPECT_EQ(run.exit_code, 1);
+  auto project = Project::Open(project_path_);
+  EXPECT_EQ(project.artifacts().PayloadCount(), 0u);
+  EXPECT_TRUE(project.db().FindArtifactsByType("trajectory").empty());
 }
 
 TEST_F(CliImportTest, ReimportThroughCliIsIdempotent) {

@@ -413,8 +413,8 @@ class TrajectoryDbTest : public ::testing::Test {
  protected:
   void SetUp() override {
     root_ = std::filesystem::temp_directory_path() /
-            ("spatial_traj_" + std::to_string(std::time(nullptr)) + "_" +
-             std::to_string(rand()));
+            ("spatial_traj_" +
+             spatial::core::FormatUuid(spatial::core::GenerateUuid()));
     std::filesystem::create_directories(root_);
     path_ = root_ / "project.db";
     db_ = MetadataDb::Create(path_);
@@ -601,7 +601,6 @@ TEST_F(TrajectoryDbTest, TrajectorySceneIsolation) {
 // --- PoseGraph CRUD ---
 
 TEST_F(TrajectoryDbTest, InsertAndQueryPoseGraph) {
-  const auto traj_id = Uuid{};  // Use a deterministic UUID for trajectory_id
   TrajectoryRow traj;
   traj.trajectory_id = GenerateUuid();
   traj.scene_id = scene_.scene_id;

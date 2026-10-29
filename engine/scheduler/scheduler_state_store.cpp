@@ -26,10 +26,6 @@ std::string ConfigHash(const TaskInstance& task) {
 }
 
 // Blob helpers: engine ids are 16-byte blobs (RFC-4122).
-std::string UuidToBlobBytes(const Uuid& uuid) {
-  return std::string(reinterpret_cast<const char*>(uuid.data()), uuid.size());
-}
-
 Uuid BlobBytesToUuid(const void* blob, int size) {
   Uuid out{};
   if (blob != nullptr && size == static_cast<int>(out.size())) {

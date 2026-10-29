@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <fstream>
 #include <sstream>
 
@@ -211,15 +212,19 @@ std::string Iso8601UtcNow() {
   const std::time_t t = std::chrono::system_clock::to_time_t(now);
   std::tm tm{};
 #if defined(_WIN32)
-  gmtime_s(&tm, &t);
+  if (gmtime_s(&tm, &t) != 0) {
 #else
-  gmtime_r(&t, &tm);
+  if (gmtime_r(&t, &tm) == nullptr) {
 #endif
-  char buf[32];
-  std::snprintf(buf, sizeof(buf), "%04d-%02d-%02dT%02d:%02d:%02dZ",
-                tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour,
-                tm.tm_min, tm.tm_sec);
-  return buf;
+    throw StorageError(ErrorCode::kStorageIo, "cannot convert system time to UTC");
+  }
+  char buf[64];
+  const auto length =
+      std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tm);
+  if (length == 0) {
+    throw StorageError(ErrorCode::kStorageIo, "cannot format UTC timestamp");
+  }
+  return std::string(buf, length);
 }
 
 std::int64_t TimestampNsNow() {

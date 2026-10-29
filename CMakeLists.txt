@@ -48,7 +48,7 @@ find_package(nlohmann_json CONFIG REQUIRED)
 
 # P3-impl-6a: GTSAM is optional and isolated to adapters/gtsam/.
 if(SPATIAL_HAS_GTSAM)
-  find_package(gtsam CONFIG REQUIRED)
+  find_package(GTSAM CONFIG REQUIRED)
 endif()
 
 add_subdirectory(core)

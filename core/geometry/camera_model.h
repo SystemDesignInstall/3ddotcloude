@@ -208,7 +208,10 @@ inline CameraModel CameraModel::Fov(const CameraIntrinsics& i,
     throw ValidationError(ErrorCode::kValidationDomain,
                           "camera model: non-finite fov omega");
   }
-  return CameraModel(CameraModelKind::kFov, i, coefficients, coefficients[0]);
+  // The validated FOV payload has exactly one element. Construct that fixed
+  // payload explicitly to avoid GCC 13's optimized vector-copy bounds warning.
+  const double omega = coefficients[0];
+  return CameraModel(CameraModelKind::kFov, i, {omega}, omega);
 }
 
 inline CameraModel CameraModel::FromReconCamera(const ReconCamera& camera) {

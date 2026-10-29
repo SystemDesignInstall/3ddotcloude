@@ -8,10 +8,10 @@ or PR body. This gate is part of the ``validation`` CI job.
 P0 behavior:
   * changed files are computed against ``--base`` via ``git diff``; if no
     ``--base`` is supplied, every file in the repository is considered.
-  * if any protected path changed, the ``--rfc RFC-0000`` argument must be
-    passed (the P0 mechanism). When ``--base`` is given and exactly one commit
-    lies in ``base..HEAD``, an ``RFC-NNNN`` reference in that commit message is
-    accepted as an alternative.
+  * if any protected path changed, an ``RFC-NNNN`` reference must resolve to
+    exactly one ratified RFC in the governance checkout. When ``--base`` is
+    given and exactly one commit lies in ``base..HEAD``, a reference in that
+    commit message is accepted as an alternative.
   * the governance repo must contain ``CONSTITUTION.md``.
 
 Exit codes: 0 = pass, 1 = fail.
@@ -20,6 +20,7 @@ Exit codes: 0 = pass, 1 = fail.
 from __future__ import annotations
 
 import argparse
+import glob
 import os
 import re
 import subprocess
@@ -37,6 +38,7 @@ PROTECTED_PREFIXES = (
 )
 
 RFC_RE = re.compile(r"RFC-\d{4}")
+STATUS_RE = re.compile(r"^[ \t]*-[ \t]*\*\*Status:\*\*[ \t]*([^\r\n]+?)[ \t]*$", re.MULTILINE)
 
 
 def _repo_root() -> str:
@@ -64,15 +66,36 @@ def _git(repo: str, *args: str) -> str:
         return ""
 
 
+def _git_required(repo: str, *args: str) -> str:
+    """A failed comparison must not be interpreted as an empty change set."""
+    try:
+        proc = subprocess.run(
+            ["git", "-C", repo, *args], capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError(f"git comparison failed: {exc}") from exc
+    if proc.returncode != 0:
+        raise RuntimeError(f"git comparison failed: {proc.stderr.strip()}")
+    return proc.stdout
+
+
 def _changed_vs_base(repo: str, base: str) -> list[str]:
     """Return repo-relative paths changed between ``base`` and the working tree."""
     paths: list[str] = []
-    tracked = _git(repo, "diff", "--name-only", "--no-ext-diff", base)
+    # Resolve a real commit first. Passing caller-supplied text directly to
+    # `git diff` would allow an option-looking base to change its behavior.
+    resolved = _git_required(
+        repo, "rev-parse", "--verify", "--end-of-options", f"{base}^{{commit}}"
+    ).strip()
+    if not re.fullmatch(r"[0-9a-f]{40,64}", resolved):
+        raise RuntimeError("base did not resolve to a commit")
+    tracked = _git_required(repo, "diff", "--name-only", "--no-ext-diff", resolved, "--")
     for line in tracked.splitlines():
         line = line.strip()
         if line:
             paths.append(line)
-    untracked = _git(repo, "ls-files", "--others", "--exclude-standard")
+    untracked = _git_required(repo, "ls-files", "--others", "--exclude-standard")
     for line in untracked.splitlines():
         line = line.strip()
         if line:
@@ -101,6 +124,22 @@ def _single_commit_message(repo: str, base: str) -> str:
     if count == "1":
         return _git(repo, "log", "-1", "--format=%B").strip()
     return ""
+
+
+def _ratified_rfc_error(rfcs: str, reference: str) -> str | None:
+    """Check status in governance; a well-shaped identifier alone is not approval."""
+    paths = sorted(glob.glob(os.path.join(rfcs, "rfc", f"{reference}-*.md")))
+    if len(paths) != 1:
+        return f"{reference} must resolve to exactly one RFC; found {len(paths)}"
+    try:
+        with open(paths[0], encoding="utf-8") as source:
+            content = source.read()
+    except (OSError, UnicodeError) as exc:
+        return f"cannot read {reference}: {exc}"
+    statuses = STATUS_RE.findall(content)
+    if len(statuses) != 1 or statuses[0].strip().casefold() != "ratified":
+        return f"{reference} is not explicitly ratified in the governance checkout"
+    return None
 
 
 def main() -> int:
@@ -146,14 +185,12 @@ def main() -> int:
         return 1
 
     if args.base:
-        changed = _changed_vs_base(repo, args.base)
-        if not changed and not _git(repo, "rev-parse", "--is-inside-work-tree").strip():
-            print(
-                "WARNING: git is unavailable; falling back to scanning the "
-                "whole repository.",
-                file=sys.stderr,
-            )
-            changed = _all_files(repo)
+        try:
+            changed = _changed_vs_base(repo, args.base)
+        except RuntimeError as exc:
+            print(f"ERROR: cannot compare against base {args.base!r}: {exc}",
+                  file=sys.stderr)
+            return 1
         source = f"changes vs {args.base}"
     else:
         changed = _all_files(repo)
@@ -171,7 +208,10 @@ def main() -> int:
         print(f"  - {path}")
 
     rfc_ref = None
-    if args.rfc and RFC_RE.search(args.rfc):
+    if args.rfc:
+        if not RFC_RE.fullmatch(args.rfc):
+            print("ERROR: --rfc must be an exact RFC-NNNN identifier", file=sys.stderr)
+            return 1
         rfc_ref = args.rfc
     if rfc_ref is None and args.base:
         message = _single_commit_message(repo, args.base)
@@ -182,12 +222,17 @@ def main() -> int:
     if rfc_ref is None:
         print(
             "ERROR: protected paths changed but no RFC reference supplied; "
-            "re-run with --rfc RFC-0000 (CONSTITUTION.md section 2).",
+            "re-run with a ratified --rfc RFC-NNNN (CONSTITUTION.md section 2).",
             file=sys.stderr,
         )
         return 1
 
-    print(f"constitution: PASS - change-control satisfied via {rfc_ref}")
+    error = _ratified_rfc_error(rfcs, rfc_ref)
+    if error:
+        print(f"ERROR: {error}", file=sys.stderr)
+        return 1
+
+    print(f"constitution: PASS - ratified RFC reference verified: {rfc_ref}")
     return 0
 
 
