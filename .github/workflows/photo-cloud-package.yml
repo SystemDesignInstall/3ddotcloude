@@ -1,0 +1,58 @@
+name: Photo Cloud Windows test package
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'python/research/photo_to_cloud/**'
+      - '.github/workflows/photo-cloud-package.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install build dependencies
+        run: python -m pip install -r python/research/photo_to_cloud/requirements.txt pyinstaller==6.22.3
+      - name: Build standalone application
+        shell: pwsh
+        run: |
+          python -m PyInstaller --noconfirm --clean --onedir --console --name SpatialPhotoCloud --collect-all pycolmap --collect-all PIL --paths python/research/photo_to_cloud python/research/photo_to_cloud/app.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Check application and window
+        shell: pwsh
+        run: |
+          & .\dist\SpatialPhotoCloud\SpatialPhotoCloud.exe --self-test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .\dist\SpatialPhotoCloud\SpatialPhotoCloud.exe --ui-smoke-test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Install verified external OpenMVS for testing
+        run: python python/research/photo_to_cloud/openmvs_install.py --destination "${{ runner.temp }}/openmvs-test"
+      - name: Generate synthetic images
+        run: python python/research/photo_to_cloud/generate_test_images.py "${{ runner.temp }}/photo-cloud-images"
+      - name: Run packaged cancellation and dense reconstruction
+        run: >-
+          python python/research/photo_to_cloud/test_packaged.py
+          --executable "${{ github.workspace }}/dist/SpatialPhotoCloud/SpatialPhotoCloud.exe"
+          --images "${{ runner.temp }}/photo-cloud-images"
+          --openmvs "${{ runner.temp }}/openmvs-test"
+          --output "${{ runner.temp }}/photo-cloud-test"
+      - name: Add user instructions
+        shell: pwsh
+        run: Copy-Item python/research/photo_to_cloud/WINDOWS-TEST.txt dist/SpatialPhotoCloud/README.txt
+      - name: Publish test artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SpatialPhotoCloud-Windows-test
+          path: dist/SpatialPhotoCloud/
+          if-no-files-found: error
+          retention-days: 14
