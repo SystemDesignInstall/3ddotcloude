@@ -10,4 +10,5 @@
 *.cpp text eol=lf
 *.cmake text eol=lf
 *.txt text eol=lf
+python/research/photo_to_cloud/start-windows.bat -text whitespace=cr-at-eol
 *.patch text eol=lf

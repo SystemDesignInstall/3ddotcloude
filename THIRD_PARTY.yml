@@ -84,6 +84,36 @@ dependencies:
     status: active
     notes: Canonical SfM backend behind a capability adapter (ADR-004). Integrated at C1-S4 (worker bridge + converter proves the chain end-to-end); launched as a subprocess, never linked (RFC-0008 §16).
     security_notes: null
+  - name: pycolmap
+    repository: https://github.com/colmap/colmap
+    version: 4.2.1
+    code_license: BSD-3-Clause
+    model_license: null
+    commercial_use: yes
+    redistribution: yes
+    status: planned
+    notes: Isolated research prototype only; the Python wheel and its bundled dependencies need a distribution review before product inclusion.
+    security_notes: null
+  - name: Pillow
+    repository: https://github.com/python-pillow/Pillow
+    version: ">=11.0,<13"
+    code_license: MIT-CMU
+    model_license: null
+    commercial_use: yes
+    redistribution: yes
+    status: planned
+    notes: Image validation in the isolated photo-cloud research prototype; not linked into the kernel.
+    security_notes: null
+  - name: NumPy
+    repository: https://github.com/numpy/numpy
+    version: dependency-of-pycolmap
+    code_license: BSD-3-Clause
+    model_license: null
+    commercial_use: yes
+    redistribution: yes
+    status: planned
+    notes: Transitive dependency of the isolated pycolmap research prototype; wheel-bundled components require distribution review.
+    security_notes: null
   - name: OpenMVS
     repository: https://github.com/cdcseacave/openMVS
     version: planned
