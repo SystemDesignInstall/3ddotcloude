@@ -53,7 +53,8 @@ def check_dense(executable: Path, images: Path, root: Path, openmvs: Path) -> No
         raise RuntimeError(f"dense worker failed with code {result.returncode}")
     report = json.loads((output / "report.json").read_text(encoding="utf-8"))
     if (report["status"] != "succeeded" or report["registered_images"] < 3 or report["point_count"] < 100
-            or not (output / "dense.ply").is_file() or not (output / "preview.html").is_file()):
+            or not (output / "dense.ply").is_file() or not (output / "preview.html").is_file()
+            or not (output / "full_viewer.html").is_file()):
         raise RuntimeError(f"invalid dense result: {report}")
     print(f"Packaged dense reconstruction: {report['registered_images']} cameras, "
           f"{report['point_count']} points, {report['preview_points']} preview points", flush=True)
