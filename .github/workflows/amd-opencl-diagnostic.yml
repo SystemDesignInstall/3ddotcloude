@@ -56,21 +56,21 @@ jobs:
       - name: Build standalone executable
         shell: pwsh
         run: |
-          python -m PyInstaller --noconfirm --clean --onefile --console --name AMD_OpenCL_Test --collect-all pyopencl --collect-all numpy python/research/photo_to_cloud/amd_opencl_diagnostic.py
+          python -m PyInstaller --noconfirm --clean --onefile --console --name AMD_OpenCL_Test_v2 --collect-all pyopencl --collect-all numpy python/research/photo_to_cloud/amd_opencl_diagnostic.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify packaged executable with CPU OpenCL
         shell: pwsh
         run: |
-          & .\dist\AMD_OpenCL_Test.exe --test-cpu --test-buffer --no-pause
+          & .\dist\AMD_OpenCL_Test_v2.exe --test-cpu --test-buffer --no-pause
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $report = Get-Content -Raw -Encoding UTF8 .\dist\AMD_OpenCL_Report.txt
+          $report = Get-Content -Raw -Encoding UTF8 .\dist\AMD_OpenCL_Report_v2.txt
           if ($report -notmatch 'тест буфера OpenCL пройден' -or $report -notmatch 'тест CPU') { throw 'CPU test report is invalid' }
       - name: Verify image compiler errors are reported
         shell: pwsh
         run: |
-          & .\dist\AMD_OpenCL_Test.exe --test-cpu --no-pause
+          & .\dist\AMD_OpenCL_Test_v2.exe --test-cpu --no-pause
           $code = $LASTEXITCODE
-          $report = Get-Content -Raw -Encoding UTF8 .\dist\AMD_OpenCL_Report.txt
+          $report = Get-Content -Raw -Encoding UTF8 .\dist\AMD_OpenCL_Report_v2.txt
           if ($code -eq 0 -and $report -notmatch 'тест изображений и вычисления OpenCL пройден') { throw 'Image success was not reported' }
           if ($code -eq 1 -and ($report -notmatch 'тест не пройден' -or $report -notmatch 'BUILD_PROGRAM_FAILURE')) { throw 'Unexpected image test error' }
           if ($code -ne 0 -and $code -ne 1) { throw "Unexpected image test exit code: $code" }
@@ -78,9 +78,9 @@ jobs:
       - name: Verify a CPU-only machine is not reported as an AMD GPU
         shell: pwsh
         run: |
-          & .\dist\AMD_OpenCL_Test.exe --no-pause
+          & .\dist\AMD_OpenCL_Test_v2.exe --no-pause
           if ($LASTEXITCODE -ne 1) { throw "Expected a missing GPU error, got $LASTEXITCODE" }
-          $report = Get-Content -Raw -Encoding UTF8 .\dist\AMD_OpenCL_Report.txt
+          $report = Get-Content -Raw -Encoding UTF8 .\dist\AMD_OpenCL_Report_v2.txt
           if ($report -notmatch 'устройство OpenCL не найдено') { throw 'Missing-GPU diagnostic is invalid' }
           exit 0
       - name: Add instructions
@@ -88,9 +88,9 @@ jobs:
         run: Copy-Item python/research/photo_to_cloud/AMD-CHECK-WINDOWS.txt dist/README.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: SpatialPhotoCloud-AMD-OpenCL-diagnostic
+          name: SpatialPhotoCloud-AMD-OpenCL-diagnostic-v2
           path: |
-            dist/AMD_OpenCL_Test.exe
+            dist/AMD_OpenCL_Test_v2.exe
             dist/README.txt
           if-no-files-found: error
           retention-days: 14

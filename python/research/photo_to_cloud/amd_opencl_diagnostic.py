@@ -18,7 +18,7 @@ __kernel void check_image(read_only image2d_t source, write_only image2d_t targe
 """
 
 
-def choose_device(cl, allow_cpu: bool = False):
+def find_devices(cl, allow_cpu: bool = False):
     devices = []
     for platform_index, platform in enumerate(cl.get_platforms()):
         try:
@@ -36,15 +36,22 @@ def choose_device(cl, allow_cpu: bool = False):
                 devices.append((platform_index, device_index, platform, device))
     if not devices:
         raise RuntimeError("Подходящее устройство OpenCL не найдено. Проверьте драйвер AMD.")
-    if not allow_cpu and len(devices) > 1:
-        preferred = [entry for entry in devices if "7900 xtx" in entry[3].name.lower()
-                     or "gfx1100" in entry[3].name.lower()]
-        if len(preferred) == 1:
-            devices = preferred
-        else:
-            names = ", ".join(entry[3].name.strip() for entry in devices)
-            raise RuntimeError(f"Обнаружено несколько GPU AMD: {names}. Нужен выбор устройства.")
-    return devices[0]
+    # A driver may expose the same device through more than one platform.
+    # They cannot safely be deduplicated using name alone: two physical cards
+    # can have the same name. Keep and test every platform/device pair.
+    return devices
+
+
+def is_target(device) -> bool:
+    name = device.name.casefold()
+    return "7900 xtx" in name or "gfx1100" in name
+
+
+def error_summary(exc: Exception) -> str:
+    # Compiler logs may contain user-profile paths: keep only the first line.
+    summary = str(exc).splitlines()[0] if str(exc) else type(exc).__name__
+    home = str(Path.home())
+    return summary.replace(home, "<профиль>").replace(home.replace("\\", "/"), "<профиль>")[:500]
 
 
 def verify_image_kernel(cl, np, device) -> None:
@@ -68,7 +75,7 @@ def verify_image_kernel(cl, np, device) -> None:
 
 
 def verify_buffer_kernel(cl, np, device) -> None:
-    """Exercise the packaged OpenCL runtime on CPU in CI, not for GPU diagnosis."""
+    """Check ordinary buffers independently of OpenCL image support."""
     context = cl.Context([device])
     queue = cl.CommandQueue(context, device)
     source = np.arange(32, dtype=np.float32)
@@ -83,6 +90,51 @@ def verify_buffer_kernel(cl, np, device) -> None:
         raise RuntimeError("Результат тестового вычисления не совпал с ожидаемым.")
 
 
+def diagnose_devices(cl, np, devices, allow_cpu: bool = False, buffer_only: bool = False):
+    """Test each OpenCL platform/device entry, even if names are repeated."""
+    lines = ["Режим: тест CPU (только для автоматической проверки)" if allow_cpu else "Режим: GPU AMD"]
+    target_exists = not allow_cpu and any(is_target(entry[3]) for entry in devices)
+    if target_exists:
+        lines.append("Найдено имя gfx1100 или RX 7900 XTX; это не уникальный идентификатор карты.")
+    elif not allow_cpu:
+        lines.append("Имя gfx1100 или RX 7900 XTX не найдено; проверяются все найденные GPU AMD.")
+    successes = []
+    for platform_id, device_id, platform, device in devices:
+        target = is_target(device) if not allow_cpu else False
+        lines.extend([
+            "",
+            f"Платформа/устройство: {platform_id}/{device_id}",
+            f"Платформа: {platform.name.strip()}",
+            f"Версия платформы: {platform.version.strip()}",
+            f"Устройство: {device.name.strip()}",
+            f"Производитель: {device.vendor.strip()}",
+            f"Драйвер: {device.driver_version.strip()}",
+            f"OpenCL: {device.version.strip()}",
+            f"Совпадение по имени с gfx1100/RX 7900 XTX: {'да' if target else 'нет'}",
+        ])
+        passed = True
+        tests = [("буфера", verify_buffer_kernel)]
+        if not buffer_only:
+            tests.append(("изображений и вычисления", verify_image_kernel))
+        for label, verify in tests:
+            try:
+                verify(cl, np, device)
+                lines.append(f"РЕЗУЛЬТАТ: тест {label} OpenCL пройден.")
+            except Exception as exc:
+                passed = False
+                lines.append(f"РЕЗУЛЬТАТ: тест не пройден ({label}): {error_summary(exc)}")
+        successes.append((target, passed))
+    relevant = [passed for target, passed in successes if target or not target_exists]
+    lines.append("")
+    if target_exists:
+        lines.append(f"Итого для gfx1100/RX 7900 XTX: успешно {sum(relevant)} из {len(relevant)} записей.")
+    else:
+        lines.append(f"Итого: успешно {sum(relevant)} из {len(relevant)} записей.")
+    lines.append("Повторяющиеся записи могут относиться к одной или к разным видеокартам.")
+    lines.append("Это тест драйвера, а не полноценная реконструкция фотографий.")
+    return lines, bool(any(relevant))
+
+
 def main() -> int:
     for stream in (sys.stdout, sys.stderr):
         if stream is not None and hasattr(stream, "reconfigure"):
@@ -94,41 +146,22 @@ def main() -> int:
     args = parser.parse_args()
     if args.test_buffer and not args.test_cpu:
         parser.error("--test-buffer is only available together with --test-cpu")
-    lines = ["Spatial Photo Cloud — проверка OpenCL", "Фотографии не используются, данные в сеть не отправляются."]
+    lines = ["Spatial Photo Cloud — проверка OpenCL v2", "Фотографии не используются, данные в сеть не отправляются."]
     code = 1
     try:
         import numpy as np
         import pyopencl as cl
-        platform_id, device_id, platform, device = choose_device(cl, args.test_cpu)
-        lines.extend([
-            "Режим: тест CPU (только для автоматической проверки)" if args.test_cpu else "Режим: GPU AMD",
-            f"Платформа: {platform.name.strip()}",
-            f"Устройство: {device.name.strip()}",
-            f"Производитель: {device.vendor.strip()}",
-            f"Драйвер: {device.driver_version.strip()}",
-            f"OpenCL: {device.version.strip()}",
-            f"Индекс платформы/устройства: {platform_id}/{device_id}",
-        ])
-        if args.test_buffer:
-            verify_buffer_kernel(cl, np, device)
-            lines.append("РЕЗУЛЬТАТ: тест буфера OpenCL пройден.")
-        else:
-            verify_image_kernel(cl, np, device)
-            lines.append("РЕЗУЛЬТАТ: тест изображений и вычисления OpenCL пройден.")
-        lines.append("Это тест драйвера, а не полноценная реконструкция фотографий.")
-        code = 0
+        devices = find_devices(cl, args.test_cpu)
+        device_lines, passed = diagnose_devices(cl, np, devices, args.test_cpu, args.test_buffer)
+        lines.extend(device_lines)
+        code = 0 if passed else 1
     except Exception as exc:
-        # OpenCL compiler logs can contain full user-profile paths. The first
-        # line retains the API error while avoiding those path-heavy details.
-        summary = str(exc).splitlines()[0] if str(exc) else type(exc).__name__
-        home = str(Path.home())
-        summary = summary.replace(home, "<профиль>").replace(home.replace("\\", "/"), "<профиль>")
-        lines.append(f"РЕЗУЛЬТАТ: тест не пройден: {summary[:500]}")
+        lines.append(f"РЕЗУЛЬТАТ: тест не пройден: {error_summary(exc)}")
     report = "\n".join(lines) + "\n"
     print(report, flush=True)
     directory = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path.cwd()
     try:
-        path = directory / "AMD_OpenCL_Report.txt"
+        path = directory / "AMD_OpenCL_Report_v2.txt"
         path.write_text(report, encoding="utf-8")
         print(f"Отчёт сохранён рядом с программой: {path.name}", flush=True)
     except OSError as exc:
