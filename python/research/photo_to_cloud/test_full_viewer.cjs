@@ -6,14 +6,14 @@ const assert = require('assert');
 const html = fs.readFileSync(path.join(__dirname, 'full_viewer.html'), 'utf8');
 const match = html.match(/<script id="parser-worker" type="text\/x-worker">([\s\S]*?)<\/script>/);
 assert(match, 'PLY worker missing');
-async function runWorker(buffer, factor) {
+async function runWorker(buffer, factor, options={}) {
   const messages = [];
   const context = {self: {postMessage: value => messages.push(value)}, TextDecoder, TextEncoder, Blob, Uint8Array,
                    Float32Array, Float64Array, DataView, Number, Math, Object, Error, String, Infinity};
   vm.createContext(context);
   vm.runInContext(match[1], context);
   const file = {arrayBuffer: async () => buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)};
-  await context.self.onmessage({data: factor === undefined ? file : {kind: 'export', file, factor}});
+  await context.self.onmessage({data: factor === undefined ? file : {kind: 'export', file, factor, ...options}});
   return messages[messages.length - 1];
 }
 const parse = buffer => runWorker(buffer);
@@ -58,5 +58,25 @@ function header(format, properties, count=2) {
   const integers = Buffer.from('ply\nformat ascii 1.0\nelement vertex 1\nproperty int x\nproperty int y\nproperty int z\nend_header\n1 2 3\n');
   result = await runWorker(integers, 2); assert.equal(result.type, 'error');
   result = await runWorker(binaryFile, Infinity); assert.equal(result.type, 'error');
-  console.log('Full viewer PLY parsing and metric export: PASS');
+  result = await runWorker(binaryFile, 1e100); assert.equal(result.type, 'error');
+  const normalProps = 'property float x\nproperty float y\nproperty float z\nproperty float nx\nproperty float ny\nproperty float nz\nproperty uchar red';
+  const normalData = Buffer.alloc(25);
+  [2,1,1,1,0,0].forEach((v,i)=>normalData.writeFloatLE(v,i*4));normalData[24]=123;
+  const withNormal = Buffer.concat([header('binary_little_endian', normalProps, 1),normalData,Buffer.from([42])]);
+  result = await runWorker(withNormal, 2, {angles:[0,0,Math.PI/2],center:[1,1,1],up:'y',metric:true});
+  assert.equal(result.type, 'exported');out=Buffer.from(await result.blob.arrayBuffer());off=out.indexOf('end_header\n')+'end_header\n'.length;
+  const approx=(actual,expected)=>assert(Math.abs(actual-expected)<1e-6,`${actual} != ${expected}`);
+  [2,4,2,0,1,0].forEach((v,i)=>approx(out.readFloatLE(off+i*4),v));assert.equal(out[off+24],123);assert.equal(out[out.length-1],42);
+  result = await runWorker(withNormal, 2, {angles:[0,0,Math.PI/2],center:[1,1,1],up:'z',metric:true});
+  assert.equal(result.type, 'exported');out=Buffer.from(await result.blob.arrayBuffer());off=out.indexOf('end_header\n')+'end_header\n'.length;
+  [2,-2,4,0,0,1].forEach((v,i)=>approx(out.readFloatLE(off+i*4),v));
+  const reopenedMetricZ=await parse(out);assert.equal(reopenedMetricZ.metric,true);assert.equal(reopenedMetricZ.up,'z');
+  result = await runWorker(withNormal, 1, {angles:[0,0,0],center:[0,0,0],up:'z',metric:false});
+  assert.equal(result.type, 'exported');out=Buffer.from(await result.blob.arrayBuffer());off=out.indexOf('end_header\n')+'end_header\n'.length;
+  [2,-1,1,1,0,0].forEach((v,i)=>approx(out.readFloatLE(off+i*4),v));assert(!out.subarray(0,off).includes('units meters'));
+  const reopenedZ=await parse(out);assert.equal(reopenedZ.metric,false);assert.equal(reopenedZ.up,'z');
+  result=await runWorker(out,1,{angles:[-Math.PI/2,0,0],center:[2,-1,1],up:'z',metric:false,inputUp:'z'});
+  assert.equal(result.type,'exported');out=Buffer.from(await result.blob.arrayBuffer());off=out.indexOf('end_header\n')+'end_header\n'.length;
+  [2,-1,1,1,0,0].forEach((v,i)=>approx(out.readFloatLE(off+i*4),v));
+  console.log('Full viewer PLY parsing, metric export and alignment: PASS');
 })().catch(error => { console.error(error); process.exit(1); });

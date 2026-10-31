@@ -18,6 +18,7 @@ main{flex:1;height:0;min-height:320px;position:relative}canvas{width:100%;height
 .hint{position:absolute;bottom:14px;left:16px;max-width:calc(100% - 32px);padding:8px 11px;background:#101923dc;border-radius:6px;color:var(--muted);pointer-events:none}
 .crosshair{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);color:#fff;text-shadow:0 1px 5px #000;font-size:25px;line-height:1;pointer-events:none}
 .calibration{width:100%;display:flex;flex-wrap:wrap;gap:9px 12px;align-items:center;padding:12px;background:#102330;border:1px solid #385166;border-radius:7px}.calibration p{width:100%;margin:0}.calibration label{display:flex;gap:6px;align-items:center}.calibration input,.calibration select{font:inherit;padding:6px;border-radius:5px;border:1px solid #567083;background:#101923;color:var(--ink)}.calibration input{width:105px}.calibration a{color:#9be6ff;font-weight:700}.marker{position:absolute;transform:translate(-50%,-50%);width:22px;height:22px;display:grid;place-items:center;background:#ffdc69;color:#14212a;border:2px solid #fff;border-radius:50%;font-size:12px;font-weight:800;pointer-events:none;box-shadow:0 1px 8px #000}
+.orientation{width:100%;display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;padding:12px;background:#102330;border:1px solid #385166;border-radius:7px}.orientation p{width:100%;margin:0}.orientation label{display:flex;gap:6px;align-items:center}.orientation input[type=range]{width:130px}.orientation select{font:inherit;padding:6px;border-radius:5px;border:1px solid #567083;background:#101923;color:var(--ink)}.orientation output{min-width:45px;font-variant-numeric:tabular-nums}.orientation button.small{padding:5px 8px}.orientation a{color:#9be6ff;font-weight:700}.grid{position:absolute;inset:0;pointer-events:none;background-image:linear-gradient(to right,#b7d9e32c 1px,transparent 1px),linear-gradient(to bottom,#b7d9e32c 1px,transparent 1px);background-size:10% 10%;background-position:center}
 @media(max-width:800px){main{min-height:55vh}.hint{font-size:12px}header{padding:12px}}
 </style>
 </head>
@@ -29,6 +30,7 @@ main{flex:1;height:0;min-height:320px;position:relative}canvas{width:100%;height
     <button class="secondary" id="orbit-mode" type="button" aria-pressed="true">Обзор</button>
     <button class="secondary" id="flight-mode" type="button" aria-pressed="false" disabled>Полёт</button>
     <button class="secondary" id="calibration-toggle" type="button" aria-expanded="false" disabled>Масштаб и измерение</button>
+    <button class="secondary" id="orientation-toggle" type="button" aria-expanded="false" disabled>Выровнять облако</button>
     <button class="secondary" id="reset" type="button">Сбросить вид</button>
     <label>Размер точек <input id="size" type="range" min="1" max="6" step="0.5" value="2"></label>
     <label>Яркость <input id="brightness" type="range" min="0.6" max="3" step="0.1" value="1.3"></label>
@@ -45,8 +47,19 @@ main{flex:1;height:0;min-height:320px;position:relative}canvas{width:100%;height
     <a id="download" hidden>Скачать PLY в метрах</a>
     <p>Выбирайте различимые точки на одном объекте. Для проверки измерьте ещё одно известное расстояние; реконструкция может содержать искажения. Если скачивание в окне чата заблокировано, скачайте этот HTML и откройте его в Edge или Chrome.</p>
   </div>
+  <div id="orientation" class="orientation" hidden>
+    <p>Поверните само облако по сетке. Для проверки используйте вид спереди и сверху.</p>
+    <label>Наклон X <input id="rotate-x" type="range" min="-180" max="180" step="0.1" value="0"><output id="angle-x">0°</output></label><button class="secondary small" type="button" data-axis="x" data-turn="-90">−90°</button><button class="secondary small" type="button" data-axis="x" data-turn="90">+90°</button>
+    <label>Поворот Y <input id="rotate-y" type="range" min="-180" max="180" step="0.1" value="0"><output id="angle-y">0°</output></label><button class="secondary small" type="button" data-axis="y" data-turn="-90">−90°</button><button class="secondary small" type="button" data-axis="y" data-turn="90">+90°</button>
+    <label>Наклон Z <input id="rotate-z" type="range" min="-180" max="180" step="0.1" value="0"><output id="angle-z">0°</output></label><button class="secondary small" type="button" data-axis="z" data-turn="-90">−90°</button><button class="secondary small" type="button" data-axis="z" data-turn="90">+90°</button>
+    <button class="secondary" id="front-view" type="button">Вид спереди</button><button class="secondary" id="top-view" type="button">Вид сверху</button><button class="secondary" id="reset-orientation" type="button">Сбросить поворот</button>
+    <label>Вертикальная ось в PLY <select id="up-axis"><option value="y">Y</option><option value="z">Z (для CAD)</option></select></label>
+    <button id="prepare-aligned" type="button">Подготовить PLY</button><a id="download-aligned" hidden>Скачать PLY</a>
+    <p>Сетка показывает направление экрана. Поворот и выбранная вертикальная ось будут записаны только в новую копию PLY.</p>
+  </div>
 </header>
 <main id="drop"><canvas id="view" tabindex="0" aria-label="Трёхмерное облако точек"></canvas>
+<div class="grid" id="alignment-grid" hidden aria-hidden="true"></div>
 <span class="crosshair" id="crosshair" hidden aria-hidden="true">+</span>
 <span class="marker" id="marker-a" hidden aria-hidden="true">A</span><span class="marker" id="marker-b" hidden aria-hidden="true">B</span>
 <div class="hint" id="hint">Левая кнопка мыши — вращение · Shift + мышь — перемещение · Колесо — масштаб</div></main>
@@ -59,9 +72,9 @@ function headerOf(buffer){
  if(!match)throw Error('Заголовок PLY не найден или неполный.');
  const end=match.index+match[0].length, endHeaderStart=match.index+(match[0].startsWith('\n')?1:0),lines=text.slice(0,end).split(/\r?\n/);
  if(lines[0].trim()!=='ply')throw Error('Выбранный файл не является PLY.');
- let format=null, current=null, found=false, count=0, props=[], before=false,metric=false;
+ let format=null, current=null, found=false, count=0, props=[], before=false,metric=false,up='y';
  for(const line of lines){
-  const w=line.trim().split(/\s+/);if(line.trim()==='comment SpatialPhotoCloud units meters')metric=true;if(w[0]==='format')format=w[1];
+  const w=line.trim().split(/\s+/);if(line.trim()==='comment SpatialPhotoCloud units meters')metric=true;if(line.trim()==='comment SpatialPhotoCloud up z')up='z';if(w[0]==='format')format=w[1];
   else if(w[0]==='element'){
    const n=Number(w[2]);if(!Number.isSafeInteger(n)||n<0)throw Error('Некорректное число элементов в PLY.');
    current=w[1];if(current==='vertex'){if(found)throw Error('В PLY несколько разделов vertex.');found=true;count=n;}
@@ -76,11 +89,18 @@ function headerOf(buffer){
  if(before)throw Error('В PLY есть данные перед точками; откройте файл через CloudCompare и сохраните как PLY.');
  if(!found||!count||!['x','y','z'].every(k=>props.some(p=>p.name===k&&!p.list)))throw Error('В файле не найдены координаты точек x, y, z.');
  if(!['ascii','binary_little_endian','binary_big_endian'].includes(format))throw Error('Неподдерживаемый формат PLY: '+format);
- return {end,endHeaderStart,format,count,props,metric};
+ return {end,endHeaderStart,format,count,props,metric,up};
 }
 function colorByte(value,type){if(!Number.isFinite(value))return 180;if((type==='float'||type==='float32'||type==='double'||type==='float64')&&value>=0&&value<=1)value*=255;else if((type==='ushort'||type==='uint16')&&value>255)value/=257;return Math.max(0,Math.min(255,Math.round(value)));}
+async function fileBytes(file){
+ if(file&&file.kind==='app-file'){
+  const url=new URL(file.url);if(url.origin!==self.location.origin||!['127.0.0.1','localhost','[::1]'].includes(url.hostname))throw Error('Недопустимый адрес локального облака.');
+  const response=await fetch(url.href,{cache:'no-store'});if(!response.ok)throw Error('Не удалось прочитать облако из приложения.');return response.arrayBuffer();
+ }
+ return file.arrayBuffer();
+}
 async function parse(file){
- self.postMessage({type:'progress',text:'Чтение файла…'});const buffer=await file.arrayBuffer(),h=headerOf(buffer),dv=new DataView(buffer),bytes=new Uint8Array(buffer),le=h.format!=='binary_big_endian';
+ self.postMessage({type:'progress',text:'Чтение файла…'});const buffer=await fileBytes(file),h=headerOf(buffer),dv=new DataView(buffer),bytes=new Uint8Array(buffer),le=h.format!=='binary_big_endian';
  const propIndex=Object.fromEntries(h.props.map((p,i)=>[p.name,i]));
  const select=(...names)=>names.map(n=>propIndex[n]).find(i=>i!==undefined);
  const xi=select('x'),yi=select('y'),zi=select('z'),ri=select('red','r','diffuse_red'),gi=select('green','g','diffuse_green'),bi=select('blue','b','diffuse_blue');
@@ -118,56 +138,77 @@ async function parse(file){
  for(let i=0;i<valid;i++){for(let k=0;k<3;k++)positions[3*i+k]=(coordinates[3*i+k]-center[k])/scale;}
  const colorOut=valid===h.count?colors:colors.slice(0,valid*3);
  const extents=max.map((v,k)=>(v-min[k])/(2*scale));
- self.postMessage({type:'done',total:h.count,valid,extents,scale,metric:h.metric,positions:positions.buffer,colors:colorOut.buffer},[positions.buffer,colorOut.buffer]);
+ self.postMessage({type:'done',total:h.count,valid,extents,scale,center,metric:h.metric,up:h.up,positions:positions.buffer,colors:colorOut.buffer},[positions.buffer,colorOut.buffer]);
 }
-async function exportScaled(file,factor){
- if(!Number.isFinite(factor)||factor<=0)throw Error('Некорректный масштаб.');
- self.postMessage({type:'progress',text:'Подготовка PLY в метрах: чтение файла…'});
- const buffer=await file.arrayBuffer(),h=headerOf(buffer),bytes=new Uint8Array(buffer),dv=new DataView(buffer),le=h.format!=='binary_big_endian';
- const headerParts=h.metric?[bytes.subarray(0,h.end)]:[bytes.subarray(0,h.endHeaderStart),new TextEncoder().encode('comment SpatialPhotoCloud units meters\n'),bytes.subarray(h.endHeaderStart,h.end)];
- const xyz=new Set(['x','y','z']),floatTypes=new Set(['float','float32','double','float64']);
- if(h.props.some(p=>xyz.has(p.name)&&!p.list&&!floatTypes.has(p.type)))throw Error('Экспорт в метрах поддерживает PLY с координатами float или double. Исходный файл не изменён.');
- const convert=(value,type)=>{if(!Number.isFinite(value))return value;const out=value*factor,isFloat=type==='float'||type==='float32',rounded=isFloat?Math.fround(out):out;if(!Number.isFinite(rounded)||(value!==0&&rounded===0))throw Error('Масштаб выходит за диапазон точности координат PLY.');return out;};
+async function exportScaled(file,factor,angles=[0,0,0],center=[0,0,0],up='y',metric=true,inputUp='y'){
+ if(!Number.isFinite(factor)||factor<=0||angles.length!==3||center.length!==3||![...angles,...center].every(Number.isFinite)||!['y','z'].includes(up)||!['y','z'].includes(inputUp))throw Error('Некорректное преобразование облака.');
+ self.postMessage({type:'progress',text:'Подготовка PLY: чтение файла…'});
+ const buffer=await fileBytes(file),h=headerOf(buffer),bytes=new Uint8Array(buffer),dv=new DataView(buffer),le=h.format!=='binary_big_endian';
+ const headerParts=[],headerDecoder=new TextDecoder('latin1'),headerEncoder=new TextEncoder();let lineStart=0;
+ while(lineStart<h.endHeaderStart){const lineEnd=bytes.indexOf(10,lineStart);if(lineEnd<0||lineEnd>=h.endHeaderStart)break;const line=headerDecoder.decode(bytes.subarray(lineStart,lineEnd)).trim();if(line!=='comment SpatialPhotoCloud units meters'&&!/^comment SpatialPhotoCloud up [yz]$/.test(line))headerParts.push(bytes.subarray(lineStart,lineEnd+1));lineStart=lineEnd+1;}
+ if(metric)headerParts.push(headerEncoder.encode('comment SpatialPhotoCloud units meters\n'));headerParts.push(headerEncoder.encode('comment SpatialPhotoCloud up '+up+'\n'),bytes.subarray(h.endHeaderStart,h.end));
+ const floatTypes=new Set(['float','float32','double','float64']),xyz=['x','y','z'],normal=['nx','ny','nz'],properties=Object.fromEntries(h.props.filter(p=>!p.list).map(p=>[p.name,p]));
+ if(xyz.some(k=>!properties[k]||!floatTypes.has(properties[k].type)))throw Error('Экспорт поддерживает PLY с координатами float или double. Исходный файл не изменён.');
+ const rotating=angles.some(v=>v!==0)||up==='z',normalCount=normal.filter(k=>properties[k]).length;
+ if(rotating&&normalCount&&normalCount!==3)throw Error('В PLY неполный набор нормалей; безопасно повернуть его нельзя.');
+ if(rotating&&normalCount&&normal.some(k=>!floatTypes.has(properties[k].type)))throw Error('Для поворота нормали PLY должны иметь тип float или double.');
+ const check=(v,type)=>{const rounded=type==='float'||type==='float32'?Math.fround(v):v;if(!Number.isFinite(rounded)||(v!==0&&rounded===0))throw Error('Преобразование выходит за диапазон точности координат PLY.');return v;};
+ const [sx,sy,sz]=angles.map(Math.sin),[cx,cy,cz]=angles.map(Math.cos);
+ function rotate(v){let [x,y,z]=v;[y,z]=[cx*y-sx*z,sx*y+cx*z];[x,z]=[cy*x+sy*z,-sy*x+cy*z];[x,y]=[cz*x-sz*y,sz*x+cz*y];return up==='z'?[x,-z,y]:[x,y,z];}
+ let origin=center.slice();if(inputUp==='z')origin=[origin[0],origin[2],-origin[1]];if(up==='z')origin=[origin[0],-origin[2],origin[1]];
+ function point(v){if(!v.every(Number.isFinite))return null;const rel=rotate(v.map((x,i)=>x-center[i]));return rel.map((x,i)=>(x+origin[i])*factor);}
+ function norm(v){return v.every(Number.isFinite)?rotate(v):null;}
  const notifyEvery=Math.max(10000,Math.floor(h.count/80));let pos=h.end;
  if(h.format==='ascii'){
   const parts=[...headerParts],decoder=new TextDecoder('utf-8'),encoder=new TextEncoder();let block=[];
   for(let i=0;i<h.count;i++){
    if(pos>=bytes.length)throw Error('Файл PLY обрезан в данных точек.');let end=bytes.indexOf(10,pos);if(end<0)end=bytes.length;
-   const fields=decoder.decode(bytes.subarray(pos,end)).trim().split(/\s+/);pos=Math.min(end+1,bytes.length);let f=0;
-   for(const p of h.props){if(p.list){const n=Number(fields[f++]);if(!Number.isSafeInteger(n)||n<0||f+n>fields.length)throw Error('Некорректный список в PLY.');f+=n;}else{if(f>=fields.length)throw Error('Файл PLY обрезан в данных точек.');if(xyz.has(p.name)){const v=Number(fields[f]);if(Number.isFinite(v))fields[f]=String(convert(v,p.type));}f++;}}
+   const fields=decoder.decode(bytes.subarray(pos,end)).trim().split(/\s+/);pos=Math.min(end+1,bytes.length);let f=0,offsets=Object.create(null);
+   for(const p of h.props){if(p.list){const n=Number(fields[f++]);if(!Number.isSafeInteger(n)||n<0||f+n>fields.length)throw Error('Некорректный список в PLY.');f+=n;}else{if(f>=fields.length)throw Error('Файл PLY обрезан в данных точек.');offsets[p.name]=f++;}}
+   function transform(keys,fn){const out=fn(keys.map(k=>Number(fields[offsets[k]])));if(out)keys.forEach((k,j)=>{fields[offsets[k]]=String(check(out[j],properties[k].type));});}
+   transform(xyz,point);if(rotating&&normalCount===3)transform(normal,norm);
    block.push(fields.join(' ')+'\n');if(block.length===10000){parts.push(encoder.encode(block.join('')));block=[];}
-   if(i%notifyEvery===0)self.postMessage({type:'progress',text:'Подготовка PLY в метрах: '+Math.floor(i/h.count*100)+'%'});
+   if(i%notifyEvery===0)self.postMessage({type:'progress',text:'Подготовка PLY: '+Math.floor(i/h.count*100)+'%'});
   }
   if(block.length)parts.push(encoder.encode(block.join('')));parts.push(bytes.subarray(pos));
   self.postMessage({type:'exported',blob:new Blob(parts,{type:'application/octet-stream'})});
  }else{
   function read(offset,type){const t=types[type];if(offset<0||offset+t[0]>dv.byteLength)throw Error('Файл PLY обрезан в данных точек.');return dv[t[1]](offset,le);}
-  function write(offset,type,value){dv[type==='float'||type==='float32'?'setFloat32':'setFloat64'](offset,value,le);}
+  function write(offset,type,value){dv[type==='float'||type==='float32'?'setFloat32':'setFloat64'](offset,check(value,type),le);}
+  let fixed=null,stride=0;if(!h.props.some(p=>p.list)){fixed=Object.create(null);for(const p of h.props){fixed[p.name]=stride;stride+=types[p.type][0];}if(pos+h.count*stride>dv.byteLength)throw Error('Файл PLY обрезан в данных точек.');}
   for(let i=0;i<h.count;i++){
-   for(const p of h.props){if(p.list){const n=read(pos,p.countType);pos+=types[p.countType][0];const length=n*types[p.type][0];if(!Number.isSafeInteger(n)||n<0||pos+length>dv.byteLength)throw Error('Некорректный список в PLY.');pos+=length;}else{const value=read(pos,p.type);if(xyz.has(p.name))write(pos,p.type,convert(value,p.type));pos+=types[p.type][0];}}
-   if(i%notifyEvery===0)self.postMessage({type:'progress',text:'Подготовка PLY в метрах: '+Math.floor(i/h.count*100)+'%'});
+   let offsets=fixed,base=pos;
+   if(fixed)pos+=stride;else{offsets=Object.create(null);base=0;for(const p of h.props){if(p.list){const n=read(pos,p.countType);pos+=types[p.countType][0];const length=n*types[p.type][0];if(!Number.isSafeInteger(n)||n<0||pos+length>dv.byteLength)throw Error('Некорректный список в PLY.');pos+=length;}else{offsets[p.name]=pos;read(pos,p.type);pos+=types[p.type][0];}}}
+   function transform(keys,fn){const out=fn(keys.map(k=>read(base+offsets[k],properties[k].type)));if(out)keys.forEach((k,j)=>write(base+offsets[k],properties[k].type,out[j]));}
+   transform(xyz,point);if(rotating&&normalCount===3)transform(normal,norm);
+   if(i%notifyEvery===0)self.postMessage({type:'progress',text:'Подготовка PLY: '+Math.floor(i/h.count*100)+'%'});
   }
   self.postMessage({type:'exported',blob:new Blob([...headerParts,bytes.subarray(h.end)],{type:'application/octet-stream'})});
  }
 }
-self.onmessage=async e=>{try{if(e.data&&e.data.kind==='export')await exportScaled(e.data.file,e.data.factor);else await parse(e.data);}catch(error){self.postMessage({type:'error',text:error&&error.message?error.message:String(error)});}};
+self.onmessage=async e=>{try{if(e.data&&e.data.kind==='export')await exportScaled(e.data.file,e.data.factor,e.data.angles,e.data.center,e.data.up,e.data.metric,e.data.inputUp);else await parse(e.data);}catch(error){self.postMessage({type:'error',text:error&&error.message?error.message:String(error)});}};
 </script>
 <script>
 'use strict';
 const canvas=document.getElementById('view'),status=document.getElementById('status'),fileInput=document.getElementById('file'),sizeInput=document.getElementById('size'),brightness=document.getElementById('brightness');
 const orbitButton=document.getElementById('orbit-mode'),flightButton=document.getElementById('flight-mode'),speed=document.getElementById('speed'),speedControl=document.getElementById('speed-control'),hint=document.getElementById('hint'),crosshair=document.getElementById('crosshair');
 const calibrationToggle=document.getElementById('calibration-toggle'),calibration=document.getElementById('calibration'),calibrationStatus=document.getElementById('calibration-status'),choosePoints=document.getElementById('choose-points'),knownDistance=document.getElementById('known-distance'),units=document.getElementById('units'),applyCalibration=document.getElementById('apply-calibration'),prepareExport=document.getElementById('prepare-export'),download=document.getElementById('download'),markers=[document.getElementById('marker-a'),document.getElementById('marker-b')];
+const orientationToggle=document.getElementById('orientation-toggle'),orientation=document.getElementById('orientation'),alignmentGrid=document.getElementById('alignment-grid'),rotations=['x','y','z'].map(a=>document.getElementById('rotate-'+a)),angleLabels=['x','y','z'].map(a=>document.getElementById('angle-'+a)),upAxis=document.getElementById('up-axis'),prepareAligned=document.getElementById('prepare-aligned'),downloadAligned=document.getElementById('download-aligned');
 const gl=canvas.getContext('webgl',{antialias:false,alpha:false,depth:true,preserveDrawingBuffer:false});
 let program=null,posBuffer=null,colBuffer=null,count=0,extents=[.5,.5,.5],yaw=.35,pitch=-.2,zoom=1,panX=0,panY=0,drag=null,worker=null,frame=0;
 let mode='orbit',eye=[0,0,-1],savedOrbit=null,lastMoveTime=null;
-let pointPositions=null,sourceScale=1,loadedFile=null,metricFactor=null,selectedPoints=[],pickBuffer=null,pickFramebuffer=null,pickTexture=null,pickDepth=null,pickWidth=0,pickHeight=0,exportWorker=null,downloadUrl=null;
+let pointPositions=null,sourceScale=1,sourceCenter=[0,0,0],sourceUp='y',loadedFile=null,metricFactor=null,selectedPoints=[],pickBuffer=null,pickFramebuffer=null,pickTexture=null,pickDepth=null,pickWidth=0,pickHeight=0,exportWorker=null,downloadUrl=null;
 const heldKeys=new Set();
 function statusText(text,kind=''){status.textContent=text;status.className='status '+kind;}
 function shader(type,source){const sh=gl.createShader(type);gl.shaderSource(sh,source);gl.compileShader(sh);if(!gl.getShaderParameter(sh,gl.COMPILE_STATUS))throw Error('Ошибка WebGL: '+gl.getShaderInfoLog(sh));return sh;}
 function initialize(){
  if(!gl)throw Error('WebGL недоступен в браузере. Попробуйте Microsoft Edge или Google Chrome.');
- const vs=shader(gl.VERTEX_SHADER,`attribute vec3 pos;attribute vec4 col;uniform float yaw,pitch,zoom,aspect,size,bright,flight,picking;uniform vec2 pan;uniform vec3 eye;varying vec4 color;
- void main(){float cy=cos(yaw),sy=sin(yaw),cp=cos(pitch),sp=sin(pitch);vec3 p=flight>0.5?pos-eye:pos;
+ const vs=shader(gl.VERTEX_SHADER,`attribute vec3 pos;attribute vec4 col;uniform float yaw,pitch,zoom,aspect,size,bright,flight,picking;uniform vec2 pan;uniform vec3 eye,rotationCos,rotationSin;varying vec4 color;
+ void main(){float cy=cos(yaw),sy=sin(yaw),cp=cos(pitch),sp=sin(pitch);vec3 p=pos;
+ p.yz=vec2(rotationCos.x*p.y-rotationSin.x*p.z,rotationSin.x*p.y+rotationCos.x*p.z);
+ p.xz=vec2(rotationCos.y*p.x+rotationSin.y*p.z,-rotationSin.y*p.x+rotationCos.y*p.z);
+ p.xy=vec2(rotationCos.z*p.x-rotationSin.z*p.y,rotationSin.z*p.x+rotationCos.z*p.y);
+ if(flight>0.5)p-=eye;
  float x=cy*p.x-sy*p.z;float z=sy*p.x+cy*p.z;float y=cp*p.y-sp*z;float depth=sp*p.y+cp*z;
  if(flight>0.5){float f=1.428148;float nearPlane=0.002;float farPlane=100.0;float A=(farPlane+nearPlane)/(farPlane-nearPlane);float B=-2.0*farPlane*nearPlane/(farPlane-nearPlane);gl_Position=vec4(-x*f/aspect,y*f,A*depth+B,depth);}
  else{vec2 ratio=aspect>=1.0?vec2(1.0/aspect,1.0):vec2(1.0,aspect);gl_Position=vec4(vec2(-x,y)*ratio*zoom+pan,depth*0.8,1.0);}
@@ -192,16 +233,19 @@ function renderPoints(picking=false,widePick=false){const {d,w,h}=resizeCanvas()
  gl.useProgram(program);gl.bindBuffer(gl.ARRAY_BUFFER,posBuffer);let a=gl.getAttribLocation(program,'pos');gl.enableVertexAttribArray(a);gl.vertexAttribPointer(a,3,gl.FLOAT,false,0,0);
  gl.bindBuffer(gl.ARRAY_BUFFER,picking?pickBuffer:colBuffer);a=gl.getAttribLocation(program,'col');gl.enableVertexAttribArray(a);gl.vertexAttribPointer(a,picking?4:3,gl.UNSIGNED_BYTE,true,0,0);
  for(const [n,v] of [['yaw',yaw],['pitch',pitch],['zoom',zoom],['aspect',w/h],['size',(widePick?Math.max(9,Number(sizeInput.value)):Number(sizeInput.value))*d],['bright',Number(brightness.value)],['flight',mode==='flight'?1:0],['picking',picking?1:0]])gl.uniform1f(gl.getUniformLocation(program,n),v);
+ const angles=rotationAngles(),c=angles.map(Math.cos),s=angles.map(Math.sin);gl.uniform3f(gl.getUniformLocation(program,'rotationCos'),...c);gl.uniform3f(gl.getUniformLocation(program,'rotationSin'),...s);
  gl.uniform2f(gl.getUniformLocation(program,'pan'),panX,panY);gl.uniform3f(gl.getUniformLocation(program,'eye'),eye[0],eye[1],eye[2]);gl.drawArrays(gl.POINTS,0,count);
 }
 function draw(time=0){frame=0;if(!gl||!program)return;const moving=updateFlight(time),{w,h}=resizeCanvas();gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.viewport(0,0,w,h);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);if(count)renderPoints();updateMarkers();if(moving)refresh();
 }
 function refresh(){if(!frame)frame=requestAnimationFrame(draw)}
+function rotationAngles(){return rotations.map(input=>Number(input.value)*Math.PI/180);}
+function rotatePoint(v){const [sx,sy,sz]=rotationAngles().map(Math.sin),[cx,cy,cz]=rotationAngles().map(Math.cos);let [x,y,z]=v;[y,z]=[cx*y-sx*z,sx*y+cx*z];[x,z]=[cy*x+sy*z,-sy*x+cy*z];return [cz*x-sz*y,sz*x+cz*y,z];}
 function updateMarkers(){
  const w=canvas.clientWidth,h=canvas.clientHeight,aspect=w/Math.max(1,h),cy=Math.cos(yaw),sy=Math.sin(yaw),cp=Math.cos(pitch),sp=Math.sin(pitch);
  markers.forEach((marker,i)=>{
   if(calibration.hidden||!selectedPoints[i]||mode!=='orbit'){marker.hidden=true;return;}
-  const [px,py,pz]=selectedPoints[i],x=cy*px-sy*pz,z=sy*px+cy*pz,y=cp*py-sp*z;
+  const [px,py,pz]=rotatePoint(selectedPoints[i]),x=cy*px-sy*pz,z=sy*px+cy*pz,y=cp*py-sp*z;
   const sx=-x*(aspect>=1?1/aspect:1)*zoom+panX,syScreen=y*(aspect>=1?1:aspect)*zoom+panY;
   marker.hidden=!Number.isFinite(sx)||!Number.isFinite(syScreen)||Math.abs(sx)>1||Math.abs(syScreen)>1;
   if(!marker.hidden){marker.style.left=((sx+1)*w/2)+'px';marker.style.top=((1-syScreen)*h/2)+'px';}
@@ -243,7 +287,7 @@ function selectPoint(clientX,clientY){
 function selectedDistance(){return selectedPoints.length===2?Math.hypot(...selectedPoints[0].map((v,i)=>v-selectedPoints[1][i]))*sourceScale:0;}
 function updateCalibration(){
  const n=selectedPoints.length,distance=selectedDistance(),f=n=>new Intl.NumberFormat('ru-RU',{maximumSignificantDigits:7}).format(n);
- applyCalibration.disabled=n!==2||!Number.isFinite(distance)||distance<=0;prepareExport.disabled=metricFactor===null||!!exportWorker;
+ applyCalibration.disabled=n!==2||!Number.isFinite(distance)||distance<=0;prepareExport.disabled=metricFactor===null||!!exportWorker;prepareAligned.disabled=!!exportWorker;
  const prefix=metricFactor===null?'Масштаб пока не задан. ':'Масштаб задан. ';
  if(n===0)calibrationStatus.textContent=prefix+'Выберите две точки на облаке.';
  else if(n===1)calibrationStatus.textContent=prefix+'Точка A выбрана. Выберите точку B.';
@@ -251,11 +295,14 @@ function updateCalibration(){
  else if(metricFactor===null)calibrationStatus.textContent='Точки A и B выбраны. Введите известное расстояние и нажмите «Применить масштаб».';
  else calibrationStatus.textContent='Расстояние A–B: '+f(distance*metricFactor)+' м. Можно выбрать другие точки для проверки или задать новый масштаб.';
 }
-function clearDownload(){if(downloadUrl)URL.revokeObjectURL(downloadUrl);downloadUrl=null;download.hidden=true;download.removeAttribute('href');}
+function clearDownload(){if(downloadUrl)URL.revokeObjectURL(downloadUrl);downloadUrl=null;for(const link of [download,downloadAligned]){link.hidden=true;link.removeAttribute('href');}}
 function cancelExport(){if(exportWorker)exportWorker.terminate();exportWorker=null;clearDownload();}
 function setCalibrationOpen(open){
- if(open)orbitMode();calibration.hidden=!open;calibrationToggle.setAttribute('aria-expanded',String(open));updateCalibration();refresh();
+ if(open){orbitMode();setOrientationOpen(false);}calibration.hidden=!open;calibrationToggle.setAttribute('aria-expanded',String(open));updateCalibration();refresh();
 }
+function setOrientationOpen(open){if(open){orbitMode();calibration.hidden=true;calibrationToggle.setAttribute('aria-expanded','false');}orientation.hidden=!open;alignmentGrid.hidden=!open;orientationToggle.setAttribute('aria-expanded',String(open));refresh();}
+function updateRotation(){angleLabels.forEach((out,i)=>out.textContent=rotations[i].value+'°');cancelExport();updateCalibration();refresh();}
+function initialOrientation(){rotations.forEach((input,i)=>input.value=(i===0&&sourceUp==='z')?'-90':'0');upAxis.value=sourceUp;updateRotation();}
 function applyScale(){
  const distance=selectedDistance(),known=Number(knownDistance.value.trim().replace(',','.'))*Number(units.value),factor=known/distance;
  if(!knownDistance.value||!Number.isFinite(known)||known<=0||!Number.isFinite(distance)||distance<=0||!Number.isFinite(factor)||factor<=0){calibrationStatus.textContent='Введите положительное расстояние и выберите две разные точки.';return;}
@@ -263,11 +310,12 @@ function applyScale(){
 }
 function makeWorker(){const code=document.getElementById('parser-worker').textContent,url=URL.createObjectURL(new Blob([code],{type:'text/javascript'})),instance=new Worker(url);URL.revokeObjectURL(url);return instance;}
 function startExport(){
- if(!loadedFile||metricFactor===null||exportWorker)return;clearDownload();const active=makeWorker();exportWorker=active;updateCalibration();
+ if(!loadedFile||exportWorker)return;clearDownload();const active=makeWorker(),isMetric=metricFactor!==null,angles=rotationAngles(),up=upAxis.value;exportWorker=active;updateCalibration();
  active.onmessage=e=>{if(exportWorker!==active)return;const r=e.data;if(r.type==='progress')statusText(r.text);else if(r.type==='error'){active.terminate();exportWorker=null;updateCalibration();statusText(r.text,'error');}else if(r.type==='exported'){
-  active.terminate();exportWorker=null;downloadUrl=URL.createObjectURL(r.blob);download.href=downloadUrl;download.download=loadedFile.name.replace(/\.ply$/i,'')+'_meters.ply';download.hidden=false;updateCalibration();statusText('PLY в метрах готов. Нажмите «Скачать PLY в метрах».','good');
+  active.terminate();exportWorker=null;downloadUrl=URL.createObjectURL(r.blob);const aligned=angles.some(v=>v!==0)||up==='z',suffix=isMetric?(aligned?'_aligned_meters':'_meters'):'_aligned';
+  for(const link of [download,downloadAligned]){link.href=downloadUrl;link.download=loadedFile.name.replace(/\.ply$/i,'')+suffix+'.ply';link.hidden=false;}updateCalibration();statusText(isMetric?'PLY в метрах готов. Нажмите «Скачать PLY».':'Выровненный PLY готов в исходных единицах. Нажмите «Скачать PLY».','good');
  }};
- active.onerror=e=>{if(exportWorker!==active)return;active.terminate();exportWorker=null;updateCalibration();statusText('Ошибка подготовки PLY: '+e.message,'error');};active.postMessage({kind:'export',file:loadedFile,factor:metricFactor});
+ active.onerror=e=>{if(exportWorker!==active)return;active.terminate();exportWorker=null;updateCalibration();statusText('Ошибка подготовки PLY: '+e.message,'error');};active.postMessage({kind:'export',file:loadedFile,factor:metricFactor??1,metric:isMetric,angles,center:sourceCenter,up,inputUp:sourceUp});
 }
 function showMode(){
  orbitButton.setAttribute('aria-pressed',String(mode==='orbit'));flightButton.setAttribute('aria-pressed',String(mode==='flight'));
@@ -297,6 +345,7 @@ function grabMouse(){
 function flightMode(){
  if(!count||mode==='flight')return;
  if(!calibration.hidden)setCalibrationOpen(false);
+ if(!orientation.hidden)setOrientationOpen(false);
  savedOrbit={yaw,pitch,zoom,panX,panY};normalizeFlightPitch();
  const aspect=Math.max(1,canvas.clientWidth)/Math.max(1,canvas.clientHeight),rx=aspect>=1?1/aspect:1,ry=aspect>=1?1:aspect;
  const tx=panX/(rx*zoom),ty=-panY/(ry*zoom),cy=Math.cos(yaw),sy=Math.sin(yaw),cp=Math.cos(pitch),sp=Math.sin(pitch);
@@ -305,19 +354,20 @@ function flightMode(){
  eye=target.map((v,i)=>v-forward[i]*distance);mode='flight';heldKeys.clear();lastMoveTime=null;drag=null;
  showMode();canvas.focus({preventScroll:true});grabMouse();refresh();
 }
-function resetView(){
- orbitMode(false);
- yaw=.35;pitch=-.2;panX=0;panY=0;const [ex,ey,ez]=extents,cy=Math.cos(yaw),sy=Math.sin(yaw),cp=Math.cos(pitch),sp=Math.sin(pitch),aspect=Math.max(1,canvas.clientWidth)/Math.max(1,canvas.clientHeight);
- const x=Math.abs(cy)*ex+Math.abs(sy)*ez,y=Math.abs(cp)*ey+Math.abs(sp*sy)*ex+Math.abs(sp*cy)*ez;
+function fitView(){
+ const [ex,ey,ez]=extents,cy=Math.cos(yaw),sy=Math.sin(yaw),cp=Math.cos(pitch),sp=Math.sin(pitch),aspect=Math.max(1,canvas.clientWidth)/Math.max(1,canvas.clientHeight);let x=0,y=0;
+ for(const dx of [-ex,ex])for(const dy of [-ey,ey])for(const dz of [-ez,ez]){const [px,py,pz]=rotatePoint([dx,dy,dz]),z=sy*px+cy*pz;x=Math.max(x,Math.abs(cy*px-sy*pz));y=Math.max(y,Math.abs(cp*py-sp*z));}
  zoom=Math.min(100,.88/Math.max(1e-9,x*(aspect>=1?1/aspect:1)),.88/Math.max(1e-9,y*(aspect>=1?1:aspect)));refresh();
 }
+function fixedView(top=false){orbitMode();yaw=0;pitch=top?-Math.PI/2:0;panX=0;panY=0;fitView();}
+function resetView(){orbitMode(false);yaw=.35;pitch=-.2;panX=0;panY=0;fitView();}
 function load(file){
  if(!program)return;if(!file||!file.name.toLowerCase().endsWith('.ply')){statusText('Выберите файл с расширением .ply.','error');return;}
- if(worker)worker.terminate();cancelExport();orbitMode(false);disposePicking();count=0;pointPositions=null;loadedFile=null;sourceScale=1;metricFactor=null;selectedPoints=[];knownDistance.value='';setCalibrationOpen(false);flightButton.disabled=true;calibrationToggle.disabled=true;refresh();statusText('Подготовка файла: '+file.name+'…');
+ if(worker)worker.terminate();cancelExport();orbitMode(false);disposePicking();count=0;pointPositions=null;loadedFile=null;sourceScale=1;sourceCenter=[0,0,0];sourceUp='y';metricFactor=null;selectedPoints=[];knownDistance.value='';setCalibrationOpen(false);setOrientationOpen(false);initialOrientation();flightButton.disabled=true;calibrationToggle.disabled=true;orientationToggle.disabled=true;refresh();statusText('Подготовка файла: '+file.name+'…');
  const activeWorker=makeWorker();worker=activeWorker;
  activeWorker.onmessage=e=>{if(worker!==activeWorker)return;const r=e.data;if(r.type==='progress')statusText(r.text);else if(r.type==='error'){statusText(r.text,'error');activeWorker.terminate();worker=null;}else if(r.type==='done'){
   try{pointPositions=new Float32Array(r.positions);gl.bindBuffer(gl.ARRAY_BUFFER,posBuffer);gl.bufferData(gl.ARRAY_BUFFER,pointPositions,gl.STATIC_DRAW);gl.bindBuffer(gl.ARRAY_BUFFER,colBuffer);gl.bufferData(gl.ARRAY_BUFFER,new Uint8Array(r.colors),gl.STATIC_DRAW);const error=gl.getError();if(error!==gl.NO_ERROR)throw Error('Не удалось загрузить точки в WebGL (код '+error+').');
-   count=r.valid;extents=r.extents;sourceScale=r.scale;metricFactor=r.metric?1:null;loadedFile=file;flightButton.disabled=false;calibrationToggle.disabled=false;resetView();const f=n=>new Intl.NumberFormat('ru-RU').format(n);statusText('Загружено точек: '+f(r.valid)+' из '+f(r.total)+(r.valid<r.total?' (некорректные координаты пропущены)':'')+(r.metric?' · координаты в метрах':''),'good');
+   count=r.valid;extents=r.extents;sourceScale=r.scale;sourceCenter=r.center;sourceUp=r.up;metricFactor=r.metric?1:null;loadedFile=file;initialOrientation();flightButton.disabled=false;calibrationToggle.disabled=false;orientationToggle.disabled=false;resetView();const f=n=>new Intl.NumberFormat('ru-RU').format(n);statusText('Загружено точек: '+f(r.valid)+' из '+f(r.total)+(r.valid<r.total?' (некорректные координаты пропущены)':'')+(r.metric?' · координаты в метрах':''),'good');
   }catch(error){statusText(error.message,'error');count=0;pointPositions=null;refresh()}activeWorker.terminate();worker=null;
  }};activeWorker.onerror=e=>{if(worker!==activeWorker)return;statusText('Ошибка чтения PLY: '+e.message,'error');activeWorker.terminate();worker=null;};activeWorker.postMessage(file);
 }
@@ -326,6 +376,10 @@ fileInput.addEventListener('change',()=>{load(fileInput.files[0]);fileInput.valu
 document.getElementById('reset').addEventListener('click',resetView);sizeInput.addEventListener('input',refresh);brightness.addEventListener('input',refresh);
 orbitButton.addEventListener('click',()=>orbitMode());flightButton.addEventListener('click',flightMode);
 calibrationToggle.addEventListener('click',()=>setCalibrationOpen(calibration.hidden));choosePoints.addEventListener('click',()=>{selectedPoints=[];knownDistance.value='';updateCalibration();refresh();});applyCalibration.addEventListener('click',applyScale);prepareExport.addEventListener('click',startExport);
+orientationToggle.addEventListener('click',()=>{const opening=orientation.hidden;setOrientationOpen(opening);if(opening)fixedView(false);});
+rotations.forEach(input=>input.addEventListener('input',updateRotation));
+orientation.querySelectorAll('[data-axis]').forEach(button=>button.addEventListener('click',()=>{const i=['x','y','z'].indexOf(button.dataset.axis),a=Number(rotations[i].value)+Number(button.dataset.turn);rotations[i].value=String(((a+180)%360+360)%360-180);updateRotation();}));
+document.getElementById('front-view').addEventListener('click',()=>fixedView(false));document.getElementById('top-view').addEventListener('click',()=>fixedView(true));document.getElementById('reset-orientation').addEventListener('click',initialOrientation);upAxis.addEventListener('change',updateRotation);prepareAligned.addEventListener('click',startExport);
 function look(dx,dy){yaw-=dx*.0025;pitch=Math.max(-1.52,Math.min(1.52,pitch-dy*.0025));refresh();}
 canvas.addEventListener('pointerdown',e=>{if(e.button!==0||!count)return;canvas.focus({preventScroll:true});if(mode==='flight'&&document.pointerLockElement===canvas)return;drag={x:e.clientX,y:e.clientY,startX:e.clientX,startY:e.clientY,moved:false,pan:e.shiftKey};canvas.setPointerCapture(e.pointerId);});
 canvas.addEventListener('pointermove',e=>{if(!drag||mode==='flight'&&document.pointerLockElement===canvas)return;const dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(Math.hypot(e.clientX-drag.startX,e.clientY-drag.startY)>4)drag.moved=true;if(mode==='flight')look(dx,dy);else if(drag.pan){panX+=2*dx/canvas.clientWidth;panY-=2*dy/canvas.clientHeight;}else{yaw+=dx*.008;pitch+=dy*.008;}drag.x=e.clientX;drag.y=e.clientY;refresh();});
@@ -339,6 +393,11 @@ window.addEventListener('keydown',e=>{if(mode!=='flight'||!count||e.ctrlKey||e.m
 window.addEventListener('keyup',e=>{if(heldKeys.delete(e.code))refresh();});window.addEventListener('blur',()=>{heldKeys.clear();lastMoveTime=null;});
 for(const event of ['dragenter','dragover'])document.addEventListener(event,e=>{e.preventDefault();});document.addEventListener('drop',e=>{e.preventDefault();load(e.dataTransfer.files[0]);});window.addEventListener('resize',refresh);
 canvas.addEventListener('webglcontextlost',e=>{e.preventDefault();statusText('Браузер потерял контекст WebGL. Обновите страницу и откройте PLY снова.','error')});
+async function openApplicationCloud(){
+ if(new URLSearchParams(location.search).get('app')!=='1'||!['127.0.0.1','localhost','[::1]'].includes(location.hostname))return;
+ try{const response=await fetch('./meta.json',{cache:'no-store'});if(!response.ok)throw Error('Не удалось получить сведения о файле.');const data=await response.json();if(typeof data.name!=='string'||!data.name.toLowerCase().endsWith('.ply'))throw Error('Некорректное имя файла PLY.');load({kind:'app-file',name:data.name,url:new URL('./cloud',location.href).href});}catch(error){statusText(error.message,'error');}
+}
+openApplicationCloud();
 </script>
 </body>
 </html>

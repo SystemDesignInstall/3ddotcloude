@@ -12,7 +12,6 @@ import sys
 import tempfile
 import threading
 import uuid
-import webbrowser
 
 import tkinter as tk
 from tkinter import filedialog, font, messagebox, scrolledtext, ttk
@@ -48,6 +47,7 @@ class App:
         self.installing = False
         self.close_after_cancel = False
         self.result_dir: Path | None = None
+        self.viewer_hosts = []
         self.images = tk.StringVar()
         self.destination = tk.StringVar()
         self.openmvs = tk.StringVar()
@@ -96,10 +96,13 @@ class App:
         self.start_button.pack(side="left")
         self.open_button = ttk.Button(actions, text="Открыть папку результата", command=self.open_result, state="disabled")
         self.open_button.pack(side="left", padx=8)
-        self.preview_button = ttk.Button(actions, text="Просмотр", command=self.open_preview, state="disabled")
-        self.preview_button.pack(side="left")
         self.cancel_button = ttk.Button(actions, text="Остановить", command=self.cancel, state="disabled")
         self.cancel_button.pack(side="left", padx=8)
+        viewer_actions = ttk.Frame(frame)
+        viewer_actions.pack(fill="x", pady=(0, 8))
+        self.preview_button = ttk.Button(viewer_actions, text="Открыть построенное облако", command=self.open_preview, state="disabled")
+        self.preview_button.pack(side="left")
+        ttk.Button(viewer_actions, text="Открыть готовый PLY…", command=self.choose_cloud).pack(side="left", padx=8)
         ttk.Label(frame, textvariable=self.status).pack(anchor="w", pady=(0, 4))
         self.progress = ttk.Progressbar(frame, mode="indeterminate")
         self.progress.pack(fill="x", pady=(0, 8))
@@ -269,7 +272,7 @@ class App:
                     self.install_cl_button.configure(state="normal" if os.name == "nt" else "disabled")
                     if self.result_dir and self.result_dir.exists():
                         self.open_button.configure(state="normal")
-                        if (self.result_dir / "preview.html").is_file() and value == 0:
+                        if self.result_cloud() is not None and value == 0:
                             self.preview_button.configure(state="normal")
                     if value == 0:
                         self.status.set("Готово")
@@ -280,6 +283,7 @@ class App:
                         self.status.set("Ошибка — смотрите журнал")
                         messagebox.showerror("Обработка не завершена", "Подробности находятся в журнале окна.")
                     if self.close_after_cancel:
+                        self.close_viewers()
                         self.root.destroy()
                         return
         except queue.Empty:
@@ -298,8 +302,44 @@ class App:
             messagebox.showerror("Не удалось открыть папку", str(exc))
 
     def open_preview(self) -> None:
-        if self.result_dir is not None:
-            webbrowser.open((self.result_dir / "preview.html").resolve().as_uri())
+        cloud = self.result_cloud()
+        if cloud is not None:
+            self.open_cloud(cloud)
+        else:
+            messagebox.showerror("Облако не найдено", "Файл PLY в папке результата не найден.")
+
+    def result_cloud(self) -> Path | None:
+        if self.result_dir is None:
+            return None
+        for name in ("dense.ply", "sparse.ply"):
+            path = self.result_dir / name
+            if path.is_file():
+                return path
+        return None
+
+    def choose_cloud(self) -> None:
+        path = filedialog.askopenfilename(title="Открыть облако точек",
+                                          filetypes=[("Облако точек PLY", "*.ply"), ("Все файлы", "*")])
+        if path:
+            self.open_cloud(Path(path))
+
+    def open_cloud(self, cloud: Path) -> None:
+        from viewer_host import ViewerHost, open_window
+        host = None
+        try:
+            host = ViewerHost(cloud)
+            if not open_window(host):
+                raise OSError("Не найден браузер, способный открыть окно просмотра.")
+            self.viewer_hosts.append(host)
+        except (OSError, ValueError) as exc:
+            if host is not None:
+                host.close()
+            messagebox.showerror("Не удалось открыть облако", str(exc))
+
+    def close_viewers(self) -> None:
+        for host in self.viewer_hosts:
+            host.close()
+        self.viewer_hosts.clear()
 
     def cancel(self) -> None:
         if self.process and self.cancel_file is not None:
@@ -319,6 +359,7 @@ class App:
                 self.close_after_cancel = True
                 self.cancel()
             return
+        self.close_viewers()
         self.root.destroy()
 
 
@@ -342,7 +383,33 @@ def main() -> int:
         import rawpy
         import exifread
         import piexif
+        import viewer_host
         print(f"Spatial Photo Cloud: pycolmap {pycolmap.__version__}; Pillow {PIL.__version__}")
+        return 0
+    if sys.argv[1:2] == ["--viewer-self-test"]:
+        from http.client import HTTPConnection
+        from urllib.parse import urlsplit
+        from viewer_host import ViewerHost
+        with tempfile.TemporaryDirectory(prefix="spatial-viewer-test-") as directory:
+            path = Path(directory) / "test.ply"
+            path.write_bytes(b"ply\nformat ascii 1.0\nelement vertex 1\nproperty float x\n"
+                             b"property float y\nproperty float z\nend_header\n0 0 0\n")
+            host = ViewerHost(path)
+            try:
+                parsed = urlsplit(host.url)
+                connection = HTTPConnection(parsed.hostname, parsed.port, timeout=5)
+                try:
+                    connection.request("GET", parsed.path)
+                    response = connection.getresponse()
+                    assert response.status == 200 and b"Spatial Photo Cloud" in response.read()
+                    connection.request("GET", parsed.path + "cloud")
+                    response = connection.getresponse()
+                    assert response.status == 200 and response.read() == path.read_bytes()
+                finally:
+                    connection.close()
+            finally:
+                host.close()
+        print("Spatial Photo Cloud: viewer host OK")
         return 0
     if sys.argv[1:2] == ["--raw-conversion-test"] and len(sys.argv) == 4:
         from raw_import import convert_cr2
