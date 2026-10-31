@@ -17,6 +17,8 @@ jobs:
       PYTHONUTF8: '1'
       POCL_CPU_MAX_CU_COUNT: '4'
       OMP_NUM_THREADS: '4'
+      POCL_DEBUG: 'error'
+      POCL_LEAVE_KERNEL_COMPILER_TEMP_FILES: '1'
     steps:
       - uses: actions/checkout@v4
         with:
