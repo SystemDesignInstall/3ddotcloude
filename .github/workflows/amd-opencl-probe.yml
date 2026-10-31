@@ -24,12 +24,19 @@ jobs:
           $archive = Join-Path $env:RUNNER_TEMP 'colmap-cl-1.5.zip'
           $unpacked = Join-Path $env:RUNNER_TEMP 'colmap-cl-1.5'
           Invoke-WebRequest -Uri 'https://github.com/openphotogrammetry/colmap-cl/releases/download/v1.5/COLMAP-CL-1.5-windows.zip' -OutFile $archive
-          Get-FileHash -Algorithm SHA256 $archive | Format-List Hash
+          $sha = (Get-FileHash -Algorithm SHA256 $archive).Hash
+          if ($sha -ne '0439D39D1231B7A6CD3B521F9C5CA327D9BEC1C88084B38AF36C942256EC1750') { throw 'Unexpected archive checksum' }
           Expand-Archive -Path $archive -DestinationPath $unpacked
           Get-ChildItem -Path $unpacked -Filter 'COLMAP.bat' -Recurse | ForEach-Object { Get-Content $_.FullName }
           Get-ChildItem -Path $unpacked -Recurse -File | Where-Object { $_.Name -match '^(colmap.*\.exe|.*licen[cs]e.*|.*opencl.*\.dll)$' } | Select-Object FullName, Length
           $exe = Get-ChildItem -Path $unpacked -Filter 'colmap.exe' -Recurse | Select-Object -First 1
           if (-not $exe) { throw 'No colmap.exe found in the release' }
-          $env:PATH = "$($exe.DirectoryName);$env:PATH"
+          $lib = Join-Path $exe.Directory.Parent.FullName 'lib'
+          $env:PATH = "$lib;$($exe.DirectoryName);$env:PATH"
+          $env:QT_PLUGIN_PATH = $lib
           & $exe.FullName -h
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $exe.FullName patch_match_stereo -h
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $exe.FullName stereo_fusion -h
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
