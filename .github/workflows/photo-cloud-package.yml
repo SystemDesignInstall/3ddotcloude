@@ -42,6 +42,8 @@ jobs:
         run: |
           & .\dist\SpatialPhotoCloud\SpatialPhotoCloud.exe --self-test
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .\dist\SpatialPhotoCloud\SpatialPhotoCloud.exe --viewer-self-test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & .\dist\SpatialPhotoCloud\SpatialPhotoCloud.exe --ui-smoke-test
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Install verified external OpenMVS for testing
