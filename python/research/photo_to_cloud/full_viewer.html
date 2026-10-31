@@ -43,6 +43,7 @@ main{flex:1;height:0;min-height:320px;position:relative}canvas{width:100%;height
     <label>Расстояние <input id="known-distance" type="text" inputmode="decimal" placeholder="Например, 5,2"></label>
     <label>Единицы <select id="units"><option value="1">м</option><option value="0.01">см</option><option value="0.001">мм</option></select></label>
     <button id="apply-calibration" type="button" disabled>Применить масштаб</button>
+    <button id="save-current-calibration" type="button" hidden>Сохранить в этот PLY</button>
     <button id="prepare-export" class="secondary" type="button" disabled>Подготовить PLY в метрах</button>
     <a id="download" hidden>Скачать PLY в метрах</a>
     <p>Выбирайте различимые точки на одном объекте. Для проверки измерьте ещё одно известное расстояние; реконструкция может содержать искажения. Если скачивание в окне чата заблокировано, скачайте этот HTML и откройте его в Edge или Chrome.</p>
@@ -54,8 +55,9 @@ main{flex:1;height:0;min-height:320px;position:relative}canvas{width:100%;height
     <label>Наклон Z <input id="rotate-z" type="range" min="-180" max="180" step="0.1" value="0"><output id="angle-z">0°</output></label><button class="secondary small" type="button" data-axis="z" data-turn="-90">−90°</button><button class="secondary small" type="button" data-axis="z" data-turn="90">+90°</button>
     <button class="secondary" id="front-view" type="button">Вид спереди</button><button class="secondary" id="top-view" type="button">Вид сверху</button><button class="secondary" id="reset-orientation" type="button">Сбросить поворот</button>
     <label>Вертикальная ось в PLY <select id="up-axis"><option value="y">Y</option><option value="z">Z (для CAD)</option></select></label>
-    <button id="prepare-aligned" type="button">Подготовить PLY</button><a id="download-aligned" hidden>Скачать PLY</a>
-    <p>Сетка показывает направление экрана. Поворот и выбранная вертикальная ось будут записаны только в новую копию PLY.</p>
+    <button id="save-current-alignment" type="button" hidden>Сохранить положение в этот PLY</button>
+    <button id="prepare-aligned" class="secondary" type="button">Подготовить отдельный PLY</button><a id="download-aligned" hidden>Скачать PLY</a>
+    <p>Сетка показывает направление экрана. При сохранении записываются поворот, выбранная ось и заданный масштаб. Программа сохраняет резервную копию исходного файла.</p>
   </div>
 </header>
 <main id="drop"><canvas id="view" tabindex="0" aria-label="Трёхмерное облако точек"></canvas>
@@ -194,10 +196,11 @@ const canvas=document.getElementById('view'),status=document.getElementById('sta
 const orbitButton=document.getElementById('orbit-mode'),flightButton=document.getElementById('flight-mode'),speed=document.getElementById('speed'),speedControl=document.getElementById('speed-control'),hint=document.getElementById('hint'),crosshair=document.getElementById('crosshair');
 const calibrationToggle=document.getElementById('calibration-toggle'),calibration=document.getElementById('calibration'),calibrationStatus=document.getElementById('calibration-status'),choosePoints=document.getElementById('choose-points'),knownDistance=document.getElementById('known-distance'),units=document.getElementById('units'),applyCalibration=document.getElementById('apply-calibration'),prepareExport=document.getElementById('prepare-export'),download=document.getElementById('download'),markers=[document.getElementById('marker-a'),document.getElementById('marker-b')];
 const orientationToggle=document.getElementById('orientation-toggle'),orientation=document.getElementById('orientation'),alignmentGrid=document.getElementById('alignment-grid'),rotations=['x','y','z'].map(a=>document.getElementById('rotate-'+a)),angleLabels=['x','y','z'].map(a=>document.getElementById('angle-'+a)),upAxis=document.getElementById('up-axis'),prepareAligned=document.getElementById('prepare-aligned'),downloadAligned=document.getElementById('download-aligned');
+const saveCurrentButtons=[document.getElementById('save-current-calibration'),document.getElementById('save-current-alignment')];
 const gl=canvas.getContext('webgl',{antialias:false,alpha:false,depth:true,preserveDrawingBuffer:false});
 let program=null,posBuffer=null,colBuffer=null,count=0,extents=[.5,.5,.5],yaw=.35,pitch=-.2,zoom=1,panX=0,panY=0,drag=null,worker=null,frame=0;
 let mode='orbit',eye=[0,0,-1],savedOrbit=null,lastMoveTime=null;
-let pointPositions=null,sourceScale=1,sourceCenter=[0,0,0],sourceUp='y',loadedFile=null,metricFactor=null,selectedPoints=[],pickBuffer=null,pickFramebuffer=null,pickTexture=null,pickDepth=null,pickWidth=0,pickHeight=0,exportWorker=null,downloadUrl=null;
+let pointPositions=null,sourceScale=1,sourceCenter=[0,0,0],sourceUp='y',loadedFile=null,metricFactor=null,selectedPoints=[],pickBuffer=null,pickFramebuffer=null,pickTexture=null,pickDepth=null,pickWidth=0,pickHeight=0,exportWorker=null,downloadUrl=null,saving=false,disabledBeforeSave=[];
 const heldKeys=new Set();
 function statusText(text,kind=''){status.textContent=text;status.className='status '+kind;}
 function shader(type,source){const sh=gl.createShader(type);gl.shaderSource(sh,source);gl.compileShader(sh);if(!gl.getShaderParameter(sh,gl.COMPILE_STATUS))throw Error('Ошибка WebGL: '+gl.getShaderInfoLog(sh));return sh;}
@@ -287,7 +290,8 @@ function selectPoint(clientX,clientY){
 function selectedDistance(){return selectedPoints.length===2?Math.hypot(...selectedPoints[0].map((v,i)=>v-selectedPoints[1][i]))*sourceScale:0;}
 function updateCalibration(){
  const n=selectedPoints.length,distance=selectedDistance(),f=n=>new Intl.NumberFormat('ru-RU',{maximumSignificantDigits:7}).format(n);
- applyCalibration.disabled=n!==2||!Number.isFinite(distance)||distance<=0;prepareExport.disabled=metricFactor===null||!!exportWorker;prepareAligned.disabled=!!exportWorker;
+ applyCalibration.disabled=saving||n!==2||!Number.isFinite(distance)||distance<=0;prepareExport.disabled=saving||metricFactor===null||!!exportWorker;prepareAligned.disabled=saving||!!exportWorker;
+ saveCurrentButtons.forEach((button,i)=>{button.hidden=!loadedFile||loadedFile.kind!=='app-file';button.disabled=saving||!!exportWorker||(i===0&&metricFactor===null);});
  const prefix=metricFactor===null?'Масштаб пока не задан. ':'Масштаб задан. ';
  if(n===0)calibrationStatus.textContent=prefix+'Выберите две точки на облаке.';
  else if(n===1)calibrationStatus.textContent=prefix+'Точка A выбрана. Выберите точку B.';
@@ -306,16 +310,34 @@ function initialOrientation(){rotations.forEach((input,i)=>input.value=(i===0&&s
 function applyScale(){
  const distance=selectedDistance(),known=Number(knownDistance.value.trim().replace(',','.'))*Number(units.value),factor=known/distance;
  if(!knownDistance.value||!Number.isFinite(known)||known<=0||!Number.isFinite(distance)||distance<=0||!Number.isFinite(factor)||factor<=0){calibrationStatus.textContent='Введите положительное расстояние и выберите две разные точки.';return;}
- cancelExport();metricFactor=factor;updateCalibration();statusText('Масштаб задан по известному расстоянию. Можно подготовить отдельный PLY в метрах.','good');
+ cancelExport();metricFactor=factor;updateCalibration();statusText(loadedFile&&loadedFile.kind==='app-file'?'Масштаб задан. Сохраните его в этот PLY или подготовьте отдельную копию.':'Масштаб задан. Можно подготовить отдельный PLY в метрах.','good');
 }
 function makeWorker(){const code=document.getElementById('parser-worker').textContent,url=URL.createObjectURL(new Blob([code],{type:'text/javascript'})),instance=new Worker(url);URL.revokeObjectURL(url);return instance;}
-function startExport(){
- if(!loadedFile||exportWorker)return;clearDownload();const active=makeWorker(),isMetric=metricFactor!==null,angles=rotationAngles(),up=upAxis.value;exportWorker=active;updateCalibration();
- active.onmessage=e=>{if(exportWorker!==active)return;const r=e.data;if(r.type==='progress')statusText(r.text);else if(r.type==='error'){active.terminate();exportWorker=null;updateCalibration();statusText(r.text,'error');}else if(r.type==='exported'){
-  active.terminate();exportWorker=null;downloadUrl=URL.createObjectURL(r.blob);const aligned=angles.some(v=>v!==0)||up==='z',suffix=isMetric?(aligned?'_aligned_meters':'_meters'):'_aligned';
+function setSaving(value){
+ saving=value;
+ if(value){disabledBeforeSave=Array.from(document.querySelectorAll('button,input,select')).map(el=>[el,el.disabled]);disabledBeforeSave.forEach(([el])=>el.disabled=true);drag=null;}
+ else{disabledBeforeSave.forEach(([el,disabled])=>el.disabled=disabled);disabledBeforeSave=[];updateCalibration();}
+}
+function startExport(writeOriginal=false){
+ if(!loadedFile||exportWorker||saving||(writeOriginal&&loadedFile.kind!=='app-file'))return;
+ clearDownload();const active=makeWorker(),isMetric=metricFactor!==null,angles=rotationAngles(),up=upAxis.value,factor=metricFactor??1;
+ const state={file:loadedFile,yaw,pitch,zoom,panX,panY,scale:sourceScale,factor,panel:orientation.hidden?'calibration':'orientation'};
+ if(writeOriginal)setSaving(true);exportWorker=active;updateCalibration();
+ active.onmessage=async e=>{if(exportWorker!==active)return;const r=e.data;if(r.type==='progress')statusText(r.text);else if(r.type==='error'){active.terminate();exportWorker=null;if(writeOriginal)setSaving(false);else updateCalibration();statusText(r.text,'error');}else if(r.type==='exported'){
+  active.terminate();exportWorker=null;
+  if(writeOriginal){
+   statusText('Сохранение PLY и резервной копии…');
+   try{
+    const response=await fetch('./save',{method:'POST',headers:{'Content-Type':'application/octet-stream','X-Spatial-Action':'save-current-ply'},body:r.blob,cache:'no-store'});
+    const data=await response.json();if(!response.ok)throw Error(data.error||'Ошибка записи PLY.');
+    setSaving(false);state.backup=data.backup;load(state.file,state);
+   }catch(error){setSaving(false);statusText('Не удалось подтвердить сохранение: '+error.message+'. Откройте PLY заново и проверьте результат.','error');}
+   return;
+  }
+  downloadUrl=URL.createObjectURL(r.blob);const aligned=angles.some(v=>v!==0)||up==='z',suffix=isMetric?(aligned?'_aligned_meters':'_meters'):'_aligned';
   for(const link of [download,downloadAligned]){link.href=downloadUrl;link.download=loadedFile.name.replace(/\.ply$/i,'')+suffix+'.ply';link.hidden=false;}updateCalibration();statusText(isMetric?'PLY в метрах готов. Нажмите «Скачать PLY».':'Выровненный PLY готов в исходных единицах. Нажмите «Скачать PLY».','good');
  }};
- active.onerror=e=>{if(exportWorker!==active)return;active.terminate();exportWorker=null;updateCalibration();statusText('Ошибка подготовки PLY: '+e.message,'error');};active.postMessage({kind:'export',file:loadedFile,factor:metricFactor??1,metric:isMetric,angles,center:sourceCenter,up,inputUp:sourceUp});
+ active.onerror=e=>{if(exportWorker!==active)return;active.terminate();exportWorker=null;if(writeOriginal)setSaving(false);else updateCalibration();statusText('Ошибка подготовки PLY: '+e.message,'error');};active.postMessage({kind:'export',file:loadedFile,factor,metric:isMetric,angles,center:sourceCenter,up,inputUp:sourceUp});
 }
 function showMode(){
  orbitButton.setAttribute('aria-pressed',String(mode==='orbit'));flightButton.setAttribute('aria-pressed',String(mode==='flight'));
@@ -361,13 +383,15 @@ function fitView(){
 }
 function fixedView(top=false){orbitMode();yaw=0;pitch=top?-Math.PI/2:0;panX=0;panY=0;fitView();}
 function resetView(){orbitMode(false);yaw=.35;pitch=-.2;panX=0;panY=0;fitView();}
-function load(file){
- if(!program)return;if(!file||!file.name.toLowerCase().endsWith('.ply')){statusText('Выберите файл с расширением .ply.','error');return;}
+function load(file,restore=null){
+ if(!program||saving)return;if(!file||!file.name.toLowerCase().endsWith('.ply')){statusText('Выберите файл с расширением .ply.','error');return;}
  if(worker)worker.terminate();cancelExport();orbitMode(false);disposePicking();count=0;pointPositions=null;loadedFile=null;sourceScale=1;sourceCenter=[0,0,0];sourceUp='y';metricFactor=null;selectedPoints=[];knownDistance.value='';setCalibrationOpen(false);setOrientationOpen(false);initialOrientation();flightButton.disabled=true;calibrationToggle.disabled=true;orientationToggle.disabled=true;refresh();statusText('Подготовка файла: '+file.name+'…');
  const activeWorker=makeWorker();worker=activeWorker;
- activeWorker.onmessage=e=>{if(worker!==activeWorker)return;const r=e.data;if(r.type==='progress')statusText(r.text);else if(r.type==='error'){statusText(r.text,'error');activeWorker.terminate();worker=null;}else if(r.type==='done'){
+ activeWorker.onmessage=e=>{if(worker!==activeWorker)return;const r=e.data;if(r.type==='progress')statusText(r.text);else if(r.type==='error'){statusText((restore?'PLY сохранён, но повторное открытие не удалось: ':'')+r.text,'error');activeWorker.terminate();worker=null;}else if(r.type==='done'){
   try{pointPositions=new Float32Array(r.positions);gl.bindBuffer(gl.ARRAY_BUFFER,posBuffer);gl.bufferData(gl.ARRAY_BUFFER,pointPositions,gl.STATIC_DRAW);gl.bindBuffer(gl.ARRAY_BUFFER,colBuffer);gl.bufferData(gl.ARRAY_BUFFER,new Uint8Array(r.colors),gl.STATIC_DRAW);const error=gl.getError();if(error!==gl.NO_ERROR)throw Error('Не удалось загрузить точки в WebGL (код '+error+').');
-   count=r.valid;extents=r.extents;sourceScale=r.scale;sourceCenter=r.center;sourceUp=r.up;metricFactor=r.metric?1:null;loadedFile=file;initialOrientation();flightButton.disabled=false;calibrationToggle.disabled=false;orientationToggle.disabled=false;resetView();const f=n=>new Intl.NumberFormat('ru-RU').format(n);statusText('Загружено точек: '+f(r.valid)+' из '+f(r.total)+(r.valid<r.total?' (некорректные координаты пропущены)':'')+(r.metric?' · координаты в метрах':''),'good');
+   count=r.valid;extents=r.extents;sourceScale=r.scale;sourceCenter=r.center;sourceUp=r.up;metricFactor=r.metric?1:null;loadedFile=file;initialOrientation();flightButton.disabled=false;calibrationToggle.disabled=false;orientationToggle.disabled=false;
+   if(restore){if(restore.panel==='orientation')setOrientationOpen(true);else setCalibrationOpen(true);yaw=restore.yaw;pitch=restore.pitch;panX=restore.panX;panY=restore.panY;zoom=Math.max(.1,Math.min(100,restore.zoom*r.scale/(restore.scale*restore.factor)));refresh();}else resetView();
+   const f=n=>new Intl.NumberFormat('ru-RU').format(n);statusText('Загружено точек: '+f(r.valid)+' из '+f(r.total)+(r.valid<r.total?' (некорректные координаты пропущены)':'')+(r.metric?' · координаты в метрах':'')+(restore?' · Сохранено в исходный PLY. Резервная копия: '+restore.backup:''),'good');
   }catch(error){statusText(error.message,'error');count=0;pointPositions=null;refresh()}activeWorker.terminate();worker=null;
  }};activeWorker.onerror=e=>{if(worker!==activeWorker)return;statusText('Ошибка чтения PLY: '+e.message,'error');activeWorker.terminate();worker=null;};activeWorker.postMessage(file);
 }
@@ -375,19 +399,19 @@ try{initialize();refresh()}catch(error){statusText(error.message,'error')}
 fileInput.addEventListener('change',()=>{load(fileInput.files[0]);fileInput.value=''});
 document.getElementById('reset').addEventListener('click',resetView);sizeInput.addEventListener('input',refresh);brightness.addEventListener('input',refresh);
 orbitButton.addEventListener('click',()=>orbitMode());flightButton.addEventListener('click',flightMode);
-calibrationToggle.addEventListener('click',()=>setCalibrationOpen(calibration.hidden));choosePoints.addEventListener('click',()=>{selectedPoints=[];knownDistance.value='';updateCalibration();refresh();});applyCalibration.addEventListener('click',applyScale);prepareExport.addEventListener('click',startExport);
+calibrationToggle.addEventListener('click',()=>setCalibrationOpen(calibration.hidden));choosePoints.addEventListener('click',()=>{selectedPoints=[];knownDistance.value='';updateCalibration();refresh();});applyCalibration.addEventListener('click',applyScale);prepareExport.addEventListener('click',()=>startExport());saveCurrentButtons.forEach(button=>button.addEventListener('click',()=>startExport(true)));
 orientationToggle.addEventListener('click',()=>{const opening=orientation.hidden;setOrientationOpen(opening);if(opening)fixedView(false);});
 rotations.forEach(input=>input.addEventListener('input',updateRotation));
 orientation.querySelectorAll('[data-axis]').forEach(button=>button.addEventListener('click',()=>{const i=['x','y','z'].indexOf(button.dataset.axis),a=Number(rotations[i].value)+Number(button.dataset.turn);rotations[i].value=String(((a+180)%360+360)%360-180);updateRotation();}));
-document.getElementById('front-view').addEventListener('click',()=>fixedView(false));document.getElementById('top-view').addEventListener('click',()=>fixedView(true));document.getElementById('reset-orientation').addEventListener('click',initialOrientation);upAxis.addEventListener('change',updateRotation);prepareAligned.addEventListener('click',startExport);
+document.getElementById('front-view').addEventListener('click',()=>fixedView(false));document.getElementById('top-view').addEventListener('click',()=>fixedView(true));document.getElementById('reset-orientation').addEventListener('click',initialOrientation);upAxis.addEventListener('change',updateRotation);prepareAligned.addEventListener('click',()=>startExport());
 function look(dx,dy){yaw-=dx*.0025;pitch=Math.max(-1.52,Math.min(1.52,pitch-dy*.0025));refresh();}
-canvas.addEventListener('pointerdown',e=>{if(e.button!==0||!count)return;canvas.focus({preventScroll:true});if(mode==='flight'&&document.pointerLockElement===canvas)return;drag={x:e.clientX,y:e.clientY,startX:e.clientX,startY:e.clientY,moved:false,pan:e.shiftKey};canvas.setPointerCapture(e.pointerId);});
+canvas.addEventListener('pointerdown',e=>{if(saving||e.button!==0||!count)return;canvas.focus({preventScroll:true});if(mode==='flight'&&document.pointerLockElement===canvas)return;drag={x:e.clientX,y:e.clientY,startX:e.clientX,startY:e.clientY,moved:false,pan:e.shiftKey};canvas.setPointerCapture(e.pointerId);});
 canvas.addEventListener('pointermove',e=>{if(!drag||mode==='flight'&&document.pointerLockElement===canvas)return;const dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(Math.hypot(e.clientX-drag.startX,e.clientY-drag.startY)>4)drag.moved=true;if(mode==='flight')look(dx,dy);else if(drag.pan){panX+=2*dx/canvas.clientWidth;panY-=2*dy/canvas.clientHeight;}else{yaw+=dx*.008;pitch+=dy*.008;}drag.x=e.clientX;drag.y=e.clientY;refresh();});
 canvas.addEventListener('pointerup',e=>{if(!drag)return;const was=drag;drag=null;if(!was.moved){if(mode==='flight')grabMouse();else if(!calibration.hidden)selectPoint(e.clientX,e.clientY);}});
 canvas.addEventListener('pointercancel',()=>drag=null);
 document.addEventListener('mousemove',e=>{if(mode==='flight'&&document.pointerLockElement===canvas)look(e.movementX,e.movementY);});
 document.addEventListener('pointerlockchange',()=>{if(document.pointerLockElement!==canvas){heldKeys.clear();lastMoveTime=null;}showMode();});
-canvas.addEventListener('wheel',e=>{e.preventDefault();if(mode==='flight'){if(e.deltaY<0)speed.stepUp();else speed.stepDown();}else zoom=Math.max(.1,Math.min(100,zoom*Math.exp(-e.deltaY*.001)));refresh();},{passive:false});
+canvas.addEventListener('wheel',e=>{e.preventDefault();if(saving)return;if(mode==='flight'){if(e.deltaY<0)speed.stepUp();else speed.stepDown();}else zoom=Math.max(.1,Math.min(100,zoom*Math.exp(-e.deltaY*.001)));refresh();},{passive:false});
 const movementKeys=new Set(['KeyW','KeyA','KeyS','KeyD','KeyQ','KeyE','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','ShiftLeft','ShiftRight']);
 window.addEventListener('keydown',e=>{if(mode!=='flight'||!count||e.ctrlKey||e.metaKey||e.altKey||/^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName))return;if(movementKeys.has(e.code)){e.preventDefault();heldKeys.add(e.code);refresh();}});
 window.addEventListener('keyup',e=>{if(heldKeys.delete(e.code))refresh();});window.addEventListener('blur',()=>{heldKeys.clear();lastMoveTime=null;});
