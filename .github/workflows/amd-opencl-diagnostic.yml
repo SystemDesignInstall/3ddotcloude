@@ -74,6 +74,7 @@ jobs:
           if ($code -eq 0 -and $report -notmatch 'тест изображений и вычисления OpenCL пройден') { throw 'Image success was not reported' }
           if ($code -eq 1 -and ($report -notmatch 'тест не пройден' -or $report -notmatch 'BUILD_PROGRAM_FAILURE')) { throw 'Unexpected image test error' }
           if ($code -ne 0 -and $code -ne 1) { throw "Unexpected image test exit code: $code" }
+          exit 0
       - name: Verify a CPU-only machine is not reported as an AMD GPU
         shell: pwsh
         run: |
@@ -81,6 +82,7 @@ jobs:
           if ($LASTEXITCODE -ne 1) { throw "Expected a missing GPU error, got $LASTEXITCODE" }
           $report = Get-Content -Raw -Encoding UTF8 .\dist\AMD_OpenCL_Report.txt
           if ($report -notmatch 'устройство OpenCL не найдено') { throw 'Missing-GPU diagnostic is invalid' }
+          exit 0
       - name: Add instructions
         shell: pwsh
         run: Copy-Item python/research/photo_to_cloud/AMD-CHECK-WINDOWS.txt dist/README.txt
