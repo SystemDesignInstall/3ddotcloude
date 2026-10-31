@@ -19,6 +19,7 @@ jobs:
       OMP_NUM_THREADS: '4'
       POCL_DEBUG: 'error'
       POCL_LEAVE_KERNEL_COMPILER_TEMP_FILES: '1'
+      POCL_EXTRA_BUILD_FLAGS: '-cl-std=CL1.2'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -61,7 +62,7 @@ jobs:
           if ($process.ExitCode -ne 0) { throw "PoCL installer returned $($process.ExitCode)" }
           python -m pip install -r python/research/photo_to_cloud/requirements.txt pyopencl
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python -c "import pyopencl as cl; print([(p.name, [(d.name, cl.device_type.to_string(d.type)) for d in p.get_devices()]) for p in cl.get_platforms()])"
+          python -c "import pyopencl as cl; print([(p.name, [(d.name, cl.device_type.to_string(d.type), 'images',d.image_support, 'version',d.version) for d in p.get_devices()]) for p in cl.get_platforms()])"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Create a modern COLMAP workspace
         shell: pwsh
