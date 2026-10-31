@@ -21,6 +21,7 @@ from tkinter import filedialog, font, messagebox, scrolledtext, ttk
 MODES = {
     "Плотное облако — CPU (OpenMVS)": "dense-cpu",
     "Разреженное облако — CPU": "sparse-cpu",
+    "Плотное облако — AMD OpenCL (эксперимент)": "dense-opencl",
     "Плотное облако — AMD HIP (эксперимент)": "dense-amd",
 }
 
@@ -38,8 +39,8 @@ class App:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         root.title("Spatial Photo Cloud — эксперимент")
-        root.geometry("800x700")
-        root.minsize(680, 600)
+        root.geometry("820x760")
+        root.minsize(700, 650)
         self.events: queue.Queue = queue.Queue()
         self.process: subprocess.Popen | None = None
         self.cancel_dir: tempfile.TemporaryDirectory | None = None
@@ -67,7 +68,7 @@ class App:
         frame.pack(fill="both", expand=True)
         ttk.Label(frame, text="Фотографии → облако точек", font=(title_family, 17, "bold")).pack(anchor="w")
         ttk.Label(frame, text="Локальный эксперимент: файлы не загружаются в интернет.").pack(anchor="w", pady=(4, 12))
-        self.path_row(frame, "Папка с фотографиями", self.images, self.choose_images)
+        self.path_row(frame, "Папка с фотографиями (CR2, JPG, PNG, TIFF)", self.images, self.choose_images)
         self.path_row(frame, "Где сохранять результат", self.destination, self.choose_destination)
         ttk.Label(frame, text="Режим").pack(anchor="w", pady=(8, 2))
         ttk.Combobox(frame, state="readonly", values=list(MODES), textvariable=self.mode).pack(fill="x")
@@ -79,7 +80,14 @@ class App:
         if os.name != "nt":
             self.install_button.configure(state="disabled")
         ttk.Label(install_row, text="OpenMVS: AGPL-3.0; загружается отдельно").pack(side="left", padx=8)
-        self.path_row(frame, "COLMAP с HIP/ROCm (только для режима AMD)", self.colmap, self.choose_colmap)
+        self.path_row(frame, "COLMAP-CL для AMD OpenCL (или COLMAP с HIP)", self.colmap, self.choose_colmap)
+        cl_row = ttk.Frame(frame)
+        cl_row.pack(fill="x", pady=(3, 0))
+        self.install_cl_button = ttk.Button(cl_row, text="Установить COLMAP-CL для AMD", command=self.install_colmap_cl)
+        self.install_cl_button.pack(side="left")
+        if os.name != "nt":
+            self.install_cl_button.configure(state="disabled")
+        ttk.Label(cl_row, text="Внешний экспериментальный движок; скачивается отдельно").pack(side="left", padx=8)
         ttk.Label(frame, text="Масштаб результата по одним фотографиям неизвестен.").pack(anchor="w", pady=(10, 4))
 
         actions = ttk.Frame(frame)
@@ -124,7 +132,7 @@ class App:
             self.openmvs.set(value)
 
     def choose_colmap(self) -> None:
-        value = filedialog.askopenfilename(title="Исполняемый файл COLMAP с HIP/ROCm")
+        value = filedialog.askopenfilename(title="Исполняемый файл colmap.exe", filetypes=[("Программа", "*.exe"), ("Все файлы", "*")])
         if value:
             self.colmap.set(value)
 
@@ -133,6 +141,7 @@ class App:
             return
         self.installing = True
         self.install_button.configure(state="disabled")
+        self.install_cl_button.configure(state="disabled")
         self.start_button.configure(state="disabled")
         self.status.set("Установка OpenMVS…")
         self.progress.start(15)
@@ -143,6 +152,24 @@ class App:
                 self.events.put(("install_done", str(path)))
             except Exception as exc:
                 self.events.put(("install_error", str(exc)))
+        threading.Thread(target=install, daemon=True).start()
+
+    def install_colmap_cl(self) -> None:
+        if self.installing or self.process:
+            return
+        self.installing = True
+        self.install_button.configure(state="disabled")
+        self.install_cl_button.configure(state="disabled")
+        self.start_button.configure(state="disabled")
+        self.status.set("Установка COLMAP-CL…")
+        self.progress.start(15)
+        def install() -> None:
+            try:
+                from colmap_cl_install import default_destination, download_and_install
+                path = download_and_install(default_destination(), lambda text: self.events.put(("line", text + "\n")))
+                self.events.put(("install_cl_done", str(path / "bin" / "colmap.exe")))
+            except Exception as exc:
+                self.events.put(("install_cl_error", str(exc)))
         threading.Thread(target=install, daemon=True).start()
 
     def append_log(self, text: str) -> None:
@@ -161,8 +188,8 @@ class App:
         if mode == "dense-cpu" and not self.openmvs.get().strip():
             messagebox.showerror("Нужен OpenMVS", "Выберите папку с программами OpenMVS.")
             return
-        if mode == "dense-amd" and not self.colmap.get().strip():
-            messagebox.showerror("Нужен COLMAP с HIP", "Выберите исполняемый файл COLMAP с HIP/ROCm.")
+        if mode in {"dense-amd", "dense-opencl"} and not self.colmap.get().strip():
+            messagebox.showerror("Нужен движок COLMAP", "Установите или выберите подходящий colmap.exe.")
             return
         label = datetime.datetime.now().strftime("photo-cloud-%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:8]
         self.result_dir = Path(self.destination.get()).expanduser().resolve() / label
@@ -172,7 +199,7 @@ class App:
         command = worker_command(self.images.get(), self.result_dir, mode, self.cancel_file)
         if mode == "dense-cpu":
             command += ["--openmvs-dir", self.openmvs.get()]
-        elif mode == "dense-amd":
+        elif mode in {"dense-amd", "dense-opencl"}:
             command += ["--colmap", self.colmap.get()]
         environment = os.environ.copy()
         environment["PYTHONUTF8"] = "1"
@@ -192,6 +219,7 @@ class App:
         self.preview_button.configure(state="disabled")
         self.cancel_button.configure(state="normal")
         self.install_button.configure(state="disabled")
+        self.install_cl_button.configure(state="disabled")
         self.status.set("Обработка…")
         self.progress.start(15)
         threading.Thread(target=self.consume, args=(self.process,), daemon=True).start()
@@ -208,15 +236,23 @@ class App:
                 kind, value = self.events.get_nowait()
                 if kind == "line":
                     self.append_log(value)
-                elif kind in {"install_done", "install_error"}:
+                elif kind in {"install_done", "install_error", "install_cl_done", "install_cl_error"}:
                     self.installing = False
                     self.progress.stop()
                     self.install_button.configure(state="normal" if os.name == "nt" else "disabled")
+                    self.install_cl_button.configure(state="normal" if os.name == "nt" else "disabled")
                     self.start_button.configure(state="normal")
                     if kind == "install_done":
                         self.openmvs.set(value)
                         self.status.set("OpenMVS установлен")
                         self.append_log(f"OpenMVS: {value}\n")
+                    elif kind == "install_cl_done":
+                        self.colmap.set(value)
+                        self.status.set("COLMAP-CL установлен")
+                        self.append_log(f"COLMAP-CL: {value}\n")
+                    elif kind == "install_cl_error":
+                        self.status.set("Ошибка установки COLMAP-CL")
+                        messagebox.showerror("COLMAP-CL", value)
                     else:
                         self.status.set("Ошибка установки OpenMVS")
                         messagebox.showerror("OpenMVS", value)
@@ -230,6 +266,7 @@ class App:
                     self.start_button.configure(state="normal")
                     self.cancel_button.configure(state="disabled")
                     self.install_button.configure(state="normal" if os.name == "nt" else "disabled")
+                    self.install_cl_button.configure(state="normal" if os.name == "nt" else "disabled")
                     if self.result_dir and self.result_dir.exists():
                         self.open_button.configure(state="normal")
                         if (self.result_dir / "preview.html").is_file() and value == 0:
@@ -275,7 +312,7 @@ class App:
 
     def close(self) -> None:
         if self.installing:
-            messagebox.showinfo("Установка", "Дождитесь завершения установки OpenMVS.")
+            messagebox.showinfo("Установка", "Дождитесь завершения установки движка.")
             return
         if self.process:
             if messagebox.askyesno("Идёт обработка", "Остановить обработку и закрыть окно?"):
@@ -300,7 +337,16 @@ def main() -> int:
         import PIL
         import preview
         import openmvs_install
+        import colmap_cl_install
+        import pyopencl
+        import rawpy
+        import exifread
+        import piexif
         print(f"Spatial Photo Cloud: pycolmap {pycolmap.__version__}; Pillow {PIL.__version__}")
+        return 0
+    if sys.argv[1:2] == ["--raw-conversion-test"] and len(sys.argv) == 4:
+        from raw_import import convert_cr2
+        print(convert_cr2(Path(sys.argv[2]), Path(sys.argv[3])), flush=True)
         return 0
     if sys.argv[1:2] == ["--ui-smoke-test"]:
         window = tk.Tk()

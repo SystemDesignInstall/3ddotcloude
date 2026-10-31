@@ -1,2 +1,7 @@
 pycolmap==4.2.1
 Pillow>=11.0,<13
+numpy==2.3.5
+pyopencl==2026.1.4
+rawpy==0.27.1
+ExifRead==3.5.1
+piexif==1.1.3

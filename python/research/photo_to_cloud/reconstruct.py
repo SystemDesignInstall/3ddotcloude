@@ -14,8 +14,8 @@ import threading
 import time
 
 
-IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tif", ".tiff"}
-MODES = ("sparse-cpu", "dense-cpu", "dense-amd")
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".cr2"}
+MODES = ("sparse-cpu", "dense-cpu", "dense-amd", "dense-opencl")
 
 
 class ReconstructionError(Exception):
@@ -63,7 +63,7 @@ def image_paths(directory: Path) -> list[Path]:
         key=lambda p: p.relative_to(directory).as_posix(),
     )
     if len(paths) < 3:
-        raise ReconstructionError("Нужно не менее 3 фотографий JPG, PNG или TIFF.")
+        raise ReconstructionError("Нужно не менее 3 фотографий CR2, JPG, PNG или TIFF.")
     return paths
 
 
@@ -72,6 +72,9 @@ def validate_images(paths: list[Path], cancel_file: Path | None = None) -> None:
 
     for path in paths:
         check_cancel(cancel_file)
+        if path.suffix.lower() == ".cr2":
+            # RAW files are fully decoded when the working images are prepared.
+            continue
         try:
             with Image.open(path) as image:
                 image.verify()
@@ -219,17 +222,26 @@ def reconstruct(images: Path, output: Path, mode: str, threads: int,
     if output.exists():
         raise ReconstructionError(f"Папка результата уже существует: {output}")
     interface = densifier = None
+    cl_backend = cl_environment = selected_gpu = None
     if mode == "dense-cpu":
         if openmvs_dir is None:
             raise ReconstructionError("Для плотного облака укажите папку с программами OpenMVS.")
         interface = executable(openmvs_dir.expanduser(), "InterfaceCOLMAP")
         densifier = executable(openmvs_dir.expanduser(), "DensifyPointCloud")
-    if mode == "dense-amd":
+    if mode in {"dense-amd", "dense-opencl"}:
         if colmap is None or not colmap.expanduser().is_file():
-            raise ReconstructionError("Укажите исполняемый файл COLMAP, собранный с HIP/ROCm.")
+            raise ReconstructionError("Укажите исполняемый файл подходящего движка COLMAP.")
         colmap = colmap.expanduser().resolve()
         if colmap.suffix.lower() in {".bat", ".cmd"}:
             raise ReconstructionError("Выберите исполняемый файл colmap.exe, а не .bat/.cmd.")
+    if mode == "dense-opencl":
+        import colmap_cl_backend as cl_backend
+        cl_environment = cl_backend.backend_environment(colmap)
+        cl_backend.verify_backend(colmap, cl_environment)
+        selected_gpu = cl_backend.select_target_gpu()
+        print(f"Выбрана OpenCL GPU: {selected_gpu['device']}, платформа/устройство "
+              f"{selected_gpu['platform_index']}/{selected_gpu['device_index']} "
+              f"(COLMAP-CL gpu_index={selected_gpu['colmap_gpu_index']}).", flush=True)
 
     print(f"Проверка {len(paths)} изображений...", flush=True)
     validate_images(paths, cancel_file)
@@ -241,11 +253,23 @@ def reconstruct(images: Path, output: Path, mode: str, threads: int,
         "threads": threads, "pycolmap_version": pycolmap.__version__,
         "scale": "unknown", "started_unix_seconds": time.time(),
     }
+    if selected_gpu is not None:
+        report.update(backend="COLMAP-CL 1.5 (внешний, эксперимент)", opencl_device=selected_gpu,
+                      opencl_device_verified=False, backend_log="colmap-cl.log")
     report_path = output / "report.json"
     save_report(report_path, report)
     watch = CancellationWatch(cancel_file, pycolmap)
     watch.start()
     try:
+        processing_images = images
+        image_names = report["input_images"]
+        if any(path.suffix.lower() == ".cr2" for path in paths):
+            from raw_import import prepare_images
+            print("Подготовка рабочих копий CR2 на CPU; исходные файлы не меняются…", flush=True)
+            processing_images, image_map = prepare_images(paths, images, output, lambda: check_cancel(cancel_file))
+            image_names = [entry["prepared"] for entry in image_map]
+            report.update(prepared_directory="prepared_images", image_mapping=image_map)
+            save_report(report_path, report)
         db, sparse = output / "database.db", output / "sparse"
         sparse.mkdir()
         extraction = pycolmap.FeatureExtractionOptions()
@@ -255,7 +279,7 @@ def reconstruct(images: Path, output: Path, mode: str, threads: int,
         mapping = pycolmap.IncrementalPipelineOptions()
         mapping.num_threads, mapping.min_model_size = threads, min(10, len(paths))
         print("1/4. Поиск особенностей на фотографиях (CPU)...", flush=True)
-        pycolmap.extract_features(db, images, image_names=report["input_images"],
+        pycolmap.extract_features(db, processing_images, image_names=image_names,
                                   extraction_options=extraction, device=pycolmap.Device.cpu,
                                   cancellation_token=watch.token)
         check_cancel(cancel_file)
@@ -281,7 +305,7 @@ def reconstruct(images: Path, output: Path, mode: str, threads: int,
         if mode != "sparse-cpu":
             print("4/4. Подготовка и построение плотного облака...", flush=True)
             workspace = output / "dense_workspace"
-            pycolmap.undistort_images(workspace, sparse / str(model_id), images, num_threads=threads,
+            pycolmap.undistort_images(workspace, sparse / str(model_id), processing_images, num_threads=threads,
                                      cancellation_token=watch.token)
             check_cancel(cancel_file)
             # Models can contain only a subset; validate the images COLMAP wrote.
@@ -297,6 +321,21 @@ def reconstruct(images: Path, output: Path, mode: str, threads: int,
                              "--max-threads", str(threads), "--resolution-level", "2",
                              "--min-resolution", "320", "--max-resolution", "1280"], output, cancel_file)
                 result_path = output / "dense.ply"
+            elif mode == "dense-opencl":
+                log = output / "colmap-cl.log"
+                run_cl = lambda args, expected=None: cl_backend.run_program(
+                    args, output, cl_environment, log, lambda: check_cancel(cancel_file), expected)
+                print("Плотная реконструкция на выбранной OpenCL GPU (эксперимент)…", flush=True)
+                run_cl([str(colmap), "patch_match_stereo", "--workspace_path", str(workspace),
+                        "--workspace_format", "COLMAP", "--PatchMatchStereo.max_image_size", "1280",
+                        "--PatchMatchStereo.num_iterations", "3", "--PatchMatchStereo.geom_consistency", "0",
+                        "--PatchMatchStereo.gpu_index", str(selected_gpu["colmap_gpu_index"])], selected_gpu)
+                report["opencl_device_verified"] = True
+                save_report(report_path, report)
+                result_path = output / "dense.ply"
+                run_cl([str(colmap), "stereo_fusion", "--workspace_path", str(workspace),
+                        "--workspace_format", "COLMAP", "--input_type", "photometric",
+                        "--output_path", str(result_path)])
             else:
                 print("Режим AMD требует рабочей HIP/ROCm-сборки COLMAP; совместимость карты не проверена.", flush=True)
                 run_program([str(colmap), "patch_match_stereo", "--workspace_path", str(workspace),

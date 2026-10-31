@@ -1,6 +1,7 @@
 """Run the built executable against real COLMAP/OpenMVS and synthetic views."""
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import queue
@@ -58,13 +59,56 @@ def check_dense(executable: Path, images: Path, root: Path, openmvs: Path) -> No
           f"{report['point_count']} points, {report['preview_points']} preview points", flush=True)
 
 
+def check_opencl_no_gpu(executable: Path, images: Path, root: Path, colmap_cl: Path) -> None:
+    output = root / "opencl-without-gpu"
+    result = subprocess.run([str(executable), "--worker", "--images", str(images), "--output", str(output),
+                             "--mode", "dense-opencl", "--colmap", str(colmap_cl), "--threads", "4"],
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                            encoding="utf-8", errors="replace", check=False, timeout=120)
+    print(result.stdout, flush=True)
+    if result.returncode != 1 or output.exists() or "не найдено" not in result.stdout:
+        raise RuntimeError("AMD mode must reject a CPU-only OpenCL system without creating a result")
+
+
+def check_cr2(executable: Path, sample: Path, root: Path) -> None:
+    from PIL import Image
+    import pycolmap
+    from raw_import import read_metadata
+
+    before = hashlib.sha256(sample.read_bytes()).hexdigest()
+    target = root / "developed.jpg"
+    result = subprocess.run([str(executable), "--raw-conversion-test", str(sample), str(target)],
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                            encoding="utf-8", errors="replace", check=False, timeout=180)
+    print(result.stdout, flush=True)
+    if result.returncode != 0 or not target.is_file() or before != hashlib.sha256(sample.read_bytes()).hexdigest():
+        raise RuntimeError("Packaged CR2 conversion failed or modified the original")
+    source, converted = read_metadata(sample), read_metadata(target)
+    if not source["model"] or not source["focal_length"]:
+        raise RuntimeError(f"Test CR2 is missing expected camera metadata: {source}")
+    if (source["model"], source["make"], source["focal_length"]) != (
+            converted["model"], converted["make"], converted["focal_length"]):
+        raise RuntimeError(f"CR2 metadata was not preserved: {source} -> {converted}")
+    with Image.open(target) as image:
+        if min(image.size) < 1000 or image.getexif().get(274) != 1:
+            raise RuntimeError(f"Unexpected CR2 image size or orientation: {image.size}")
+    bitmap = pycolmap.Bitmap.read(target, True)
+    if bitmap is None or not bitmap.exif_camera_model() or bitmap.exif_focal_length() is None:
+        raise RuntimeError("COLMAP could not read the converted image's camera and focal length")
+    print(f"Packaged CR2 conversion: {source['model']}, focal {source['focal_length']}; COLMAP reads EXIF", flush=True)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--executable", required=True, type=Path)
     parser.add_argument("--images", required=True, type=Path)
     parser.add_argument("--openmvs", required=True, type=Path)
+    parser.add_argument("--colmap-cl", required=True, type=Path)
+    parser.add_argument("--cr2-sample", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
     check_cancel(args.executable, args.images, args.output)
     check_dense(args.executable, args.images, args.output, args.openmvs)
+    check_opencl_no_gpu(args.executable, args.images, args.output, args.colmap_cl)
+    check_cr2(args.executable, args.cr2_sample, args.output)

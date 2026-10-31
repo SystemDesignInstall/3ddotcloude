@@ -23,10 +23,19 @@ jobs:
           python-version: '3.12'
       - name: Install build dependencies
         run: python -m pip install -r python/research/photo_to_cloud/requirements.txt pyinstaller==6.22.3
+      - name: Install CPU OpenCL runtime for the isolated package test
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installer = Join-Path $env:RUNNER_TEMP 'pocl.exe'
+          Invoke-WebRequest -Uri 'https://github.com/pocl/pocl/releases/download/v7.2/PoCL-7.2.0-win64.exe' -OutFile $installer
+          if ((Get-FileHash -Algorithm SHA256 $installer).Hash -ne '474E4321728C022132B872EA7B4C1158756F3344FFD703ADB8B0F9B5CDE37593') { throw 'Unexpected PoCL checksum' }
+          $process = Start-Process -FilePath $installer -ArgumentList '/S' -PassThru -Wait
+          if ($process.ExitCode -ne 0) { throw "PoCL installer returned $($process.ExitCode)" }
       - name: Build standalone application
         shell: pwsh
         run: |
-          python -m PyInstaller --noconfirm --clean --onedir --console --name SpatialPhotoCloud --collect-all pycolmap --collect-all PIL --paths python/research/photo_to_cloud python/research/photo_to_cloud/app.py
+          python -m PyInstaller --noconfirm --clean --onedir --console --name SpatialPhotoCloud --collect-all pycolmap --collect-all PIL --collect-all pyopencl --collect-all numpy --collect-all rawpy --paths python/research/photo_to_cloud python/research/photo_to_cloud/app.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Check application and window
         shell: pwsh
@@ -37,22 +46,34 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Install verified external OpenMVS for testing
         run: python python/research/photo_to_cloud/openmvs_install.py --destination "${{ runner.temp }}/openmvs-test"
+      - name: Install external COLMAP-CL for testing
+        run: python python/research/photo_to_cloud/colmap_cl_install.py --destination "${{ runner.temp }}/colmap-cl-test"
       - name: Generate synthetic images
         run: python python/research/photo_to_cloud/generate_test_images.py "${{ runner.temp }}/photo-cloud-images"
+      - name: Download a CC0 Canon CR2 fixture
+        shell: pwsh
+        run: |
+          $file = Join-Path $env:RUNNER_TEMP 'canon-sample.CR2'
+          Invoke-WebRequest -Uri 'https://github.com/tellodaniel/revelraw-sample-raw-files/releases/download/v1/Canon-5D-Mark-IV.CR2' -OutFile $file
+          if ((Get-FileHash -Algorithm SHA256 $file).Hash -ne '02B23F9CC6DC4C99FB39AA4D1F65AC227804D06461AC1BD0F842AA2F3BEB8FE4') { throw 'Unexpected CR2 fixture checksum' }
       - name: Run packaged cancellation and dense reconstruction
         run: >-
           python python/research/photo_to_cloud/test_packaged.py
           --executable "${{ github.workspace }}/dist/SpatialPhotoCloud/SpatialPhotoCloud.exe"
           --images "${{ runner.temp }}/photo-cloud-images"
           --openmvs "${{ runner.temp }}/openmvs-test"
+          --colmap-cl "${{ runner.temp }}/colmap-cl-test/bin/colmap.exe"
+          --cr2-sample "${{ runner.temp }}/canon-sample.CR2"
           --output "${{ runner.temp }}/photo-cloud-test"
       - name: Add user instructions
         shell: pwsh
-        run: Copy-Item python/research/photo_to_cloud/WINDOWS-TEST.txt dist/SpatialPhotoCloud/README.txt
+        run: |
+          Copy-Item python/research/photo_to_cloud/WINDOWS-TEST.txt dist/SpatialPhotoCloud/README.txt
+          Copy-Item -Recurse "$env:RUNNER_TEMP/photo-cloud-images" dist/SpatialPhotoCloud/test-photos
       - name: Publish test artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SpatialPhotoCloud-Windows-test
+          name: SpatialPhotoCloud-Windows-AMD-experiment
           path: dist/SpatialPhotoCloud/
           if-no-files-found: error
           retention-days: 14

@@ -122,7 +122,47 @@ dependencies:
     commercial_use: yes
     redistribution: yes
     status: planned
-    notes: Isolated Windows AMD diagnostic only; its wheels and transitive binary dependencies require review before product distribution.
+    notes: Isolated Windows AMD diagnostic and photo-cloud OpenCL experiment; wheels and transitive binary dependencies require review before product distribution.
+    security_notes: null
+  - name: rawpy
+    repository: https://github.com/letmaik/rawpy
+    version: "0.27.1"
+    code_license: MIT
+    model_license: null
+    commercial_use: yes
+    redistribution: conditional
+    status: planned
+    notes: CR2 decoding in the isolated research prototype; its wheel includes LibRaw, whose license and binary distribution requirements must also be reviewed.
+    security_notes: null
+  - name: LibRaw
+    repository: https://github.com/LibRaw/LibRaw
+    version: bundled-with-rawpy
+    code_license: LGPL-2.1-only OR CDDL-1.0
+    model_license: null
+    commercial_use: conditional
+    redistribution: conditional
+    status: planned
+    notes: RAW decoder bundled with rawpy wheels; review the exact wheel license and distribution obligations before commercial release.
+    security_notes: null
+  - name: ExifRead
+    repository: https://github.com/ianare/exif-py
+    version: "3.5.1"
+    code_license: BSD-3-Clause
+    model_license: null
+    commercial_use: yes
+    redistribution: yes
+    status: planned
+    notes: Read selected CR2 camera metadata in the isolated research prototype.
+    security_notes: null
+  - name: Piexif
+    repository: https://github.com/hMatoba/Piexif
+    version: "1.1.3"
+    code_license: MIT
+    model_license: null
+    commercial_use: yes
+    redistribution: yes
+    status: planned
+    notes: Write reconstruction-relevant camera metadata to local working JPEG copies.
     security_notes: null
   - name: COLMAP-CL
     repository: https://github.com/openphotogrammetry/colmap-cl
@@ -132,7 +172,7 @@ dependencies:
     commercial_use: conditional
     redistribution: conditional
     status: planned
-    notes: Windows research probe only; source availability and licensing are unresolved, so this external binary is not bundled or enabled as a production backend.
+    notes: Windows research experiment only; the unmodified binary is downloaded separately by user action. Source availability and licensing are unresolved; it is not bundled or enabled as a production backend.
     security_notes: null
   - name: PyInstaller
     repository: https://github.com/pyinstaller/pyinstaller
