@@ -5,6 +5,7 @@ on:
   pull_request:
     paths:
       - 'python/research/photo_to_cloud/amd_opencl_diagnostic.py'
+      - 'python/research/photo_to_cloud/test_amd_opencl_diagnostic.py'
       - 'python/research/photo_to_cloud/AMD-CHECK-WINDOWS.txt'
       - '.github/workflows/amd-opencl-diagnostic.yml'
 
@@ -12,6 +13,20 @@ permissions:
   contents: read
 
 jobs:
+  linux-image-kernel:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test the actual image kernel on a CPU OpenCL implementation
+        run: |
+          python -m pip install 'pyopencl[pocl]==2026.1.4' numpy==2.3.5
+          python python/research/photo_to_cloud/amd_opencl_diagnostic.py --test-cpu --no-pause
   windows:
     runs-on: windows-2022
     timeout-minutes: 20
@@ -41,13 +56,22 @@ jobs:
         run: |
           python -m PyInstaller --noconfirm --clean --onefile --console --name AMD_OpenCL_Test --collect-all pyopencl --collect-all numpy python/research/photo_to_cloud/amd_opencl_diagnostic.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Verify image kernel with CPU OpenCL
+      - name: Verify packaged executable with CPU OpenCL
+        shell: pwsh
+        run: |
+          & .\dist\AMD_OpenCL_Test.exe --test-cpu --test-buffer --no-pause
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $report = Get-Content -Raw -Encoding UTF8 .\dist\AMD_OpenCL_Report.txt
+          if ($report -notmatch 'тест буфера OpenCL пройден' -or $report -notmatch 'тест CPU') { throw 'CPU test report is invalid' }
+      - name: Verify image compiler errors are reported
         shell: pwsh
         run: |
           & .\dist\AMD_OpenCL_Test.exe --test-cpu --no-pause
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $code = $LASTEXITCODE
           $report = Get-Content -Raw -Encoding UTF8 .\dist\AMD_OpenCL_Report.txt
-          if ($report -notmatch 'тест изображений и вычисления OpenCL пройден' -or $report -notmatch 'тест CPU') { throw 'CPU test report is invalid' }
+          if ($code -eq 0 -and $report -notmatch 'тест изображений и вычисления OpenCL пройден') { throw 'Image success was not reported' }
+          if ($code -eq 1 -and ($report -notmatch 'тест не пройден' -or $report -notmatch 'BUILD_PROGRAM_FAILURE')) { throw 'Unexpected image test error' }
+          if ($code -ne 0 -and $code -ne 1) { throw "Unexpected image test exit code: $code" }
       - name: Verify a CPU-only machine is not reported as an AMD GPU
         shell: pwsh
         run: |

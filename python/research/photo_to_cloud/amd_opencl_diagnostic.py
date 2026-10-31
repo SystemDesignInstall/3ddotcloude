@@ -67,14 +67,33 @@ def verify_image_kernel(cl, np, device) -> None:
         raise RuntimeError("Результат тестового вычисления не совпал с ожидаемым.")
 
 
+def verify_buffer_kernel(cl, np, device) -> None:
+    """Exercise the packaged OpenCL runtime on CPU in CI, not for GPU diagnosis."""
+    context = cl.Context([device])
+    queue = cl.CommandQueue(context, device)
+    source = np.arange(32, dtype=np.float32)
+    result = np.empty_like(source)
+    source_buffer = cl.Buffer(context, cl.mem_flags.READ_ONLY | cl.mem_flags.COPY_HOST_PTR, hostbuf=source)
+    result_buffer = cl.Buffer(context, cl.mem_flags.WRITE_ONLY, result.nbytes)
+    program = cl.Program(context, "__kernel void check(__global const float *a, __global float *b) "
+                         "{ int i=get_global_id(0); b[i]=a[i]*2.0f+1.0f; }").build()
+    program.check(queue, source.shape, None, source_buffer, result_buffer)
+    cl.enqueue_copy(queue, result, result_buffer, is_blocking=True)
+    if not np.allclose(result, source * 2.0 + 1.0, rtol=0.0, atol=1e-6):
+        raise RuntimeError("Результат тестового вычисления не совпал с ожидаемым.")
+
+
 def main() -> int:
     for stream in (sys.stdout, sys.stderr):
         if stream is not None and hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(description="Проверка AMD OpenCL")
     parser.add_argument("--test-cpu", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--test-buffer", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--no-pause", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.test_buffer and not args.test_cpu:
+        parser.error("--test-buffer is only available together with --test-cpu")
     lines = ["Spatial Photo Cloud — проверка OpenCL", "Фотографии не используются, данные в сеть не отправляются."]
     code = 1
     try:
@@ -90,12 +109,21 @@ def main() -> int:
             f"OpenCL: {device.version.strip()}",
             f"Индекс платформы/устройства: {platform_id}/{device_id}",
         ])
-        verify_image_kernel(cl, np, device)
-        lines.append("РЕЗУЛЬТАТ: тест изображений и вычисления OpenCL пройден.")
+        if args.test_buffer:
+            verify_buffer_kernel(cl, np, device)
+            lines.append("РЕЗУЛЬТАТ: тест буфера OpenCL пройден.")
+        else:
+            verify_image_kernel(cl, np, device)
+            lines.append("РЕЗУЛЬТАТ: тест изображений и вычисления OpenCL пройден.")
         lines.append("Это тест драйвера, а не полноценная реконструкция фотографий.")
         code = 0
     except Exception as exc:
-        lines.append(f"РЕЗУЛЬТАТ: тест не пройден: {exc}")
+        # OpenCL compiler logs can contain full user-profile paths. The first
+        # line retains the API error while avoiding those path-heavy details.
+        summary = str(exc).splitlines()[0] if str(exc) else type(exc).__name__
+        home = str(Path.home())
+        summary = summary.replace(home, "<профиль>").replace(home.replace("\\", "/"), "<профиль>")
+        lines.append(f"РЕЗУЛЬТАТ: тест не пройден: {summary[:500]}")
     report = "\n".join(lines) + "\n"
     print(report, flush=True)
     directory = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path.cwd()
