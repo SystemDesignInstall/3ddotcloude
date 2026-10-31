@@ -114,6 +114,26 @@ dependencies:
     status: planned
     notes: Transitive dependency of the isolated pycolmap research prototype; wheel-bundled components require distribution review.
     security_notes: null
+  - name: PyOpenCL
+    repository: https://github.com/inducer/pyopencl
+    version: "2026.1.4"
+    code_license: MIT
+    model_license: null
+    commercial_use: yes
+    redistribution: yes
+    status: planned
+    notes: Isolated Windows AMD diagnostic only; its wheels and transitive binary dependencies require review before product distribution.
+    security_notes: null
+  - name: COLMAP-CL
+    repository: https://github.com/openphotogrammetry/colmap-cl
+    version: "1.5"
+    code_license: unverified
+    model_license: null
+    commercial_use: conditional
+    redistribution: conditional
+    status: planned
+    notes: Windows research probe only; source availability and licensing are unresolved, so this external binary is not bundled or enabled as a production backend.
+    security_notes: null
   - name: PyInstaller
     repository: https://github.com/pyinstaller/pyinstaller
     version: "6.22.3"

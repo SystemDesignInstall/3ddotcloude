@@ -1,0 +1,96 @@
+name: AMD OpenCL Windows diagnostic
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'python/research/photo_to_cloud/amd_opencl_diagnostic.py'
+      - 'python/research/photo_to_cloud/test_amd_opencl_diagnostic.py'
+      - 'python/research/photo_to_cloud/AMD-CHECK-WINDOWS.txt'
+      - '.github/workflows/amd-opencl-diagnostic.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  linux-image-kernel:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test the actual image kernel on a CPU OpenCL implementation
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ocl-icd-libopencl1 pocl-opencl-icd
+          python -m pip install pyopencl==2026.1.4 numpy==2.3.5
+          python python/research/photo_to_cloud/amd_opencl_diagnostic.py --test-cpu --no-pause
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    env:
+      PYTHONUTF8: '1'
+      POCL_CPU_MAX_CU_COUNT: '4'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install OpenCL software runtime for testing only
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installer = Join-Path $env:RUNNER_TEMP 'pocl.exe'
+          Invoke-WebRequest -Uri 'https://github.com/pocl/pocl/releases/download/v7.2/PoCL-7.2.0-win64.exe' -OutFile $installer
+          if ((Get-FileHash -Algorithm SHA256 $installer).Hash -ne '474E4321728C022132B872EA7B4C1158756F3344FFD703ADB8B0F9B5CDE37593') { throw 'Unexpected PoCL checksum' }
+          $process = Start-Process -FilePath $installer -ArgumentList '/S' -PassThru -Wait
+          if ($process.ExitCode -ne 0) { throw "PoCL installer returned $($process.ExitCode)" }
+          python -m pip install pyinstaller==6.22.3 pyopencl==2026.1.4 numpy==2.3.5
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build standalone executable
+        shell: pwsh
+        run: |
+          python -m PyInstaller --noconfirm --clean --onefile --console --name AMD_OpenCL_Test --collect-all pyopencl --collect-all numpy python/research/photo_to_cloud/amd_opencl_diagnostic.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify packaged executable with CPU OpenCL
+        shell: pwsh
+        run: |
+          & .\dist\AMD_OpenCL_Test.exe --test-cpu --test-buffer --no-pause
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $report = Get-Content -Raw -Encoding UTF8 .\dist\AMD_OpenCL_Report.txt
+          if ($report -notmatch 'тест буфера OpenCL пройден' -or $report -notmatch 'тест CPU') { throw 'CPU test report is invalid' }
+      - name: Verify image compiler errors are reported
+        shell: pwsh
+        run: |
+          & .\dist\AMD_OpenCL_Test.exe --test-cpu --no-pause
+          $code = $LASTEXITCODE
+          $report = Get-Content -Raw -Encoding UTF8 .\dist\AMD_OpenCL_Report.txt
+          if ($code -eq 0 -and $report -notmatch 'тест изображений и вычисления OpenCL пройден') { throw 'Image success was not reported' }
+          if ($code -eq 1 -and ($report -notmatch 'тест не пройден' -or $report -notmatch 'BUILD_PROGRAM_FAILURE')) { throw 'Unexpected image test error' }
+          if ($code -ne 0 -and $code -ne 1) { throw "Unexpected image test exit code: $code" }
+          exit 0
+      - name: Verify a CPU-only machine is not reported as an AMD GPU
+        shell: pwsh
+        run: |
+          & .\dist\AMD_OpenCL_Test.exe --no-pause
+          if ($LASTEXITCODE -ne 1) { throw "Expected a missing GPU error, got $LASTEXITCODE" }
+          $report = Get-Content -Raw -Encoding UTF8 .\dist\AMD_OpenCL_Report.txt
+          if ($report -notmatch 'устройство OpenCL не найдено') { throw 'Missing-GPU diagnostic is invalid' }
+          exit 0
+      - name: Add instructions
+        shell: pwsh
+        run: Copy-Item python/research/photo_to_cloud/AMD-CHECK-WINDOWS.txt dist/README.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SpatialPhotoCloud-AMD-OpenCL-diagnostic
+          path: |
+            dist/AMD_OpenCL_Test.exe
+            dist/README.txt
+          if-no-files-found: error
+          retention-days: 14

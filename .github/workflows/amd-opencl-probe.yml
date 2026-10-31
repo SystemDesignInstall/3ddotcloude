@@ -1,0 +1,88 @@
+name: Research Windows OpenCL photogrammetry backend
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    env:
+      PYTHONUTF8: '1'
+      POCL_CPU_MAX_CU_COUNT: '4'
+      OMP_NUM_THREADS: '4'
+      POCL_DEBUG: 'error'
+      POCL_LEAVE_KERNEL_COMPILER_TEMP_FILES: '1'
+      POCL_EXTRA_BUILD_FLAGS: '-cl-std=CL1.2'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Inspect official COLMAP-CL Windows release
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $archive = Join-Path $env:RUNNER_TEMP 'colmap-cl-1.5.zip'
+          $unpacked = Join-Path $env:RUNNER_TEMP 'colmap-cl-1.5'
+          Invoke-WebRequest -Uri 'https://github.com/openphotogrammetry/colmap-cl/releases/download/v1.5/COLMAP-CL-1.5-windows.zip' -OutFile $archive
+          $sha = (Get-FileHash -Algorithm SHA256 $archive).Hash
+          if ($sha -ne '0439D39D1231B7A6CD3B521F9C5CA327D9BEC1C88084B38AF36C942256EC1750') { throw 'Unexpected archive checksum' }
+          Expand-Archive -Path $archive -DestinationPath $unpacked
+          Get-ChildItem -Path $unpacked -Filter 'COLMAP.bat' -Recurse | ForEach-Object { Get-Content $_.FullName }
+          Get-ChildItem -Path $unpacked -Recurse -File | Where-Object { $_.Name -match '^(colmap.*\.exe|.*licen[cs]e.*|.*opencl.*\.dll)$' } | Select-Object FullName, Length
+          $exe = Get-ChildItem -Path $unpacked -Filter 'colmap.exe' -Recurse | Select-Object -First 1
+          if (-not $exe) { throw 'No colmap.exe found in the release' }
+          $lib = Join-Path $exe.Directory.Parent.FullName 'lib'
+          $env:PATH = "$lib;$($exe.DirectoryName);$env:PATH"
+          $env:QT_PLUGIN_PATH = $lib
+          & $exe.FullName -h
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $exe.FullName patch_match_stereo -h
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $exe.FullName stereo_fusion -h
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Install CPU OpenCL runtime for the isolated compatibility test
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installer = Join-Path $env:RUNNER_TEMP 'pocl.exe'
+          Invoke-WebRequest -Uri 'https://github.com/pocl/pocl/releases/download/v7.2/PoCL-7.2.0-win64.exe' -OutFile $installer
+          $sha = (Get-FileHash -Algorithm SHA256 $installer).Hash
+          if ($sha -ne '474E4321728C022132B872EA7B4C1158756F3344FFD703ADB8B0F9B5CDE37593') { throw 'Unexpected PoCL installer checksum' }
+          $process = Start-Process -FilePath $installer -ArgumentList '/S' -PassThru -Wait
+          if ($process.ExitCode -ne 0) { throw "PoCL installer returned $($process.ExitCode)" }
+          python -m pip install -r python/research/photo_to_cloud/requirements.txt pyopencl
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -c "import pyopencl as cl; print([(p.name, [(d.name, cl.device_type.to_string(d.type), 'images',d.image_support, 'version',d.version) for d in p.get_devices()]) for p in cl.get_platforms()])"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Create a modern COLMAP workspace
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python python/research/photo_to_cloud/generate_test_images.py "$env:RUNNER_TEMP/images"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python python/research/photo_to_cloud/reconstruct.py --images "$env:RUNNER_TEMP/images" --output "$env:RUNNER_TEMP/sparse-result" --mode sparse-cpu --threads 4
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -c "import pycolmap,sys; pycolmap.undistort_images(sys.argv[1],sys.argv[2],sys.argv[3],num_threads=4)" "$env:RUNNER_TEMP/workspace" "$env:RUNNER_TEMP/sparse-result/sparse/0" "$env:RUNNER_TEMP/images"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Test COLMAP-CL depth and fusion with CPU OpenCL
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $env:RUNNER_TEMP 'colmap-cl-1.5'
+          $exe = Join-Path $root 'bin/colmap.exe'
+          $lib = Join-Path $root 'lib'
+          $env:PATH = "$lib;$env:PATH"
+          $env:QT_PLUGIN_PATH = $lib
+          & $exe patch_match_stereo --workspace_path "$env:RUNNER_TEMP/workspace" --workspace_format COLMAP --PatchMatchStereo.max_image_size 640 --PatchMatchStereo.num_iterations 1 --PatchMatchStereo.geom_consistency 0
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $exe stereo_fusion --workspace_path "$env:RUNNER_TEMP/workspace" --workspace_format COLMAP --input_type photometric --output_path "$env:RUNNER_TEMP/fused.ply"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -c "import sys; sys.path.insert(0,'python/research/photo_to_cloud'); from reconstruct import ply_vertex_count; from pathlib import Path; n=ply_vertex_count(Path(sys.argv[1])); print('CPU OpenCL output points:',n); assert n >= 100" "$env:RUNNER_TEMP/fused.ply"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
