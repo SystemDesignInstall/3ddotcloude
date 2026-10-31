@@ -106,6 +106,8 @@ class PhotoCloudSafetyTests(unittest.TestCase):
         self.assertEqual(create_preview(ply, html), 2)
         text = html.read_text(encoding="utf-8")
         self.assertIn("Показано 2 из 2 точек", text)
+        self.assertIn('href="full_viewer.html"', text)
+        self.assertTrue((self.root / "full_viewer.html").is_file())
         self.assertNotIn("https://", text)
         self.assertEqual(ply.read_bytes(), data)
 

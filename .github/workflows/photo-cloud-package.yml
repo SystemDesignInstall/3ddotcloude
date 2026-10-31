@@ -35,7 +35,7 @@ jobs:
       - name: Build standalone application
         shell: pwsh
         run: |
-          python -m PyInstaller --noconfirm --clean --onedir --console --name SpatialPhotoCloud --collect-all pycolmap --collect-all PIL --collect-all pyopencl --collect-all numpy --collect-all rawpy --paths python/research/photo_to_cloud python/research/photo_to_cloud/app.py
+          python -m PyInstaller --noconfirm --clean --onedir --console --name SpatialPhotoCloud --add-data "python/research/photo_to_cloud/full_viewer.html:." --collect-all pycolmap --collect-all PIL --collect-all pyopencl --collect-all numpy --collect-all rawpy --paths python/research/photo_to_cloud python/research/photo_to_cloud/app.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Check application and window
         shell: pwsh

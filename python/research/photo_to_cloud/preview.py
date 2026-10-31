@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 from pathlib import Path
+import shutil
 import struct
 
 
@@ -119,6 +120,9 @@ def create_preview(ply: Path, output: Path, limit: int = 30000) -> int:
     page = _HTML.replace("__POINTS__", json.dumps(data, separators=(",", ":")))
     page = page.replace("__COUNT__", f"{len(samples):,} из {total:,}".replace(",", " "))
     output.write_text(page, encoding="utf-8")
+    # Browsers cannot read a sibling local PLY without a user-selected file.
+    # Include a standalone viewer which asks the user to select it locally.
+    shutil.copyfile(Path(__file__).with_name("full_viewer.html"), output.with_name("full_viewer.html"))
     return len(samples)
 
 
@@ -126,10 +130,11 @@ _HTML = """<!doctype html>
 <html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Spatial Photo Cloud — просмотр</title>
 <style>*{box-sizing:border-box}body{margin:0;background:#101923;color:#e7eef5;font:15px system-ui,sans-serif}
-header{padding:14px 20px;background:#192a38}h1{font-size:18px;margin:0 0 5px}p{margin:0;color:#b8c9d5}
-canvas{display:block;width:100vw;height:calc(100vh - 78px);touch-action:none;cursor:grab}canvas:active{cursor:grabbing}</style></head>
+header{padding:14px 20px;background:#192a38}h1{font-size:18px;margin:0 0 5px}p{margin:0;color:#b8c9d5}a{color:#82d9f2}
+canvas{display:block;width:100vw;height:calc(100vh - 104px);touch-action:none;cursor:grab}canvas:active{cursor:grabbing}</style></head>
 <body><header><h1>Облако точек — предварительный просмотр</h1>
-<p>Показано __COUNT__ точек. Вращение: мышь или палец; масштаб: колесо. Полное облако находится в файле PLY.</p></header>
+<p>Показано __COUNT__ точек. Вращение: мышь или палец; масштаб: колесо.</p>
+<p><a href="full_viewer.html">Открыть полный просмотр</a> и выбрать файл dense.ply.</p></header>
 <canvas id="view"></canvas><script>
 const points=__POINTS__, canvas=document.getElementById('view'), ctx=canvas.getContext('2d');
 let yaw=.35,pitch=-.2,zoom=1,drag=null,scheduled=false;
