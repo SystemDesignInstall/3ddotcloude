@@ -17,9 +17,10 @@ class Element {
     this.disabled=/\sdisabled(?:\s|>|=)/.test(attrs); this.value=(attrs.match(/\bvalue="([^"]*)"/)||[])[1]||'';
     this.textContent=''; this.className=''; this.style={}; this.listeners={}; this.attributes={};
     this.clientWidth=1200; this.clientHeight=700; this.width=1200; this.height=700;
+    this.dataset={};for(const m of attrs.matchAll(/\bdata-([a-z-]+)="([^"]*)"/g))this.dataset[m[1].replace(/-([a-z])/g,(_,x)=>x.toUpperCase())]=m[2];
   }
   addEventListener(type, callback) { (this.listeners[type] ||= []).push(callback); }
-  dispatch(type) { if(this.disabled)return; for(const fn of this.listeners[type]||[]) fn({target:this,preventDefault(){},button:0}); }
+  dispatch(type,extra={}) { if(this.disabled)return; for(const fn of this.listeners[type]||[]) fn({target:this,preventDefault(){},button:0,...extra}); }
   setAttribute(name,value) { this.attributes[name]=value; }
   removeAttribute(name) { delete this.attributes[name]; }
   querySelectorAll() { return []; }
@@ -33,8 +34,10 @@ const gl = new Proxy({NO_ERROR:0,COMPILE_STATUS:1,LINK_STATUS:2,FRAMEBUFFER_COMP
   {get:(target,key)=>key in target?target[key]:(()=>{})});
 const elements={};
 for(const match of html.matchAll(/<(\w+)([^>]*\bid="([^"]+)"[^>]*)>/g)) elements[match[3]]=new Element(match[3],match[1],match[2]);
-elements.units.value='1'; elements['up-axis'].value='y';
-const document={getElementById:id=>elements[id],querySelectorAll:()=>Object.values(elements).filter(e=>['BUTTON','INPUT','SELECT'].includes(e.tagName)),addEventListener(){},pointerLockElement:null};
+const axisButtons=Array.from(html.matchAll(/<button([^>]*\bdata-axis="[^"]+"[^>]*)>/g),m=>new Element('', 'button',m[1]));
+elements.orientation.querySelectorAll=()=>axisButtons;
+elements.units.value='1'; elements['up-axis'].value='y';elements['rotation-step'].value='0.1';
+const document={getElementById:id=>elements[id],querySelectorAll:()=>[...Object.values(elements).filter(e=>['BUTTON','INPUT','SELECT'].includes(e.tagName)),...axisButtons],addEventListener(){},pointerLockElement:null};
 const localFetch = (url,options={})=>{
   const headers=new Headers(options.headers||{});
   if(options.method&&options.method!=='GET')headers.set('Origin',address.origin);
@@ -61,11 +64,27 @@ function approximate(actual,expected){actual.forEach((v,i)=>assert(Math.abs(v-ex
   await waitFor(()=>elements.status.textContent.includes('Загружено точек:'));
   assert.equal(elements['save-current-alignment'].hidden,false);
   elements['orientation-toggle'].dispatch('click');
+  const nudge=(axis,direction)=>axisButtons.find(b=>b.dataset.axis===axis&&b.dataset.step===String(direction)).dispatch('click');
+  elements['rotation-step'].value='0.01';nudge('x',1);nudge('x',1);nudge('x',1);
+  assert.equal(elements['rotate-x'].value,'0.03');assert.equal(elements['angle-x'].value,'0,03');
+  nudge('x',-1);assert.equal(elements['angle-x'].value,'0,02');
+  elements['angle-x'].value='12,34';elements['angle-x'].dispatch('input');assert.equal(elements['rotate-x'].value,'12.34');
+  elements['angle-x'].dispatch('keydown',{key:'ArrowUp'});assert.equal(elements['angle-x'].value,'12,35');
+  elements['angle-x'].dispatch('keydown',{key:'ArrowDown'});assert.equal(elements['angle-x'].value,'12,34');
+  elements['angle-x'].value='181';elements['angle-x'].dispatch('input');assert.equal(elements['angle-error'].hidden,false);assert.equal(elements['save-current-alignment'].disabled,true);assert.equal(elements['prepare-aligned'].disabled,true);
+  elements['calibration-toggle'].dispatch('click');assert.equal(elements.orientation.hidden,false,'invalid angle must remain visible');
+  elements['save-current-alignment'].dispatch('click');assert.deepEqual(fs.readFileSync(cloudPath),initial);
+  elements['angle-x'].value='2,345';elements['angle-x'].dispatch('input');assert.equal(elements['save-current-alignment'].disabled,true);
+  elements['angle-x'].value='180';elements['angle-x'].dispatch('input');nudge('x',1);assert.equal(elements['angle-x'].value,'180');nudge('x',-1);assert.equal(elements['angle-x'].value,'179,99');
+  elements['angle-x'].value='-180';elements['angle-x'].dispatch('input');nudge('x',-1);assert.equal(elements['angle-x'].value,'-180');
+  nudge('y',-1);assert.equal(elements['angle-y'].value,'-0,01');elements['angle-z'].value='1,23';elements['angle-z'].dispatch('input');assert.equal(elements['rotate-z'].value,'1.23');
+  elements['reset-orientation'].dispatch('click');assert.equal(elements['angle-y'].value,'0');assert.equal(elements['angle-z'].value,'0');
   elements['rotate-x'].value='90';elements['rotate-x'].dispatch('input');
+  assert.equal(elements['angle-x'].value,'90');assert.equal(elements['angle-error'].hidden,true);
   elements['up-axis'].value='z';elements['up-axis'].dispatch('change');
   const viewBefore=vm.runInContext('({yaw,pitch,panX,panY})',context);
   elements['save-current-alignment'].dispatch('click');
-  assert(elements['rotate-x'].disabled,'editing must be locked while writing');
+  assert(elements['rotate-x'].disabled&&elements['angle-x'].disabled,'editing must be locked while writing');
   await waitFor(()=>elements.status.textContent.includes('Сохранено в исходный PLY'));
   assert.equal(elements['rotate-x'].disabled,false);
   assert.deepEqual(JSON.parse(JSON.stringify(vm.runInContext('({yaw,pitch,panX,panY})',context))),JSON.parse(JSON.stringify(viewBefore)));
@@ -78,6 +97,13 @@ function approximate(actual,expected){actual.forEach((v,i)=>assert(Math.abs(v-ex
   await waitFor(()=>elements.status.textContent.includes('Сохранено в исходный PLY')&&!elements['save-current-alignment'].disabled);
   approximate(point(fs.readFileSync(cloudPath)),point(transformed));
   assert.equal(fs.readdirSync(path.join(path.dirname(cloudPath),'.SpatialPhotoCloud-backups')).length,1);
+  elements['angle-x'].value='-89,99';elements['angle-x'].dispatch('input');
+  elements['save-current-alignment'].dispatch('click');
+  await waitFor(()=>elements.status.textContent.includes('Сохранено в исходный PLY')&&!elements['save-current-alignment'].disabled);
+  const finelyRotated=point(fs.readFileSync(cloudPath)),radians=.01*Math.PI/180;
+  approximate(finelyRotated,[0,.5*Math.cos(radians),.5+.5*Math.sin(radians),0,-Math.cos(radians),-Math.sin(radians)]);
+  assert(Math.abs(finelyRotated[2]-.5)>0.00005,'0.01 degree must change the saved geometry');
+  assert.equal(elements['angle-x'].value,'-90');
   const external=Buffer.from(fs.readFileSync(cloudPath));external[external.length-1]^=1;fs.writeFileSync(cloudPath,external);
   fs.utimesSync(cloudPath,new Date(Date.now()+10000),new Date(Date.now()+10000));
   elements['save-current-alignment'].dispatch('click');
