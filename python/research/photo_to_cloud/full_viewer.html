@@ -18,7 +18,7 @@ main{flex:1;height:0;min-height:320px;position:relative}canvas{width:100%;height
 .hint{position:absolute;bottom:14px;left:16px;max-width:calc(100% - 32px);padding:8px 11px;background:#101923dc;border-radius:6px;color:var(--muted);pointer-events:none}
 .crosshair{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);color:#fff;text-shadow:0 1px 5px #000;font-size:25px;line-height:1;pointer-events:none}
 .calibration{width:100%;display:flex;flex-wrap:wrap;gap:9px 12px;align-items:center;padding:12px;background:#102330;border:1px solid #385166;border-radius:7px}.calibration p{width:100%;margin:0}.calibration label{display:flex;gap:6px;align-items:center}.calibration input,.calibration select{font:inherit;padding:6px;border-radius:5px;border:1px solid #567083;background:#101923;color:var(--ink)}.calibration input{width:105px}.calibration a{color:#9be6ff;font-weight:700}.marker{position:absolute;transform:translate(-50%,-50%);width:22px;height:22px;display:grid;place-items:center;background:#ffdc69;color:#14212a;border:2px solid #fff;border-radius:50%;font-size:12px;font-weight:800;pointer-events:none;box-shadow:0 1px 8px #000}
-.orientation{width:100%;display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;padding:12px;background:#102330;border:1px solid #385166;border-radius:7px}.orientation p{width:100%;margin:0}.orientation label{display:flex;gap:6px;align-items:center}.orientation input[type=range]{width:130px}.orientation select{font:inherit;padding:6px;border-radius:5px;border:1px solid #567083;background:#101923;color:var(--ink)}.orientation output{min-width:45px;font-variant-numeric:tabular-nums}.orientation button.small{padding:5px 8px}.orientation a{color:#9be6ff;font-weight:700}.grid{position:absolute;inset:0;pointer-events:none;background-image:linear-gradient(to right,#b7d9e32c 1px,transparent 1px),linear-gradient(to bottom,#b7d9e32c 1px,transparent 1px);background-size:10% 10%;background-position:center}
+.orientation{width:100%;display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;padding:12px;background:#102330;border:1px solid #385166;border-radius:7px}.orientation p{width:100%;margin:0}.orientation label{display:flex;gap:6px;align-items:center}.orientation input[type=range]{width:115px}.orientation select,.orientation input.angle-entry{font:inherit;padding:6px;border-radius:5px;border:1px solid #567083;background:#101923;color:var(--ink)}.orientation input.angle-entry{width:72px;font-variant-numeric:tabular-nums}.orientation input[aria-invalid=true]{border-color:#ffb2ad;outline:1px solid #ffb2ad}.axis-control{display:flex;flex-wrap:wrap;gap:5px;align-items:center}.angle-error{color:#ffb2ad!important}.orientation button.small{padding:5px 8px}.orientation a{color:#9be6ff;font-weight:700}.grid{position:absolute;inset:0;pointer-events:none;background-image:linear-gradient(to right,#b7d9e32c 1px,transparent 1px),linear-gradient(to bottom,#b7d9e32c 1px,transparent 1px);background-size:10% 10%;background-position:center}
 @media(max-width:800px){main{min-height:55vh}.hint{font-size:12px}header{padding:12px}}
 </style>
 </head>
@@ -49,10 +49,12 @@ main{flex:1;height:0;min-height:320px;position:relative}canvas{width:100%;height
     <p>Выбирайте различимые точки на одном объекте. Для проверки измерьте ещё одно известное расстояние; реконструкция может содержать искажения. Если скачивание в окне чата заблокировано, скачайте этот HTML и откройте его в Edge или Chrome.</p>
   </div>
   <div id="orientation" class="orientation" hidden>
-    <p>Поверните само облако по сетке. Для проверки используйте вид спереди и сверху.</p>
-    <label>Наклон X <input id="rotate-x" type="range" min="-180" max="180" step="0.1" value="0"><output id="angle-x">0°</output></label><button class="secondary small" type="button" data-axis="x" data-turn="-90">−90°</button><button class="secondary small" type="button" data-axis="x" data-turn="90">+90°</button>
-    <label>Поворот Y <input id="rotate-y" type="range" min="-180" max="180" step="0.1" value="0"><output id="angle-y">0°</output></label><button class="secondary small" type="button" data-axis="y" data-turn="-90">−90°</button><button class="secondary small" type="button" data-axis="y" data-turn="90">+90°</button>
-    <label>Наклон Z <input id="rotate-z" type="range" min="-180" max="180" step="0.1" value="0"><output id="angle-z">0°</output></label><button class="secondary small" type="button" data-axis="z" data-turn="-90">−90°</button><button class="secondary small" type="button" data-axis="z" data-turn="90">+90°</button>
+    <p>Поверните облако по сетке. Точный угол можно ввести с клавиатуры или менять кнопками −/+.</p>
+    <label>Шаг кнопок и стрелок <select id="rotation-step"><option value="1">1°</option><option value="0.1" selected>0,1°</option><option value="0.01">0,01°</option></select></label>
+    <div class="axis-control" role="group" aria-label="Наклон X"><label>Наклон X <input id="rotate-x" type="range" min="-180" max="180" step="0.01" value="0"></label><input id="angle-x" class="angle-entry" type="text" inputmode="decimal" value="0" aria-label="Угол X в градусах">°<button class="secondary small" type="button" data-axis="x" data-step="-1" aria-label="Уменьшить угол X">−</button><button class="secondary small" type="button" data-axis="x" data-step="1" aria-label="Увеличить угол X">+</button><button class="secondary small" type="button" data-axis="x" data-turn="-90">−90°</button><button class="secondary small" type="button" data-axis="x" data-turn="90">+90°</button></div>
+    <div class="axis-control" role="group" aria-label="Поворот Y"><label>Поворот Y <input id="rotate-y" type="range" min="-180" max="180" step="0.01" value="0"></label><input id="angle-y" class="angle-entry" type="text" inputmode="decimal" value="0" aria-label="Угол Y в градусах">°<button class="secondary small" type="button" data-axis="y" data-step="-1" aria-label="Уменьшить угол Y">−</button><button class="secondary small" type="button" data-axis="y" data-step="1" aria-label="Увеличить угол Y">+</button><button class="secondary small" type="button" data-axis="y" data-turn="-90">−90°</button><button class="secondary small" type="button" data-axis="y" data-turn="90">+90°</button></div>
+    <div class="axis-control" role="group" aria-label="Наклон Z"><label>Наклон Z <input id="rotate-z" type="range" min="-180" max="180" step="0.01" value="0"></label><input id="angle-z" class="angle-entry" type="text" inputmode="decimal" value="0" aria-label="Угол Z в градусах">°<button class="secondary small" type="button" data-axis="z" data-step="-1" aria-label="Уменьшить угол Z">−</button><button class="secondary small" type="button" data-axis="z" data-step="1" aria-label="Увеличить угол Z">+</button><button class="secondary small" type="button" data-axis="z" data-turn="-90">−90°</button><button class="secondary small" type="button" data-axis="z" data-turn="90">+90°</button></div>
+    <p id="angle-error" class="angle-error" role="status" hidden>Введите угол от −180° до 180° с точностью до 0,01°.</p>
     <button class="secondary" id="front-view" type="button">Вид спереди</button><button class="secondary" id="top-view" type="button">Вид сверху</button><button class="secondary" id="reset-orientation" type="button">Сбросить поворот</button>
     <label>Вертикальная ось в PLY <select id="up-axis"><option value="y">Y</option><option value="z">Z (для CAD)</option></select></label>
     <button id="save-current-alignment" type="button" hidden>Сохранить положение в этот PLY</button>
@@ -195,12 +197,13 @@ self.onmessage=async e=>{try{if(e.data&&e.data.kind==='export')await exportScale
 const canvas=document.getElementById('view'),status=document.getElementById('status'),fileInput=document.getElementById('file'),sizeInput=document.getElementById('size'),brightness=document.getElementById('brightness');
 const orbitButton=document.getElementById('orbit-mode'),flightButton=document.getElementById('flight-mode'),speed=document.getElementById('speed'),speedControl=document.getElementById('speed-control'),hint=document.getElementById('hint'),crosshair=document.getElementById('crosshair');
 const calibrationToggle=document.getElementById('calibration-toggle'),calibration=document.getElementById('calibration'),calibrationStatus=document.getElementById('calibration-status'),choosePoints=document.getElementById('choose-points'),knownDistance=document.getElementById('known-distance'),units=document.getElementById('units'),applyCalibration=document.getElementById('apply-calibration'),prepareExport=document.getElementById('prepare-export'),download=document.getElementById('download'),markers=[document.getElementById('marker-a'),document.getElementById('marker-b')];
-const orientationToggle=document.getElementById('orientation-toggle'),orientation=document.getElementById('orientation'),alignmentGrid=document.getElementById('alignment-grid'),rotations=['x','y','z'].map(a=>document.getElementById('rotate-'+a)),angleLabels=['x','y','z'].map(a=>document.getElementById('angle-'+a)),upAxis=document.getElementById('up-axis'),prepareAligned=document.getElementById('prepare-aligned'),downloadAligned=document.getElementById('download-aligned');
+const orientationToggle=document.getElementById('orientation-toggle'),orientation=document.getElementById('orientation'),alignmentGrid=document.getElementById('alignment-grid'),rotations=['x','y','z'].map(a=>document.getElementById('rotate-'+a)),angleFields=['x','y','z'].map(a=>document.getElementById('angle-'+a)),angleError=document.getElementById('angle-error'),rotationStep=document.getElementById('rotation-step'),upAxis=document.getElementById('up-axis'),prepareAligned=document.getElementById('prepare-aligned'),downloadAligned=document.getElementById('download-aligned');
 const saveCurrentButtons=[document.getElementById('save-current-calibration'),document.getElementById('save-current-alignment')];
 const gl=canvas.getContext('webgl',{antialias:false,alpha:false,depth:true,preserveDrawingBuffer:false});
 let program=null,posBuffer=null,colBuffer=null,count=0,extents=[.5,.5,.5],yaw=.35,pitch=-.2,zoom=1,panX=0,panY=0,drag=null,worker=null,frame=0;
 let mode='orbit',eye=[0,0,-1],savedOrbit=null,lastMoveTime=null;
 let pointPositions=null,sourceScale=1,sourceCenter=[0,0,0],sourceUp='y',loadedFile=null,metricFactor=null,selectedPoints=[],pickBuffer=null,pickFramebuffer=null,pickTexture=null,pickDepth=null,pickWidth=0,pickHeight=0,exportWorker=null,downloadUrl=null,saving=false,disabledBeforeSave=[];
+const validAngles=[true,true,true];
 const heldKeys=new Set();
 function statusText(text,kind=''){status.textContent=text;status.className='status '+kind;}
 function shader(type,source){const sh=gl.createShader(type);gl.shaderSource(sh,source);gl.compileShader(sh);if(!gl.getShaderParameter(sh,gl.COMPILE_STATUS))throw Error('Ошибка WebGL: '+gl.getShaderInfoLog(sh));return sh;}
@@ -290,8 +293,9 @@ function selectPoint(clientX,clientY){
 function selectedDistance(){return selectedPoints.length===2?Math.hypot(...selectedPoints[0].map((v,i)=>v-selectedPoints[1][i]))*sourceScale:0;}
 function updateCalibration(){
  const n=selectedPoints.length,distance=selectedDistance(),f=n=>new Intl.NumberFormat('ru-RU',{maximumSignificantDigits:7}).format(n);
- applyCalibration.disabled=saving||n!==2||!Number.isFinite(distance)||distance<=0;prepareExport.disabled=saving||metricFactor===null||!!exportWorker;prepareAligned.disabled=saving||!!exportWorker;
- saveCurrentButtons.forEach((button,i)=>{button.hidden=!loadedFile||loadedFile.kind!=='app-file';button.disabled=saving||!!exportWorker||(i===0&&metricFactor===null);});
+ const invalid=validAngles.some(valid=>!valid);angleError.hidden=!invalid;
+ applyCalibration.disabled=saving||n!==2||!Number.isFinite(distance)||distance<=0;prepareExport.disabled=saving||invalid||metricFactor===null||!!exportWorker;prepareAligned.disabled=saving||invalid||!!exportWorker;
+ saveCurrentButtons.forEach((button,i)=>{button.hidden=!loadedFile||loadedFile.kind!=='app-file';button.disabled=saving||invalid||!!exportWorker||(i===0&&metricFactor===null);});
  const prefix=metricFactor===null?'Масштаб пока не задан. ':'Масштаб задан. ';
  if(n===0)calibrationStatus.textContent=prefix+'Выберите две точки на облаке.';
  else if(n===1)calibrationStatus.textContent=prefix+'Точка A выбрана. Выберите точку B.';
@@ -302,11 +306,17 @@ function updateCalibration(){
 function clearDownload(){if(downloadUrl)URL.revokeObjectURL(downloadUrl);downloadUrl=null;for(const link of [download,downloadAligned]){link.hidden=true;link.removeAttribute('href');}}
 function cancelExport(){if(exportWorker)exportWorker.terminate();exportWorker=null;clearDownload();}
 function setCalibrationOpen(open){
+ if(open&&validAngles.some(valid=>!valid)){angleFields[validAngles.indexOf(false)].focus();return;}
  if(open){orbitMode();setOrientationOpen(false);}calibration.hidden=!open;calibrationToggle.setAttribute('aria-expanded',String(open));updateCalibration();refresh();
 }
 function setOrientationOpen(open){if(open){orbitMode();calibration.hidden=true;calibrationToggle.setAttribute('aria-expanded','false');}orientation.hidden=!open;alignmentGrid.hidden=!open;orientationToggle.setAttribute('aria-expanded',String(open));refresh();}
-function updateRotation(){angleLabels.forEach((out,i)=>out.textContent=rotations[i].value+'°');cancelExport();updateCalibration();refresh();}
-function initialOrientation(){rotations.forEach((input,i)=>input.value=(i===0&&sourceUp==='z')?'-90':'0');upAxis.value=sourceUp;updateRotation();}
+function formatAngle(value){const n=Math.round(Number(value)*100)/100;return String(Object.is(n,-0)?0:n).replace('.',',');}
+function syncAngle(i){angleFields[i].value=formatAngle(rotations[i].value);validAngles[i]=true;angleFields[i].setAttribute('aria-invalid','false');}
+function updateRotation(){cancelExport();updateCalibration();refresh();}
+function initialOrientation(){rotations.forEach((input,i)=>{input.value=(i===0&&sourceUp==='z')?'-90':'0';syncAngle(i);});upAxis.value=sourceUp;updateRotation();}
+function parseAngle(text){const value=text.trim().replace('−','-').replace(',','.');if(!/^[+-]?(?:\d+(?:\.\d{0,2})?|\.\d{1,2})$/.test(value))return null;const n=Number(value);return Number.isFinite(n)&&n>=-180&&n<=180?n:null;}
+function acceptAngle(i){const value=parseAngle(angleFields[i].value);validAngles[i]=value!==null;angleFields[i].setAttribute('aria-invalid',String(value===null));if(value!==null)rotations[i].value=String(value);updateRotation();}
+function nudgeAngle(i,direction){const ticks=Math.round(Number(rotations[i].value)*100)+direction*Math.round(Number(rotationStep.value)*100);rotations[i].value=String(Math.max(-18000,Math.min(18000,ticks))/100);syncAngle(i);updateRotation();}
 function applyScale(){
  const distance=selectedDistance(),known=Number(knownDistance.value.trim().replace(',','.'))*Number(units.value),factor=known/distance;
  if(!knownDistance.value||!Number.isFinite(known)||known<=0||!Number.isFinite(distance)||distance<=0||!Number.isFinite(factor)||factor<=0){calibrationStatus.textContent='Введите положительное расстояние и выберите две разные точки.';return;}
@@ -319,7 +329,7 @@ function setSaving(value){
  else{disabledBeforeSave.forEach(([el,disabled])=>el.disabled=disabled);disabledBeforeSave=[];updateCalibration();}
 }
 function startExport(writeOriginal=false){
- if(!loadedFile||exportWorker||saving||(writeOriginal&&loadedFile.kind!=='app-file'))return;
+ if(!loadedFile||exportWorker||saving||validAngles.some(valid=>!valid)||(writeOriginal&&loadedFile.kind!=='app-file'))return;
  clearDownload();const active=makeWorker(),isMetric=metricFactor!==null,angles=rotationAngles(),up=upAxis.value,factor=metricFactor??1;
  const state={file:loadedFile,yaw,pitch,zoom,panX,panY,scale:sourceScale,factor,panel:orientation.hidden?'calibration':'orientation'};
  if(writeOriginal)setSaving(true);exportWorker=active;updateCalibration();
@@ -365,7 +375,7 @@ function grabMouse(){
  try{const pending=canvas.requestPointerLock();if(pending&&pending.catch)pending.catch(()=>{});}catch(_error){}
 }
 function flightMode(){
- if(!count||mode==='flight')return;
+ if(!count||mode==='flight')return;if(validAngles.some(valid=>!valid)){angleFields[validAngles.indexOf(false)].focus();return;}
  if(!calibration.hidden)setCalibrationOpen(false);
  if(!orientation.hidden)setOrientationOpen(false);
  savedOrbit={yaw,pitch,zoom,panX,panY};normalizeFlightPitch();
@@ -400,9 +410,16 @@ fileInput.addEventListener('change',()=>{load(fileInput.files[0]);fileInput.valu
 document.getElementById('reset').addEventListener('click',resetView);sizeInput.addEventListener('input',refresh);brightness.addEventListener('input',refresh);
 orbitButton.addEventListener('click',()=>orbitMode());flightButton.addEventListener('click',flightMode);
 calibrationToggle.addEventListener('click',()=>setCalibrationOpen(calibration.hidden));choosePoints.addEventListener('click',()=>{selectedPoints=[];knownDistance.value='';updateCalibration();refresh();});applyCalibration.addEventListener('click',applyScale);prepareExport.addEventListener('click',()=>startExport());saveCurrentButtons.forEach(button=>button.addEventListener('click',()=>startExport(true)));
-orientationToggle.addEventListener('click',()=>{const opening=orientation.hidden;setOrientationOpen(opening);if(opening)fixedView(false);});
-rotations.forEach(input=>input.addEventListener('input',updateRotation));
-orientation.querySelectorAll('[data-axis]').forEach(button=>button.addEventListener('click',()=>{const i=['x','y','z'].indexOf(button.dataset.axis),a=Number(rotations[i].value)+Number(button.dataset.turn);rotations[i].value=String(((a+180)%360+360)%360-180);updateRotation();}));
+orientationToggle.addEventListener('click',()=>{const opening=orientation.hidden;if(!opening&&validAngles.some(valid=>!valid)){angleFields[validAngles.indexOf(false)].focus();return;}setOrientationOpen(opening);if(opening)fixedView(false);});
+rotations.forEach((input,i)=>input.addEventListener('input',()=>{syncAngle(i);updateRotation();}));
+angleFields.forEach((input,i)=>{
+ input.addEventListener('input',()=>acceptAngle(i));
+ input.addEventListener('blur',()=>{if(validAngles[i])syncAngle(i);});
+ input.addEventListener('keydown',e=>{if(e.key==='ArrowUp'||e.key==='ArrowDown'){e.preventDefault();nudgeAngle(i,e.key==='ArrowUp'?1:-1);}else if(e.key==='Enter'){e.preventDefault();if(validAngles[i])syncAngle(i);}});
+});
+orientation.querySelectorAll('[data-axis]').forEach(button=>button.addEventListener('click',()=>{
+ const i=['x','y','z'].indexOf(button.dataset.axis);if(button.dataset.step!==undefined)nudgeAngle(i,Number(button.dataset.step));else{const a=Number(rotations[i].value)+Number(button.dataset.turn);rotations[i].value=String(((a+180)%360+360)%360-180);syncAngle(i);updateRotation();}
+}));
 document.getElementById('front-view').addEventListener('click',()=>fixedView(false));document.getElementById('top-view').addEventListener('click',()=>fixedView(true));document.getElementById('reset-orientation').addEventListener('click',initialOrientation);upAxis.addEventListener('change',updateRotation);prepareAligned.addEventListener('click',()=>startExport());
 function look(dx,dy){yaw-=dx*.0025;pitch=Math.max(-1.52,Math.min(1.52,pitch-dy*.0025));refresh();}
 canvas.addEventListener('pointerdown',e=>{if(saving||e.button!==0||!count)return;canvas.focus({preventScroll:true});if(mode==='flight'&&document.pointerLockElement===canvas)return;drag={x:e.clientX,y:e.clientY,startX:e.clientX,startY:e.clientY,moved:false,pan:e.shiftKey};canvas.setPointerCapture(e.pointerId);});
