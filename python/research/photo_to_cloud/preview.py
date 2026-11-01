@@ -141,9 +141,9 @@ let yaw=.35,pitch=-.2,zoom=1,drag=null,scheduled=false;
 function draw(){scheduled=false;const d=window.devicePixelRatio||1,w=canvas.clientWidth,h=canvas.clientHeight;
  canvas.width=Math.round(w*d);canvas.height=Math.round(h*d);ctx.setTransform(d,0,0,d,0,0);ctx.fillStyle='#101923';ctx.fillRect(0,0,w,h);
  const s=Math.min(w,h)*.82*zoom,cy=Math.cos(yaw),sy=Math.sin(yaw),cp=Math.cos(pitch),sp=Math.sin(pitch);
- for(const p of points){const x=cy*p[0]-sy*p[2],z=sy*p[0]+cy*p[2],y=cp*p[1]-sp*z;
-  const px=w/2+x*s,py=h/2-y*s;if(px<0||py<0||px>=w||py>=h)continue;
-  ctx.fillStyle=`rgb(${p[3]},${p[4]},${p[5]})`;ctx.fillRect(px,py,1.6,1.6);}}
+ const projected=[];for(const p of points){const x=cy*p[0]-sy*p[2],z=sy*p[0]+cy*p[2],y=cp*p[1]-sp*z,depth=sp*p[1]+cp*z;
+  const px=w/2-x*s,py=h/2-y*s;if(px<0||py<0||px>=w||py>=h)continue;projected.push([px,py,depth,p[3],p[4],p[5]]);}
+ projected.sort((a,b)=>b[2]-a[2]);for(const p of projected){ctx.fillStyle=`rgb(${p[3]},${p[4]},${p[5]})`;ctx.fillRect(p[0],p[1],1.6,1.6);}}
 function refresh(){if(!scheduled){scheduled=true;requestAnimationFrame(draw)}}
 canvas.addEventListener('pointerdown',e=>{drag=[e.clientX,e.clientY];canvas.setPointerCapture(e.pointerId)});
 canvas.addEventListener('pointermove',e=>{if(!drag)return;yaw+=(e.clientX-drag[0])*.008;pitch+=(e.clientY-drag[1])*.008;drag=[e.clientX,e.clientY];refresh()});

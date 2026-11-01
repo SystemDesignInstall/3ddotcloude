@@ -64,6 +64,15 @@ function approximate(actual,expected){actual.forEach((v,i)=>assert(Math.abs(v-ex
   await waitFor(()=>elements.status.textContent.includes('Загружено точек:'));
   assert.equal(elements['save-current-alignment'].hidden,false);
   elements['orientation-toggle'].dispatch('click');
+  elements['angle-x'].value='12,34';elements['angle-x'].dispatch('input');elements['angle-z'].value='17,25';elements['angle-z'].dispatch('input');
+  vm.runInContext('yaw=.43;pitch=-.21',context);
+  const project=()=>JSON.parse(JSON.stringify(vm.runInContext(`(()=>{const [px,py,pz]=rotatePoint([.12,.19,.27]);const cy=Math.cos(yaw),sy=Math.sin(yaw),cp=Math.cos(pitch),sp=Math.sin(pitch),x=cy*px-sy*pz,z=sy*px+cy*pz;return [-x,cp*py-sp*z,sp*py+cp*z]})()`,context)));
+  let before=project();elements['opposite-view'].dispatch('click');let after=project();approximate(after,[-before[0],before[1],-before[2]]);
+  elements['opposite-view'].dispatch('click');approximate(project(),before);
+  elements['mirror-cloud'].dispatch('click');after=project();approximate(after,[-before[0],before[1],before[2]]);assert.equal(elements['mirror-cloud'].attributes['aria-pressed'],'true');assert.deepEqual(fs.readFileSync(cloudPath),initial);
+  vm.runInContext('sourceHasOtherElements=true;updateCalibration()',context);assert.equal(elements['mirror-warning'].hidden,false);assert.equal(elements['save-current-alignment'].disabled,true);
+  elements['mirror-cloud'].dispatch('click');assert.equal(elements['mirror-cloud'].attributes['aria-pressed'],'false');vm.runInContext('sourceHasOtherElements=false;updateCalibration()',context);approximate(project(),before);
+  elements['reset-orientation'].dispatch('click');elements['front-view'].dispatch('click');
   const nudge=(axis,direction)=>axisButtons.find(b=>b.dataset.axis===axis&&b.dataset.step===String(direction)).dispatch('click');
   elements['rotation-step'].value='0.01';nudge('x',1);nudge('x',1);nudge('x',1);
   assert.equal(elements['rotate-x'].value,'0.03');assert.equal(elements['angle-x'].value,'0,03');
@@ -87,7 +96,8 @@ function approximate(actual,expected){actual.forEach((v,i)=>assert(Math.abs(v-ex
   assert(elements['rotate-x'].disabled&&elements['angle-x'].disabled,'editing must be locked while writing');
   await waitFor(()=>elements.status.textContent.includes('Сохранено в исходный PLY'));
   assert.equal(elements['rotate-x'].disabled,false);
-  assert.deepEqual(JSON.parse(JSON.stringify(vm.runInContext('({yaw,pitch,panX,panY})',context))),JSON.parse(JSON.stringify(viewBefore)));
+  const viewAfter=vm.runInContext('({yaw,pitch,panX,panY})',context);
+  approximate([viewAfter.yaw,viewAfter.pitch,viewAfter.panX,viewAfter.panY],[viewBefore.yaw,viewBefore.pitch,viewBefore.panX,viewBefore.panY]);
   const transformed=fs.readFileSync(cloudPath);approximate(point(transformed),[0,.5,.5,0,-1,0]);
   assert(transformed.subarray(0,transformed.indexOf('end_header')).includes('comment SpatialPhotoCloud up z'));
   const backups=fs.readdirSync(path.join(path.dirname(cloudPath),'.SpatialPhotoCloud-backups'));
@@ -104,6 +114,17 @@ function approximate(actual,expected){actual.forEach((v,i)=>assert(Math.abs(v-ex
   approximate(finelyRotated,[0,.5*Math.cos(radians),.5+.5*Math.sin(radians),0,-Math.cos(radians),-Math.sin(radians)]);
   assert(Math.abs(finelyRotated[2]-.5)>0.00005,'0.01 degree must change the saved geometry');
   assert.equal(elements['angle-x'].value,'-90');
+  const beforeMirror=fs.readFileSync(cloudPath);elements['mirror-cloud'].dispatch('click');assert.equal(elements['mirror-cloud'].attributes['aria-pressed'],'true');assert.deepEqual(fs.readFileSync(cloudPath),beforeMirror);
+  elements['save-current-alignment'].dispatch('click');await waitFor(()=>elements.status.textContent.includes('Сохранено в исходный PLY')&&!elements['save-current-alignment'].disabled);
+  const mirrored=point(fs.readFileSync(cloudPath));approximate(mirrored,[2,.5*Math.cos(radians),.5+.5*Math.sin(radians),0,-Math.cos(radians),-Math.sin(radians)]);assert.equal(elements['mirror-cloud'].attributes['aria-pressed'],'false');
+  assert.deepEqual(fs.readFileSync(path.join(path.dirname(cloudPath),'.SpatialPhotoCloud-backups',backups[0])),initial);
+  // An asymmetric cloud gets a different bounding-box centre after a general
+  // rotation/reflection. Saving and reopening must keep its screen position.
+  elements['angle-x'].value='-80,4';elements['angle-x'].dispatch('input');elements['angle-y'].value='23';elements['angle-y'].dispatch('input');elements['angle-z'].value='35';elements['angle-z'].dispatch('input');
+  vm.runInContext('yaw=.43;pitch=-.21;panX=.13;panY=-.09;zoom=1.4',context);elements['mirror-cloud'].dispatch('click');
+  const screenPoints=()=>JSON.parse(JSON.stringify(vm.runInContext(`(()=>{const result=[],cy=Math.cos(yaw),sy=Math.sin(yaw),cp=Math.cos(pitch),sp=Math.sin(pitch),aspect=canvas.clientWidth/canvas.clientHeight,rx=aspect>=1?1/aspect:1,ry=aspect>=1?1:aspect;for(let i=0;i<count;i++){const [px,py,pz]=rotatePoint(Array.from(pointPositions.slice(3*i,3*i+3)));const x=cy*px-sy*pz,z=sy*px+cy*pz,y=cp*py-sp*z;result.push(-x*rx*zoom+panX,y*ry*zoom+panY)}return result})()`,context)));
+  const screenBefore=screenPoints();elements['save-current-alignment'].dispatch('click');
+  await waitFor(()=>elements.status.textContent.includes('Сохранено в исходный PLY')&&!elements['save-current-alignment'].disabled);approximate(screenPoints(),screenBefore);
   const external=Buffer.from(fs.readFileSync(cloudPath));external[external.length-1]^=1;fs.writeFileSync(cloudPath,external);
   fs.utimesSync(cloudPath,new Date(Date.now()+10000),new Date(Date.now()+10000));
   elements['save-current-alignment'].dispatch('click');
