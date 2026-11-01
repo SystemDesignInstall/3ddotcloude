@@ -17,7 +17,7 @@ class ViewerUiTests(unittest.TestCase):
                   b"property float nx\nproperty float ny\nproperty float nz\n"
                   b"property uchar red\nproperty uchar green\nproperty uchar blue\nend_header\n")
         points = [(0, 0, 0, 0, 1, 0, 255, 0, 0), (2, 0, 0, 0, 1, 0, 0, 255, 0),
-                  (0, 1, 0, 0, 1, 0, 0, 0, 255), (2, 1, 0, 0, 1, 0, 255, 255, 0)]
+                  (0, 1, 0, 0, 1, 0, 0, 0, 255), (1, .5, 0, 0, 1, 0, 255, 255, 0)]
         with tempfile.TemporaryDirectory() as directory:
             cloud = Path(directory) / "room.ply"
             cloud.write_bytes(header + b"".join(struct.pack("<ffffffBBB", *p) for p in points))
