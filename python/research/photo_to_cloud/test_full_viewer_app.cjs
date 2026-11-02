@@ -25,10 +25,14 @@ class Element {
   removeAttribute(name) { delete this.attributes[name]; }
   querySelectorAll() { return []; }
   focus() {}
+  getBoundingClientRect() { return {left:0,top:0,width:this.clientWidth,height:this.clientHeight}; }
   getContext() { return gl; }
 }
+const glCalls=[];
 const gl = new Proxy({NO_ERROR:0,COMPILE_STATUS:1,LINK_STATUS:2,FRAMEBUFFER_COMPLETE:3,
+  getExtension:name=>name==='OES_element_index_uint'?{}:null,drawElements:(_mode,count)=>glCalls.push(count),
   getShaderParameter:()=>true,getProgramParameter:()=>true,getError:()=>0,
+  readPixels:(_x,_y,_w,_h,_format,_type,pixel)=>{pixel[0]=1;pixel[1]=0;pixel[2]=0;pixel[3]=0;},
   getAttribLocation:()=>0,getUniformLocation:()=>({}),createShader:()=>({}),createProgram:()=>({}),
   createBuffer:()=>({}),checkFramebufferStatus:()=>3},
   {get:(target,key)=>key in target?target[key]:(()=>{})});
@@ -62,7 +66,28 @@ function approximate(actual,expected){actual.forEach((v,i)=>assert(Math.abs(v-ex
 
 (async()=>{
   await waitFor(()=>elements.status.textContent.includes('Загружено точек:'));
+  assert(elements.status.textContent.includes('в этом PLY только точки; постройте 3D-сетку'),
+    'a point-only PLY should explain why the surface toggle is unavailable');
   assert.equal(elements['save-current-alignment'].hidden,false);
+  assert.equal(elements['coordinates-toggle'].disabled,false);
+  const zero=Array.from(vm.runInContext('absoluteOriginNormalized()',context));
+  approximate(zero,[-.5,-.25,0]);
+  vm.runInContext('updateReferenceOverlay()',context);
+  const zeroScreen=[elements['world-origin-marker'].style.left,elements['world-origin-marker'].style.top];
+  elements['coordinates-toggle'].dispatch('click');assert.equal(elements['coordinates-panel'].hidden,false);
+  elements['pick-coordinate'].dispatch('click');vm.runInContext('selectPoint(0,0)',context);
+  assert.equal(elements['coordinate-x'].textContent,'0');assert.equal(elements['coordinate-y'].textContent,'0');assert.equal(elements['coordinate-z'].textContent,'0');
+  elements['angle-x'].value='20';elements['angle-x'].dispatch('input');vm.runInContext('updateReferenceOverlay()',context);
+  assert.deepEqual([elements['world-origin-marker'].style.left,elements['world-origin-marker'].style.top],zeroScreen,
+    'absolute origin stays fixed while the cloud is rotated for alignment');
+  elements['angle-x'].value='0';elements['angle-x'].dispatch('input');
+  elements['focus-origin'].dispatch('click');vm.runInContext('updateReferenceOverlay()',context);
+  assert.deepEqual([elements['world-origin-marker'].style.left,elements['world-origin-marker'].style.top],['600px','350px'],
+    'focus command brings the absolute origin to the view centre');
+  vm.runInContext('flightMode()',context);vm.runInContext('updateReferenceOverlay()',context);
+  assert.deepEqual([elements['world-origin-marker'].style.left,elements['world-origin-marker'].style.top],['600px','350px'],
+    'flight mode keeps its camera focused on the absolute origin');
+  vm.runInContext('orbitMode()',context);
   elements['orientation-toggle'].dispatch('click');
   elements['angle-x'].value='12,34';elements['angle-x'].dispatch('input');elements['angle-z'].value='17,25';elements['angle-z'].dispatch('input');
   vm.runInContext('yaw=.43;pitch=-.21',context);
@@ -130,5 +155,14 @@ function approximate(actual,expected){actual.forEach((v,i)=>assert(Math.abs(v-ex
   elements['save-current-alignment'].dispatch('click');
   await waitFor(()=>elements.status.textContent.includes('PLY изменился вне программы'));
   assert.deepEqual(fs.readFileSync(cloudPath),external);assert.equal(elements['save-current-alignment'].disabled,false);
+  const meshPly=Buffer.from('ply\nformat ascii 1.0\nelement vertex 4\nproperty float x\nproperty float y\nproperty float z\nproperty uchar red\nproperty uchar green\nproperty uchar blue\nelement face 1\nproperty list uchar int vertex_indices\nend_header\n0 0 0 255 0 0\n1 0 0 0 255 0\n1 1 0 0 0 255\n0 1 0 255 255 255\n4 0 1 2 3\n');
+  context.meshFile={name:'mesh.ply',arrayBuffer:async()=>meshPly.buffer.slice(meshPly.byteOffset,meshPly.byteOffset+meshPly.byteLength)};
+  vm.runInContext('load(meshFile)',context);
+  await waitFor(()=>elements.status.textContent.includes('треугольников:'));
+  assert.equal(elements['surface-toggle'].disabled,false);assert.equal(elements['surface-toggle'].textContent,'Показать точки');
+  vm.runInContext('draw()',context);assert(glCalls.includes(6),'the mesh view must issue a triangle draw call');
+  elements['surface-toggle'].dispatch('click');assert.equal(elements['surface-toggle'].textContent,'Показать поверхность');
+  const callsBeforePoints=glCalls.length;vm.runInContext('draw()',context);assert.equal(glCalls.length,callsBeforePoints,'point mode must stop drawing indexed triangles');
+  elements['surface-toggle'].dispatch('click');vm.runInContext('draw()',context);assert.equal(glCalls.at(-1),6);
   console.log('Application viewer saved in place, preserved the original backup and reopened the result: PASS');
 })().catch(error=>{console.error(error);process.exit(1);});

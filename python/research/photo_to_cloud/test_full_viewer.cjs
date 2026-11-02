@@ -35,6 +35,17 @@ function header(format, properties, count=2) {
   assert.equal(result.type, 'done'); assert.deepEqual(Array.from(new Uint8Array(result.colors)), [10,20,30,11,20,30]);
   result = await parse(Buffer.concat([header('ascii', listProperties, 3), Buffer.from('1 2 3 2 7 8 10 20 30\n4 5 6 0 90 80 70\nNaN 0 0 0 1 2 3\n')]));
   assert.equal(result.type, 'done'); assert.equal(result.valid, 2); assert.equal(result.total, 3);
+  const meshAsciiHeader=Buffer.from('ply\nformat ascii 1.0\nelement vertex 4\nproperty float x\nproperty float y\nproperty float z\nproperty uchar red\nproperty uchar green\nproperty uchar blue\nelement face 1\nproperty list uchar int vertex_indices\nproperty uchar material_index\nelement edge 1\nproperty int vertex1\nproperty int vertex2\nend_header\n');
+  const meshAscii=Buffer.concat([meshAsciiHeader,Buffer.from('0 0 0 255 0 0\n1 0 0 0 255 0\n1 1 0 0 0 255\n0 1 0 255 255 255\n4 0 1 2 3 7\n0 2\n')]);
+  result=await parse(meshAscii);assert.equal(result.type,'done');assert.equal(result.faceCount,1);assert.equal(result.faceIndexCount,6);
+  assert.deepEqual(Array.from(new Uint32Array(result.indices)),[0,1,2,0,2,3]);assert.equal(result.hasOtherElements,true);
+  const badMesh=Buffer.concat([meshAsciiHeader,Buffer.from('0 0 0 255 0 0\n1 0 0 0 255 0\n1 1 0 0 0 255\n0 1 0 255 255 255\n4 0 1 2 4 7\n0 2\n')]);
+  result=await parse(badMesh);assert.equal(result.type,'error');assert(result.text.includes('вне диапазона'));
+  const meshBinaryHeader=Buffer.from('ply\nformat binary_little_endian 1.0\nelement vertex 3\nproperty float x\nproperty float y\nproperty float z\nproperty uchar red\nproperty uchar green\nproperty uchar blue\nelement face 1\nproperty list uchar int vertex_indices\nend_header\n');
+  const meshVertices=Buffer.alloc(45);[[0,0,0,255,0,0],[1,0,0,0,255,0],[0,1,0,0,0,255]].forEach((v,i)=>{const o=i*15;v.slice(0,3).forEach((x,j)=>meshVertices.writeFloatLE(x,o+j*4));v.slice(3).forEach((x,j)=>meshVertices[o+12+j]=x);});
+  const meshFace=Buffer.alloc(13);meshFace[0]=3;[0,1,2].forEach((v,i)=>meshFace.writeInt32LE(v,1+i*4));
+  result=await parse(Buffer.concat([meshBinaryHeader,meshVertices,meshFace]));assert.equal(result.type,'done');assert.equal(result.faceCount,1);
+  assert.deepEqual(Array.from(new Uint32Array(result.indices)),[0,1,2]);
   result = await parse(Buffer.concat([header('binary_little_endian', properties), binary.subarray(0, 20)]));
   assert.equal(result.type, 'error');
   const binaryFile = Buffer.concat([header('binary_little_endian', properties), binary, Buffer.from([7, 8, 9])]);
