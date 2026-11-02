@@ -35,6 +35,12 @@ def _digest(path: Path) -> str:
 
 def default_destination() -> Path:
     base = Path(os.environ.get("LOCALAPPDATA", str(Path.home())))
+    return base / "SpatialPhotoCloud" / "openmvs-2.4.0-textured"
+
+
+def legacy_destination() -> Path:
+    """Return the earlier OpenMVS location, which remains usable for CPU dense."""
+    base = Path(os.environ.get("LOCALAPPDATA", str(Path.home())))
     return base / "SpatialPhotoCloud" / "openmvs-2.4.0"
 
 
@@ -45,7 +51,7 @@ def _valid_installation(destination: Path, expected_sha: str) -> bool:
         files = manifest["files"]
         if manifest["archive_sha256"] != expected_sha or not isinstance(files, dict):
             return False
-        if not {"InterfaceCOLMAP.exe", "DensifyPointCloud.exe"}.issubset(files):
+        if not {"InterfaceCOLMAP.exe", "DensifyPointCloud.exe", "TextureMesh.exe"}.issubset(files):
             return False
         for name, checksum in files.items():
             relative = PurePosixPath(name)
@@ -91,8 +97,9 @@ def install_archive(archive: Path, destination: Path, expected_sha: str = SHA256
                         shutil.copyfileobj(source, output, length=1024 * 1024)
         except (OSError, zipfile.BadZipFile) as exc:
             raise InstallError(f"Не удалось распаковать OpenMVS: {exc}") from exc
-        if not (staging / "InterfaceCOLMAP.exe").is_file() or not (staging / "DensifyPointCloud.exe").is_file():
-            raise InstallError("В архиве не найдены необходимые программы OpenMVS.")
+        required = ("InterfaceCOLMAP.exe", "DensifyPointCloud.exe", "TextureMesh.exe")
+        if not all((staging / name).is_file() for name in required):
+            raise InstallError("В архиве не найдены InterfaceCOLMAP, DensifyPointCloud и TextureMesh.")
         files = {path.relative_to(staging).as_posix(): _digest(path) for path in staging.rglob("*") if path.is_file()}
         (staging / ".installation.json").write_text(
             json.dumps({"archive_sha256": expected_sha, "files": files}, sort_keys=True) + "\n", encoding="utf-8")

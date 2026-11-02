@@ -13,7 +13,7 @@ permissions:
 jobs:
   package:
     runs-on: windows-2022
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       PYTHONUTF8: '1'
     steps:
@@ -23,6 +23,9 @@ jobs:
           python-version: '3.12'
       - name: Install build dependencies
         run: python -m pip install -r python/research/photo_to_cloud/requirements.txt pyinstaller==6.22.3
+      - name: Run Python tests
+        working-directory: python/research/photo_to_cloud
+        run: python -m unittest discover -s . -p 'test_*.py' -v
       - name: Install CPU OpenCL runtime for the isolated package test
         shell: pwsh
         run: |

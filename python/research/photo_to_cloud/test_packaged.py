@@ -5,8 +5,11 @@ import hashlib
 import json
 from pathlib import Path
 import queue
+import struct
 import subprocess
 import threading
+
+from texture_worker import inspect_glb
 
 
 def check_cancel(executable: Path, images: Path, root: Path) -> None:
@@ -60,6 +63,81 @@ def check_dense(executable: Path, images: Path, root: Path, openmvs: Path) -> No
           f"{report['point_count']} points, {report['preview_points']} preview points", flush=True)
 
 
+def check_textured_glb(executable: Path, root: Path, openmvs: Path) -> None:
+    dense = root / "dense"
+    mesh = root / "dense" / "texturing-test-mesh.ply"
+    model = root / "dense-textured.glb"
+    _write_camera_aligned_test_mesh(dense / "dense_workspace", mesh)
+    texture_result = subprocess.run(
+        [str(executable), "--texture-worker", "--mesh", str(mesh), "--workspace", str(dense / "dense_workspace"),
+         "--openmvs-dir", str(openmvs), "--output", str(model), "--threads", "4"],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
+        check=False, timeout=900,
+    )
+    print(texture_result.stdout, flush=True)
+    if texture_result.returncode != 0 or not model.is_file():
+        raise RuntimeError(f"Packaged OpenMVS texturing failed with code {texture_result.returncode}")
+    report = inspect_glb(model)
+    print(f"Packaged textured GLB: {report['image_count']} images, "
+          f"{report['texture_count']} textures, {report['material_count']} materials", flush=True)
+
+
+def _read_first_colmap_pose(workspace: Path) -> tuple[list[list[float]], list[float]]:
+    """Read the first registered camera pose from the COLMAP binary model."""
+    sparse = workspace / "sparse"
+    model = sparse / "0" if (sparse / "0" / "images.bin").is_file() else sparse
+    image_file = model / "images.bin"
+    with image_file.open("rb") as stream:
+        count_data = stream.read(8)
+        if len(count_data) != 8:
+            raise RuntimeError(f"Invalid COLMAP image model: {image_file}")
+        count, = struct.unpack("<Q", count_data)
+        if count < 1:
+            raise RuntimeError("COLMAP image model has no registered cameras")
+        record = stream.read(struct.calcsize("<i7di"))
+        if len(record) != struct.calcsize("<i7di"):
+            raise RuntimeError("COLMAP image model has a truncated camera pose")
+        _, qw, qx, qy, qz, tx, ty, tz, _ = struct.unpack("<i7di", record)
+    rotation = [
+        [1 - 2 * (qy * qy + qz * qz), 2 * (qx * qy - qz * qw), 2 * (qx * qz + qy * qw)],
+        [2 * (qx * qy + qz * qw), 1 - 2 * (qx * qx + qz * qz), 2 * (qy * qz - qx * qw)],
+        [2 * (qx * qz - qy * qw), 2 * (qy * qz + qx * qw), 1 - 2 * (qx * qx + qy * qy)],
+    ]
+    translation = [tx, ty, tz]
+    center = [-sum(rotation[row][axis] * translation[row] for row in range(3)) for axis in range(3)]
+    return rotation, center
+
+
+def _write_camera_aligned_test_mesh(workspace: Path, output: Path) -> None:
+    """Place a small plane in a real reconstructed camera's view for texturing QA."""
+    rotation, center = _read_first_colmap_pose(workspace)
+    half_width, half_height, depth = 1.2, 0.9, 5.5
+    camera_vertices = [
+        (-half_width, -half_height, depth),
+        (half_width, -half_height, depth),
+        (half_width, half_height, depth),
+        (-half_width, half_height, depth),
+    ]
+    # COLMAP qvec/tvec map world coordinates to camera coordinates. Transform
+    # the fixture plane back into the same world frame as the dense workspace.
+    vertices = []
+    for point in camera_vertices:
+        vertices.append([
+            center[axis] + sum(rotation[row][axis] * point[row] for row in range(3))
+            for axis in range(3)
+        ])
+    with output.open("x", encoding="ascii", newline="\n") as stream:
+        stream.write(
+            "ply\nformat ascii 1.0\nelement vertex 4\n"
+            "property float x\nproperty float y\nproperty float z\n"
+            "element face 2\nproperty list uchar int vertex_indices\nend_header\n"
+        )
+        for vertex in vertices:
+            stream.write("{:.9g} {:.9g} {:.9g}\n".format(*vertex))
+        # Reverse the camera-plane winding so both faces point toward camera 0.
+        stream.write("3 0 2 1\n3 0 3 2\n")
+
+
 def check_opencl_no_gpu(executable: Path, images: Path, root: Path, colmap_cl: Path) -> None:
     output = root / "opencl-without-gpu"
     result = subprocess.run([str(executable), "--worker", "--images", str(images), "--output", str(output),
@@ -86,6 +164,24 @@ def check_mesh_worker_entrypoint(executable: Path, root: Path) -> None:
     print(result.stdout, flush=True)
     if result.returncode != 1 or "нет нормалей" not in result.stdout or output.exists():
         raise RuntimeError("Packaged Poisson worker did not validate its input safely")
+
+
+def check_texture_worker_entrypoint(executable: Path, openmvs: Path, root: Path) -> None:
+    mesh = root / "texture-worker-mesh.ply"
+    output = root / "texture-worker-output.glb"
+    mesh.write_bytes(
+        b"ply\nformat ascii 1.0\nelement vertex 3\nproperty float x\nproperty float y\nproperty float z\n"
+        b"element face 1\nproperty list uchar int vertex_indices\nend_header\n"
+        b"0 0 0\n1 0 0\n0 1 0\n3 0 1 2\n"
+    )
+    result = subprocess.run(
+        [str(executable), "--texture-worker", "--mesh", str(mesh), "--workspace", str(root / "missing-workspace"),
+         "--openmvs-dir", str(openmvs), "--output", str(output), "--threads", "1"],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", check=False,
+    )
+    print(result.stdout, flush=True)
+    if result.returncode != 1 or "Папка реконструкции не найдена" not in result.stdout or output.exists():
+        raise RuntimeError("Packaged texture worker did not validate workspace input safely")
 
 
 def check_cr2(executable: Path, sample: Path, root: Path) -> None:
@@ -127,7 +223,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
     check_mesh_worker_entrypoint(args.executable, args.output)
+    check_texture_worker_entrypoint(args.executable, args.openmvs, args.output)
     check_cancel(args.executable, args.images, args.output)
     check_dense(args.executable, args.images, args.output, args.openmvs)
+    check_textured_glb(args.executable, args.output, args.openmvs)
     check_opencl_no_gpu(args.executable, args.images, args.output, args.colmap_cl)
     check_cr2(args.executable, args.cr2_sample, args.output)

@@ -198,8 +198,14 @@ def _openmvs_ready(path: Path | None) -> bool:
 
 
 def _resolve_openmvs(path_text: str) -> tuple[Path | None, bool]:
-    path = Path(path_text).expanduser() if path_text.strip() else _default_engine_path(
-        "openmvs_install", "default_destination")
+    if path_text.strip():
+        path = Path(path_text).expanduser()
+    else:
+        path = _default_engine_path("openmvs_install", "default_destination")
+        if not _openmvs_ready(path):
+            legacy = _default_engine_path("openmvs_install", "legacy_destination")
+            if _openmvs_ready(legacy):
+                path = legacy
     return path, _openmvs_ready(path)
 
 

@@ -48,6 +48,16 @@ class PhotoCloudSafetyTests(unittest.TestCase):
                                     self.root / "cancel", 16)
         self.assertEqual(command[command.index("--threads") + 1], "16")
 
+    def test_texture_worker_command_preserves_paths_and_thread_count(self):
+        import app
+
+        command = app.texture_worker_command(self.root / "mesh.ply", self.root / "dense_workspace",
+                                             self.root / "openmvs", self.root / "model.glb",
+                                             self.root / "cancel", 12)
+        self.assertEqual(command[command.index("--mesh") + 1], str(self.root / "mesh.ply"))
+        self.assertEqual(command[command.index("--workspace") + 1], str(self.root / "dense_workspace"))
+        self.assertEqual(command[command.index("--threads") + 1], "12")
+
     def test_verified_match_statistics_count_only_geometric_inliers(self):
         database = self.root / "database.db"
         with closing(sqlite3.connect(database)) as connection, connection:
@@ -350,6 +360,7 @@ class PhotoCloudSafetyTests(unittest.TestCase):
         with zipfile.ZipFile(archive, "w") as z:
             z.writestr(PREFIX + "InterfaceCOLMAP.exe", b"test converter")
             z.writestr(PREFIX + "DensifyPointCloud.exe", b"test densifier")
+            z.writestr(PREFIX + "TextureMesh.exe", b"test texturer")
         digest = hashlib.sha256(archive.read_bytes()).hexdigest()
         output = self.root / "installed"
         with self.assertRaises(InstallError):
@@ -357,6 +368,7 @@ class PhotoCloudSafetyTests(unittest.TestCase):
         self.assertFalse(output.exists())
         self.assertEqual(install_archive(archive, output, digest), output.resolve())
         self.assertEqual((output / "InterfaceCOLMAP.exe").read_bytes(), b"test converter")
+        self.assertEqual((output / "TextureMesh.exe").read_bytes(), b"test texturer")
         self.assertEqual(install_archive(archive, output, digest), output.resolve())
         (output / "InterfaceCOLMAP.exe").write_bytes(b"modified")
         with self.assertRaises(InstallError):
@@ -376,6 +388,16 @@ class PhotoCloudSafetyTests(unittest.TestCase):
             install_archive(archive, output, hashlib.sha256(archive.read_bytes()).hexdigest())
         self.assertFalse(output.exists())
         self.assertFalse((self.root / "escape.exe").exists())
+
+    def test_installer_requires_texturemesh_for_complete_openmvs_package(self):
+        archive = self.root / "openmvs-without-texturer.zip"
+        with zipfile.ZipFile(archive, "w") as z:
+            z.writestr(PREFIX + "InterfaceCOLMAP.exe", b"test converter")
+            z.writestr(PREFIX + "DensifyPointCloud.exe", b"test densifier")
+        output = self.root / "installed"
+        with self.assertRaisesRegex(InstallError, "TextureMesh"):
+            install_archive(archive, output, hashlib.sha256(archive.read_bytes()).hexdigest())
+        self.assertFalse(output.exists())
 
 
 if __name__ == "__main__":
