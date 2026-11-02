@@ -25,10 +25,12 @@ class Element {
   removeAttribute(name) { delete this.attributes[name]; }
   querySelectorAll() { return []; }
   focus() {}
+  getBoundingClientRect() { return {left:0,top:0,width:this.clientWidth,height:this.clientHeight}; }
   getContext() { return gl; }
 }
 const gl = new Proxy({NO_ERROR:0,COMPILE_STATUS:1,LINK_STATUS:2,FRAMEBUFFER_COMPLETE:3,
   getShaderParameter:()=>true,getProgramParameter:()=>true,getError:()=>0,
+  readPixels:(_x,_y,_w,_h,_format,_type,pixel)=>{pixel[0]=1;pixel[1]=0;pixel[2]=0;pixel[3]=0;},
   getAttribLocation:()=>0,getUniformLocation:()=>({}),createShader:()=>({}),createProgram:()=>({}),
   createBuffer:()=>({}),checkFramebufferStatus:()=>3},
   {get:(target,key)=>key in target?target[key]:(()=>{})});
@@ -63,6 +65,25 @@ function approximate(actual,expected){actual.forEach((v,i)=>assert(Math.abs(v-ex
 (async()=>{
   await waitFor(()=>elements.status.textContent.includes('Загружено точек:'));
   assert.equal(elements['save-current-alignment'].hidden,false);
+  assert.equal(elements['coordinates-toggle'].disabled,false);
+  const zero=Array.from(vm.runInContext('absoluteOriginNormalized()',context));
+  approximate(zero,[-.5,-.25,0]);
+  vm.runInContext('updateReferenceOverlay()',context);
+  const zeroScreen=[elements['world-origin-marker'].style.left,elements['world-origin-marker'].style.top];
+  elements['coordinates-toggle'].dispatch('click');assert.equal(elements['coordinates-panel'].hidden,false);
+  elements['pick-coordinate'].dispatch('click');vm.runInContext('selectPoint(0,0)',context);
+  assert.equal(elements['coordinate-x'].textContent,'0');assert.equal(elements['coordinate-y'].textContent,'0');assert.equal(elements['coordinate-z'].textContent,'0');
+  elements['angle-x'].value='20';elements['angle-x'].dispatch('input');vm.runInContext('updateReferenceOverlay()',context);
+  assert.deepEqual([elements['world-origin-marker'].style.left,elements['world-origin-marker'].style.top],zeroScreen,
+    'absolute origin stays fixed while the cloud is rotated for alignment');
+  elements['angle-x'].value='0';elements['angle-x'].dispatch('input');
+  elements['focus-origin'].dispatch('click');vm.runInContext('updateReferenceOverlay()',context);
+  assert.deepEqual([elements['world-origin-marker'].style.left,elements['world-origin-marker'].style.top],['600px','350px'],
+    'focus command brings the absolute origin to the view centre');
+  vm.runInContext('flightMode()',context);vm.runInContext('updateReferenceOverlay()',context);
+  assert.deepEqual([elements['world-origin-marker'].style.left,elements['world-origin-marker'].style.top],['600px','350px'],
+    'flight mode keeps its camera focused on the absolute origin');
+  vm.runInContext('orbitMode()',context);
   elements['orientation-toggle'].dispatch('click');
   elements['angle-x'].value='12,34';elements['angle-x'].dispatch('input');elements['angle-z'].value='17,25';elements['angle-z'].dispatch('input');
   vm.runInContext('yaw=.43;pitch=-.21',context);

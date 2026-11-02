@@ -25,13 +25,20 @@ MODES = {
 }
 
 
-def worker_command(images: str, output: Path, mode: str, cancel_file: Path) -> list[str]:
+def worker_command(images: str, output: Path, mode: str, cancel_file: Path,
+                   threads: int | None = None) -> list[str]:
+    # Keep the GUI and the command-line worker on the same automatic default.
+    # reconstruct.py only imports the standard library at module load time, so
+    # importing this helper does not initialize any heavy reconstruction backend.
+    from reconstruct import recommended_threads
+
+    selected_threads = recommended_threads() if threads is None else threads
     if getattr(sys, "frozen", False):
         command = [sys.executable, "--worker"]
     else:
         command = [sys.executable, "-u", str(Path(__file__).with_name("reconstruct.py"))]
     return command + ["--images", images, "--output", str(output), "--mode", mode,
-                      "--cancel-file", str(cancel_file)]
+                      "--threads", str(selected_threads), "--cancel-file", str(cancel_file)]
 
 
 class App:
@@ -53,6 +60,8 @@ class App:
         self.openmvs = tk.StringVar()
         self.colmap = tk.StringVar()
         self.mode = tk.StringVar(value=next(iter(MODES)))
+        from reconstruct import MAX_THREADS, recommended_threads
+        self.threads = tk.StringVar(value=str(recommended_threads()))
         self.status = tk.StringVar(value="Выберите фотографии и папку результата")
 
         # Minimal Linux desktops may default to a Latin-only font. Prefer a
@@ -72,6 +81,14 @@ class App:
         self.path_row(frame, "Где сохранять результат", self.destination, self.choose_destination)
         ttk.Label(frame, text="Режим").pack(anchor="w", pady=(8, 2))
         ttk.Combobox(frame, state="readonly", values=list(MODES), textvariable=self.mode).pack(fill="x")
+        thread_row = ttk.Frame(frame)
+        thread_row.pack(fill="x", pady=(8, 0))
+        ttk.Label(thread_row, text="Потоки CPU").pack(side="left")
+        self.thread_spin = ttk.Spinbox(thread_row, from_=1, to=MAX_THREADS, width=6,
+                                       textvariable=self.threads)
+        self.thread_spin.pack(side="left", padx=(8, 8))
+        ttk.Label(thread_row, text=(f"Авто: {recommended_threads()} для текущего CPU; "
+                                    f"можно изменить (1–{MAX_THREADS})")).pack(side="left")
         self.path_row(frame, "Папка OpenMVS (для плотного облака на CPU)", self.openmvs, self.choose_openmvs)
         install_row = ttk.Frame(frame)
         install_row.pack(fill="x", pady=(3, 0))
@@ -194,12 +211,21 @@ class App:
         if mode in {"dense-amd", "dense-opencl"} and not self.colmap.get().strip():
             messagebox.showerror("Нужен движок COLMAP", "Установите или выберите подходящий colmap.exe.")
             return
+        try:
+            threads = int(self.threads.get().strip())
+        except ValueError:
+            messagebox.showerror("Некорректное число потоков", "Введите целое число от 1 до 64.")
+            return
+        from reconstruct import MAX_THREADS
+        if not 1 <= threads <= MAX_THREADS:
+            messagebox.showerror("Некорректное число потоков", "Введите целое число от 1 до 64.")
+            return
         label = datetime.datetime.now().strftime("photo-cloud-%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:8]
         self.result_dir = Path(self.destination.get()).expanduser().resolve() / label
         self.cancel_dir = tempfile.TemporaryDirectory(prefix="spatial-cancel-")
         self.cancel_file = Path(self.cancel_dir.name) / "cancel"
         self.close_after_cancel = False
-        command = worker_command(self.images.get(), self.result_dir, mode, self.cancel_file)
+        command = worker_command(self.images.get(), self.result_dir, mode, self.cancel_file, threads)
         if mode == "dense-cpu":
             command += ["--openmvs-dir", self.openmvs.get()]
         elif mode in {"dense-amd", "dense-opencl"}:
@@ -217,13 +243,14 @@ class App:
             messagebox.showerror("Не удалось запустить", str(exc))
             return
         self.append_log(f"\nПапка результата: {self.result_dir}\n")
+        self.append_log(f"Потоки CPU: {threads}\n")
         self.start_button.configure(state="disabled")
         self.open_button.configure(state="disabled")
         self.preview_button.configure(state="disabled")
         self.cancel_button.configure(state="normal")
         self.install_button.configure(state="disabled")
         self.install_cl_button.configure(state="disabled")
-        self.status.set("Обработка…")
+        self.status.set(f"Обработка… CPU-потоки: {threads}")
         self.progress.start(15)
         threading.Thread(target=self.consume, args=(self.process,), daemon=True).start()
 

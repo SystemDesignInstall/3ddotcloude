@@ -4,9 +4,13 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
+import math
 import os
 from pathlib import Path
+import shutil
+import sqlite3
 import struct
 import subprocess
 import sys
@@ -16,6 +20,291 @@ import time
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".cr2"}
 MODES = ("sparse-cpu", "dense-cpu", "dense-amd", "dense-opencl")
+MAX_THREADS = 64
+# COLMAP/OpenMVS are usually limited by physical cores and memory bandwidth.
+# Keep a sensible automatic default while allowing an explicit override for
+# machines where a different balance is preferable.
+AUTO_THREAD_CAP = 16
+QUALITY_WARN_REGISTERED_RATIO = 0.80
+QUALITY_REJECT_REGISTERED_RATIO = 0.50
+QUALITY_WARN_MEAN_REPROJECTION_ERROR_PX = 2.5
+QUALITY_REJECT_MEAN_REPROJECTION_ERROR_PX = 8.0
+
+
+def recommended_threads(cpu_count: int | None = None) -> int:
+    """Return the default worker parallelism for the current machine.
+
+    ``os.cpu_count`` reports logical processors.  On a 16-core/32-thread
+    Ryzen 9 9950X, using 16 workers keeps the reconstruction stages busy
+    without creating twice as many memory-bandwidth competitors.  The value
+    remains deliberately conservative on smaller machines and can always be
+    overridden with ``--threads`` or the GUI field.
+    """
+    available = cpu_count if cpu_count is not None else os.cpu_count()
+    return max(1, min(AUTO_THREAD_CAP, int(available or 1)))
+
+
+def verified_match_statistics(database: Path) -> dict:
+    """Count geometrically verified image pairs from COLMAP's database.
+
+    COLMAP reconstructs from ``two_view_geometries`` rather than raw descriptor
+    matches, so these counts are a useful, concrete overlap diagnostic.
+    """
+    try:
+        with sqlite3.connect(database) as connection:
+            row = connection.execute(
+                "SELECT COUNT(*), COALESCE(SUM(rows), 0) "
+                "FROM two_view_geometries WHERE rows > 0"
+            ).fetchone()
+    except sqlite3.Error as exc:
+        raise ReconstructionError(f"Не удалось прочитать проверенные пересечения COLMAP: {exc}") from exc
+    return {"verified_image_pairs": int(row[0]), "verified_inlier_matches": int(row[1])}
+
+
+def _copy_sqlite_database(source_path: Path, destination_path: Path) -> None:
+    source = sqlite3.connect(source_path)
+    destination = sqlite3.connect(destination_path)
+    try:
+        source.backup(destination)
+    finally:
+        destination.close()
+        source.close()
+
+
+def _restore_sqlite_database(backup_path: Path, database_path: Path) -> None:
+    for suffix in ("-wal", "-shm"):
+        Path(str(database_path) + suffix).unlink(missing_ok=True)
+    shutil.copyfile(backup_path, database_path)
+
+
+def match_with_opencl_fallback(database: Path, opencl_match, cpu_match, logger=print) -> dict:
+    """Try the verified COLMAP-CL matcher, restoring the database before CPU fallback."""
+    backup = database.with_name(database.name + ".before-opencl-matching")
+    backup.unlink(missing_ok=True)
+    try:
+        _copy_sqlite_database(database, backup)
+        try:
+            opencl_match()
+            statistics = verified_match_statistics(database)
+            if statistics["verified_image_pairs"] < 1:
+                raise RuntimeError("OpenCL-сопоставление не создало геометрически подтверждённых пар.")
+            return {"status": "verified", "backend": "COLMAP-CL OpenCL", "statistics": statistics}
+        except ReconstructionCancelled:
+            _restore_sqlite_database(backup, database)
+            raise
+        except Exception as error:
+            _restore_sqlite_database(backup, database)
+            error_lines = str(error).splitlines()
+            reason = (error_lines[0] if error_lines else type(error).__name__)[:500]
+            logger("OpenCL-сопоставление не принято (" + reason + "); восстановлена база, запуск на CPU.")
+            cpu_match()
+            return {"status": "cpu_fallback", "backend": "CPU после OpenCL fallback",
+                    "fallback_reason": reason, "statistics": verified_match_statistics(database)}
+    finally:
+        backup.unlink(missing_ok=True)
+
+
+def source_image_name(model_name: str, image_mapping: list[dict] | None = None) -> str:
+    """Translate a prepared CR2 working-copy name back to its source filename."""
+    for entry in image_mapping or []:
+        if entry.get("prepared") == model_name:
+            return str(entry.get("source", model_name))
+    return model_name
+
+
+def _percentile(values: list[float], fraction: float) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    offset = (len(ordered) - 1) * fraction
+    lower = int(offset)
+    upper = min(lower + 1, len(ordered) - 1)
+    blend = offset - lower
+    return ordered[lower] * (1.0 - blend) + ordered[upper] * blend
+
+
+def _finite_float(value) -> float | None:
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    return result if math.isfinite(result) else None
+
+
+def assess_reconstruction_quality(model, input_names: list[str], verified_matches: dict,
+                                  model_count: int, image_mapping: list[dict] | None = None,
+                                  all_model_image_names: set[str] | None = None) -> tuple[dict, list[dict]]:
+    """Summarize COLMAP consistency metrics and decide whether dense processing is safe to try.
+
+    This is a triage gate, not proof that camera poses are physically correct.
+    Without a known trajectory, GPS/IMU, control points, or measured scene
+    dimensions, absolute pose correctness cannot be established from the model
+    alone.
+    """
+    registered_ids = list(model.reg_image_ids())
+    registered_images = [model.image(image_id) for image_id in registered_ids]
+    registered_names = {
+        source_image_name(image.name, image_mapping) for image in registered_images
+    }
+    registered_all_models = set(all_model_image_names or registered_names)
+    unregistered = sorted(set(input_names) - registered_all_models)
+    other_component_images = sorted(registered_all_models - registered_names)
+    outside_selected_model = sorted(set(input_names) - registered_names)
+    input_count = len(input_names)
+    registered_count = len(registered_ids)
+    registration_ratio = registered_count / input_count if input_count else 0.0
+
+    try:
+        mean_reprojection = _finite_float(model.compute_mean_reprojection_error())
+    except (AttributeError, TypeError, ValueError):
+        mean_reprojection = None
+    point_errors = []
+    for point in model.points3D.values():
+        try:
+            error = _finite_float(point.error)
+            if error is not None and error >= 0:
+                point_errors.append(error)
+        except (AttributeError, TypeError, ValueError):
+            continue
+    if mean_reprojection is None and point_errors:
+        mean_reprojection = sum(point_errors) / len(point_errors)
+    try:
+        mean_track_length = _finite_float(model.compute_mean_track_length())
+    except (AttributeError, TypeError, ValueError):
+        mean_track_length = None
+    try:
+        mean_observations = _finite_float(model.compute_mean_observations_per_reg_image())
+    except (AttributeError, TypeError, ValueError):
+        mean_observations = None
+
+    messages = []
+    rejected_reasons = []
+    if verified_matches.get("verified_image_pairs", 0) == 0:
+        rejected_reasons.append("COLMAP не нашёл ни одной геометрически подтверждённой пары фотографий.")
+    if registered_count < 3:
+        rejected_reasons.append("В модель вошло меньше трёх фотографий; плотная реконструкция ненадёжна.")
+    if int(model.num_points3D()) < 1:
+        rejected_reasons.append("В модели не построено ни одной 3D-точки.")
+    if registration_ratio < QUALITY_REJECT_REGISTERED_RATIO:
+        rejected_reasons.append(
+            f"В выбранную модель вошло только {registration_ratio:.0%} исходных фотографий "
+            f"(порог проверки — {QUALITY_REJECT_REGISTERED_RATIO:.0%})."
+        )
+    elif registration_ratio < QUALITY_WARN_REGISTERED_RATIO:
+        messages.append(
+            f"В выбранную модель вошло {registration_ratio:.0%} фотографий; проверьте список исключённых кадров."
+        )
+    if mean_reprojection is not None:
+        if mean_reprojection > QUALITY_REJECT_MEAN_REPROJECTION_ERROR_PX:
+            rejected_reasons.append(
+                f"Средняя ошибка репроекции {mean_reprojection:.2f} px слишком велика "
+                f"(порог проверки — {QUALITY_REJECT_MEAN_REPROJECTION_ERROR_PX:.1f} px)."
+            )
+        elif mean_reprojection > QUALITY_WARN_MEAN_REPROJECTION_ERROR_PX:
+            messages.append(f"Повышенная средняя ошибка репроекции: {mean_reprojection:.2f} px.")
+    else:
+        messages.append("COLMAP не предоставил измеримую ошибку репроекции.")
+    if mean_track_length is not None and mean_track_length < 2.5:
+        messages.append(f"Низкая средняя длина треков 3D-точек: {mean_track_length:.2f} наблюдения.")
+    if model_count > 1:
+        messages.append(f"Найдены отдельные компоненты сцены: {model_count}; выбранная модель не включает остальные.")
+    if unregistered:
+        messages.append(f"Не зарегистрировано ни в одной компоненте фотографий: {len(unregistered)}.")
+
+    # These thresholds are conservative product heuristics, not COLMAP's
+    # definition of a correct reconstruction. Keep the rationale explicit.
+    can_build_dense = not rejected_reasons
+    messages = rejected_reasons + messages
+    quality = {
+        "assessment": "rejected" if rejected_reasons else ("review" if messages else "passed"),
+        "dense_reconstruction_allowed": can_build_dense,
+        "input_images": input_count,
+        "registered_images": registered_count,
+        "registered_fraction": round(registration_ratio, 6),
+        "unregistered_images": unregistered,
+        "images_outside_selected_model": outside_selected_model,
+        "images_in_other_models": other_component_images,
+        "model_components": model_count,
+        "sparse_points": int(model.num_points3D()),
+        "verified_image_pairs": int(verified_matches.get("verified_image_pairs", 0)),
+        "verified_inlier_matches": int(verified_matches.get("verified_inlier_matches", 0)),
+        "mean_reprojection_error_px": round(mean_reprojection, 6) if mean_reprojection is not None else None,
+        "p95_point_reprojection_error_px": round(_percentile(point_errors, 0.95), 6)
+        if point_errors else None,
+        "mean_track_length": round(mean_track_length, 6) if mean_track_length is not None else None,
+        "mean_observations_per_registered_image": round(mean_observations, 6)
+        if mean_observations is not None else None,
+        "messages": messages,
+        "thresholds": {
+            "warn_registered_fraction_below": QUALITY_WARN_REGISTERED_RATIO,
+            "reject_dense_registered_fraction_below": QUALITY_REJECT_REGISTERED_RATIO,
+            "warn_mean_reprojection_error_px_above": QUALITY_WARN_MEAN_REPROJECTION_ERROR_PX,
+            "reject_dense_mean_reprojection_error_px_above": QUALITY_REJECT_MEAN_REPROJECTION_ERROR_PX,
+            "type": "heuristic_triage_not_ground_truth_validation",
+        },
+        "absolute_camera_pose_validation": "requires_external_reference_or_control_measurements",
+        "camera_centers_file": "camera_centers.csv",
+    }
+
+    pose_rows = []
+    for image in registered_images:
+        try:
+            center = [_finite_float(value) for value in image.projection_center()]
+            direction = [_finite_float(value) for value in image.viewing_direction()]
+        except (AttributeError, TypeError, ValueError):
+            center = [None, None, None]
+            direction = [None, None, None]
+        pose_rows.append({
+            "image": source_image_name(image.name, image_mapping),
+            "center": center,
+            "direction": direction,
+            "keypoints": int(image.num_points2D()),
+            "triangulated_observations": int(image.num_points3D),
+        })
+    return quality, pose_rows
+
+
+def write_camera_centers(path: Path, pose_rows: list[dict]) -> None:
+    """Write relative COLMAP camera centers/directions for visual inspection."""
+    with path.open("w", encoding="utf-8-sig", newline="") as stream:
+        writer = csv.writer(stream)
+        writer.writerow(("image", "x", "y", "z", "view_x", "view_y", "view_z",
+                         "keypoints", "triangulated_observations"))
+        for row in pose_rows:
+            writer.writerow((row["image"], *row["center"], *row["direction"],
+                             row["keypoints"], row["triangulated_observations"]))
+
+
+def failed_reconstruction_quality(input_names: list[str], verified_matches: dict,
+                                  message: str) -> dict:
+    return {
+        "assessment": "rejected",
+        "dense_reconstruction_allowed": False,
+        "input_images": len(input_names),
+        "registered_images": 0,
+        "registered_fraction": 0.0,
+        "unregistered_images": sorted(input_names),
+        "images_outside_selected_model": sorted(input_names),
+        "images_in_other_models": [],
+        "model_components": 0,
+        "sparse_points": 0,
+        "verified_image_pairs": int(verified_matches.get("verified_image_pairs", 0)),
+        "verified_inlier_matches": int(verified_matches.get("verified_inlier_matches", 0)),
+        "mean_reprojection_error_px": None,
+        "p95_point_reprojection_error_px": None,
+        "mean_track_length": None,
+        "mean_observations_per_registered_image": None,
+        "messages": [message],
+        "thresholds": {
+            "warn_registered_fraction_below": QUALITY_WARN_REGISTERED_RATIO,
+            "reject_dense_registered_fraction_below": QUALITY_REJECT_REGISTERED_RATIO,
+            "warn_mean_reprojection_error_px_above": QUALITY_WARN_MEAN_REPROJECTION_ERROR_PX,
+            "reject_dense_mean_reprojection_error_px_above": QUALITY_REJECT_MEAN_REPROJECTION_ERROR_PX,
+            "type": "heuristic_triage_not_ground_truth_validation",
+        },
+        "absolute_camera_pose_validation": "requires_external_reference_or_control_measurements",
+        "camera_centers_file": None,
+    }
 
 
 class ReconstructionError(Exception):
@@ -211,7 +500,7 @@ def reconstruct(images: Path, output: Path, mode: str, threads: int,
         raise ReconstructionError("Установите зависимости: python -m pip install -r requirements.txt") from exc
     if pycolmap.__version__ != "4.2.1":
         raise ReconstructionError(f"Нужен pycolmap 4.2.1; установлен {pycolmap.__version__}.")
-    if mode not in MODES or threads < 1 or threads > 64:
+    if mode not in MODES or threads < 1 or threads > MAX_THREADS:
         raise ReconstructionError("Некорректный режим или число потоков (1–64).")
 
     images = images.expanduser().resolve()
@@ -250,16 +539,33 @@ def reconstruct(images: Path, output: Path, mode: str, threads: int,
     report = {
         "status": "running", "mode": mode, "input_directory": str(images),
         "input_images": [p.relative_to(images).as_posix() for p in paths],
-        "threads": threads, "pycolmap_version": pycolmap.__version__,
+        "threads": threads, "cpu_logical_threads": os.cpu_count() or 1,
+        "pycolmap_version": pycolmap.__version__,
         "scale": "unknown", "started_unix_seconds": time.time(),
+        "compute_backends": {
+            "cr2_conversion": "not required",
+            "feature_extraction": "CPU",
+            "feature_matching": "CPU",
+            "camera_reconstruction": "CPU",
+            "dense_stereo": "not run",
+            "stereo_fusion": "not run",
+        },
     }
     if selected_gpu is not None:
         report.update(backend="COLMAP-CL 1.5 (внешний, эксперимент)", opencl_device=selected_gpu,
-                      opencl_device_verified=False, backend_log="colmap-cl.log")
+                      opencl_device_verified=False, backend_log="colmap-cl.log", opencl_stages={})
     report_path = output / "report.json"
     save_report(report_path, report)
     watch = CancellationWatch(cancel_file, pycolmap)
     watch.start()
+    colmap_cl_log = output / "colmap-cl.log"
+
+    def run_cl(args, expected=None):
+        if cl_backend is None or cl_environment is None:
+            raise ReconstructionError("Среда COLMAP-CL не настроена.")
+        return cl_backend.run_program(args, output, cl_environment, colmap_cl_log,
+                                      lambda: check_cancel(cancel_file), expected)
+
     try:
         processing_images = images
         image_names = report["input_images"]
@@ -269,6 +575,7 @@ def reconstruct(images: Path, output: Path, mode: str, threads: int,
             processing_images, image_map = prepare_images(paths, images, output, lambda: check_cancel(cancel_file))
             image_names = [entry["prepared"] for entry in image_map]
             report.update(prepared_directory="prepared_images", image_mapping=image_map)
+            report["compute_backends"]["cr2_conversion"] = "CPU"
             save_report(report_path, report)
         db, sparse = output / "database.db", output / "sparse"
         sparse.mkdir()
@@ -278,31 +585,110 @@ def reconstruct(images: Path, output: Path, mode: str, threads: int,
         matching.num_threads, matching.use_gpu = threads, False
         mapping = pycolmap.IncrementalPipelineOptions()
         mapping.num_threads, mapping.min_model_size = threads, min(10, len(paths))
+        print(f"Параллелизм CPU: {threads} потоков (доступно логических: {os.cpu_count() or 1}).", flush=True)
         print("1/4. Поиск особенностей на фотографиях (CPU)...", flush=True)
         pycolmap.extract_features(db, processing_images, image_names=image_names,
                                   extraction_options=extraction, device=pycolmap.Device.cpu,
                                   cancellation_token=watch.token)
         check_cancel(cancel_file)
-        print("2/4. Сопоставление фотографий (CPU)...", flush=True)
-        pycolmap.match_exhaustive(db, matching_options=matching, device=pycolmap.Device.cpu,
-                                 cancellation_token=watch.token)
+        def match_on_cpu():
+            pycolmap.match_exhaustive(db, matching_options=matching, device=pycolmap.Device.cpu,
+                                      cancellation_token=watch.token)
+
+        if mode == "dense-opencl":
+            print("2/4. Сопоставление фотографий на AMD OpenCL (эксперимент; при сбое — CPU)...", flush=True)
+            opencl_command = [str(colmap), "exhaustive_matcher", "--database_path", str(db),
+                              "--SiftMatching.use_gpu", "1", "--SiftMatching.num_threads", str(threads),
+                              "--SiftMatching.gpu_index",
+                              str(selected_gpu["colmap_gpu_index"])]
+            match_result = match_with_opencl_fallback(
+                db, lambda: run_cl(opencl_command, selected_gpu), match_on_cpu,
+                logger=lambda message: print(message, flush=True))
+            match_stats = match_result["statistics"]
+            report["compute_backends"]["feature_matching"] = match_result["backend"]
+            report["opencl_stages"]["sift_matching"] = {
+                "status": match_result["status"], "backend": match_result["backend"],
+            }
+            if match_result["status"] == "verified":
+                report["opencl_stages"]["sift_matching"]["device"] = selected_gpu["device"]
+                report["opencl_device_verified"] = True
+            elif match_result.get("fallback_reason"):
+                report["opencl_stages"]["sift_matching"]["fallback_reason"] = match_result["fallback_reason"]
+        else:
+            print("2/4. Сопоставление фотографий (CPU)...", flush=True)
+            match_on_cpu()
+            match_stats = verified_match_statistics(db)
         check_cancel(cancel_file)
+        report["verified_matches"] = match_stats
+        print(f"Геометрически подтверждённые пересечения: {match_stats['verified_image_pairs']} пар, "
+              f"{match_stats['verified_inlier_matches']} соответствий.", flush=True)
+        save_report(report_path, report)
+        if match_stats["verified_image_pairs"] == 0:
+            message = "Нет ни одной геометрически подтверждённой пары фотографий."
+            report["reconstruction_quality"] = failed_reconstruction_quality(
+                report["input_images"], match_stats, message
+            )
+            save_report(report_path, report)
+            raise ReconstructionError(
+                "Не найдено геометрически подтверждённых пересечений между фотографиями. "
+                "Проверьте перекрытие кадров, резкость и наличие фактуры; построение камер и плотное облако остановлены."
+            )
         print("3/4. Построение камер и разреженного облака...", flush=True)
-        models = pycolmap.incremental_mapping(db, images, sparse, options=mapping, cancellation_token=watch.token)
+        # COLMAP must read the same working copies that were registered in the
+        # database. For CR2 inputs these live under prepared_images, not the
+        # original source directory.
+        models = pycolmap.incremental_mapping(db, processing_images, sparse, options=mapping,
+                                              cancellation_token=watch.token)
         check_cancel(cancel_file)
         if not models:
-            raise ReconstructionError("Не удалось связать фотографии. Проверьте перекрытие и текстуру сцены.")
+            message = "Подтверждённые пары найдены, но COLMAP не смог собрать из них модель камер."
+            report["reconstruction_quality"] = failed_reconstruction_quality(
+                report["input_images"], match_stats, message
+            )
+            save_report(report_path, report)
+            raise ReconstructionError(
+                "COLMAP не построил модель камер при наличии некоторых подтверждённых пар. "
+                "Возможны слабый параллакс, смаз, повторяющиеся узоры или слишком малое перекрытие."
+            )
         model_id, model = max(models.items(), key=lambda item: (item[1].num_reg_images(), item[1].num_points3D()))
-        if model.num_reg_images() < 2 or model.num_points3D() < 1:
-            raise ReconstructionError("COLMAP не построил пригодную модель с точками.")
-        sparse_ply = output / "sparse.ply"
-        model.export_PLY(sparse_ply)
-        report.update(registered_images=model.num_reg_images(), sparse_points=ply_vertex_count(sparse_ply),
-                      models=len(models), selected_model=int(model_id))
+        image_mapping = report.get("image_mapping", [])
+        all_model_image_names = {
+            source_image_name(component.image(image_id).name, image_mapping)
+            for component in models.values()
+            for image_id in component.reg_image_ids()
+        }
+        quality, camera_centers = assess_reconstruction_quality(
+            model, report["input_images"], match_stats, len(models), image_mapping, all_model_image_names
+        )
+        write_camera_centers(output / "camera_centers.csv", camera_centers)
+        report.update(registered_images=model.num_reg_images(), sparse_points=int(model.num_points3D()),
+                      models=len(models), selected_model=int(model_id),
+                      reconstruction_quality=quality, camera_centers="camera_centers.csv")
+        print(f"Проверка модели: {quality['registered_images']}/{quality['input_images']} кадров, "
+              f"ошибка репроекции {quality['mean_reprojection_error_px']} px, "
+              f"средний трек {quality['mean_track_length']} наблюдения; "
+              f"оценка: {quality['assessment']}.", flush=True)
+        for message in quality["messages"]:
+            print(f"Проверка качества: {message}", flush=True)
+        save_report(report_path, report)
         if len(models) > 1:
             print(f"Предупреждение: найдено моделей: {len(models)}; выбрана модель с большим числом камер.", flush=True)
+        if model.num_points3D() < 1:
+            raise ReconstructionError(
+                "COLMAP зарегистрировал камеры, но не построил ни одной 3D-точки. "
+                "Проверьте перекрытие, параллакс и повторяющиеся детали; диагностика сохранена."
+            )
+        sparse_ply = output / "sparse.ply"
+        model.export_PLY(sparse_ply)
+        report["sparse_points"] = ply_vertex_count(sparse_ply)
+        save_report(report_path, report)
         result_path = sparse_ply
         if mode != "sparse-cpu":
+            if not quality["dense_reconstruction_allowed"]:
+                raise ReconstructionError(
+                    "Плотная реконструкция остановлена проверкой качества. Разреженный файл sparse.ply "
+                    "и диагностика сохранены; исправьте съёмку/состав кадров и запустите обработку снова."
+                )
             print("4/4. Подготовка и построение плотного облака...", flush=True)
             workspace = output / "dense_workspace"
             pycolmap.undistort_images(workspace, sparse / str(model_id), processing_images, num_threads=threads,
@@ -320,30 +706,35 @@ def reconstruct(images: Path, output: Path, mode: str, threads: int,
                 run_program([str(densifier), "-i", str(scene), "-o", str(dense_scene),
                              "--max-threads", str(threads), "--resolution-level", "2",
                              "--min-resolution", "320", "--max-resolution", "1280"], output, cancel_file)
+                report["compute_backends"]["dense_stereo"] = "OpenMVS CPU"
                 result_path = output / "dense.ply"
             elif mode == "dense-opencl":
-                log = output / "colmap-cl.log"
-                run_cl = lambda args, expected=None: cl_backend.run_program(
-                    args, output, cl_environment, log, lambda: check_cancel(cancel_file), expected)
                 print("Плотная реконструкция на выбранной OpenCL GPU (эксперимент)…", flush=True)
                 run_cl([str(colmap), "patch_match_stereo", "--workspace_path", str(workspace),
                         "--workspace_format", "COLMAP", "--PatchMatchStereo.max_image_size", "1280",
                         "--PatchMatchStereo.num_iterations", "3", "--PatchMatchStereo.geom_consistency", "0",
                         "--PatchMatchStereo.gpu_index", str(selected_gpu["colmap_gpu_index"])], selected_gpu)
+                report["compute_backends"]["dense_stereo"] = "COLMAP-CL OpenCL (verified)"
+                report["opencl_stages"]["patch_match_stereo"] = {
+                    "status": "verified", "backend": "COLMAP-CL OpenCL", "device": selected_gpu["device"],
+                }
                 report["opencl_device_verified"] = True
                 save_report(report_path, report)
                 result_path = output / "dense.ply"
                 run_cl([str(colmap), "stereo_fusion", "--workspace_path", str(workspace),
                         "--workspace_format", "COLMAP", "--input_type", "photometric",
                         "--output_path", str(result_path)])
+                report["compute_backends"]["stereo_fusion"] = "COLMAP CPU"
             else:
                 print("Режим AMD требует рабочей HIP/ROCm-сборки COLMAP; совместимость карты не проверена.", flush=True)
                 run_program([str(colmap), "patch_match_stereo", "--workspace_path", str(workspace),
                              "--workspace_format", "COLMAP", "--PatchMatchStereo.max_image_size", "1600"], output, cancel_file)
+                report["compute_backends"]["dense_stereo"] = "COLMAP HIP requested; GPU not verified"
                 result_path = output / "dense.ply"
                 run_program([str(colmap), "stereo_fusion", "--workspace_path", str(workspace),
                              "--workspace_format", "COLMAP", "--input_type", "geometric",
                              "--output_path", str(result_path)], output, cancel_file)
+                report["compute_backends"]["stereo_fusion"] = "COLMAP CPU"
         else:
             print("4/4. Сохранение разреженного облака...", flush=True)
         check_cancel(cancel_file)
@@ -378,7 +769,8 @@ def main() -> int:
     parser.add_argument("--images", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path, help="Новая папка результата")
     parser.add_argument("--mode", choices=MODES, default="sparse-cpu")
-    parser.add_argument("--threads", type=int, default=min(4, os.cpu_count() or 1))
+    parser.add_argument("--threads", type=int, default=recommended_threads(),
+                        help=f"Потоки CPU (по умолчанию: {recommended_threads()}, максимум: {MAX_THREADS})")
     parser.add_argument("--openmvs-dir", type=Path)
     parser.add_argument("--colmap", type=Path)
     parser.add_argument("--cancel-file", type=Path, help=argparse.SUPPRESS)
