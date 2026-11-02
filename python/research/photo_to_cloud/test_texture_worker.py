@@ -76,7 +76,7 @@ class TextureWorkerTests(unittest.TestCase):
                 if cancel_on_interface is not None:
                     cancel_on_interface.write_text("cancel", encoding="ascii")
             else:
-                output = Path(args[args.index("--output-file") + 1]).with_suffix(".glb")
+                output = (cwd / args[args.index("--output-file") + 1]).with_suffix(".glb")
                 output.write_bytes(glb if glb is not None else make_glb())
         return calls, working_directories, runner
 
@@ -94,9 +94,10 @@ class TextureWorkerTests(unittest.TestCase):
         self.assertIn("--image-folder", calls[0])
         self.assertIn("--mesh-file", calls[1])
         self.assertEqual(calls[1][calls[1].index("--export-type") + 1], "glb")
+        self.assertEqual(calls[1][calls[1].index("--output-file") + 1], "textured-model")
         self.assertEqual(len(set(working_directories)), 1)
         self.assertEqual(calls[1][calls[1].index("--working-folder") + 1], str(working_directories[1]))
-        self.assertEqual(list(self.root.glob(".spc-texture-*")), [])
+        self.assertEqual(list(self.root.glob("spc-texture-*")), [])
 
     def test_rejects_point_cloud_and_missing_camera_workspace(self):
         point_cloud = self.root / "points.ply"
@@ -120,7 +121,7 @@ class TextureWorkerTests(unittest.TestCase):
                                                 self.output, threads=1, runner=runner)
         self.assertEqual(len(calls), 2)
         self.assertFalse(self.output.exists())
-        self.assertEqual(list(self.root.glob(".spc-texture-*")), [])
+        self.assertEqual(list(self.root.glob("spc-texture-*")), [])
 
     def test_cancel_request_between_openmvs_stages_keeps_output_absent(self):
         cancel = self.root / "cancel"

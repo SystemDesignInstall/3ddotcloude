@@ -183,7 +183,7 @@ def build_textured_model(mesh_path: Path, workspace_path: Path, openmvs_dir: Pat
     _check_cancel(cancel_file)
 
     started = time.time()
-    with tempfile.TemporaryDirectory(prefix=".spc-texture-", dir=output_path.parent) as temporary:
+    with tempfile.TemporaryDirectory(prefix="spc-texture-", dir=output_path.parent) as temporary:
         work = Path(temporary)
         scene = work / "scene.mvs"
         output_base = work / "textured-model"
@@ -196,7 +196,10 @@ def build_textured_model(mesh_path: Path, workspace_path: Path, openmvs_dir: Pat
         _check_cancel(cancel_file)
         print("Накладываю фотографии на поверхность и сохраняю GLB…", flush=True)
         runner([str(texturer), "--input-file", str(scene), "--mesh-file", str(mesh_path),
-                "--output-file", str(output_base), "--export-type", "glb",
+                # OpenMVS strips everything after the last dot in --output-file.
+                # A relative basename avoids dots in the user's parent path being
+                # mistaken for an output-file extension on Windows and Linux.
+                "--output-file", output_base.name, "--export-type", "glb",
                 "--max-threads", str(threads), "--working-folder", str(work)], work, cancel_file)
         candidate = output_base.with_suffix(".glb")
         glb = inspect_glb(candidate)
