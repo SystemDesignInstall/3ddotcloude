@@ -32,13 +32,14 @@ class PhotoCloudSafetyTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def test_recommended_threads_matches_logical_cpu_budget(self):
-        with patch.object(reconstruct.os, "cpu_count", return_value=32):
-            self.assertEqual(reconstruct.recommended_threads(), 16)
-        with patch.object(reconstruct.os, "cpu_count", return_value=8):
-            self.assertEqual(reconstruct.recommended_threads(), 8)
-        with patch.object(reconstruct.os, "cpu_count", return_value=None):
-            self.assertEqual(reconstruct.recommended_threads(), 1)
+    def test_recommended_threads_respects_cpu_and_ram_budgets(self):
+        gib = 1024 ** 3
+        self.assertEqual(reconstruct.recommended_threads(32, 64 * gib, 16), 16)
+        self.assertEqual(reconstruct.recommended_threads(32, 32 * gib, 16), 8)
+        self.assertEqual(reconstruct.recommended_threads(16, 64 * gib, 8), 8)
+        self.assertEqual(reconstruct.recommended_threads(8, 64 * gib, 4), 4)
+        self.assertEqual(reconstruct.recommended_threads(32, 2 * gib, 16), 1)
+        self.assertEqual(reconstruct.recommended_threads(1, 64 * gib, 1), 1)
 
     def test_worker_command_passes_explicit_threads(self):
         import app

@@ -23,6 +23,7 @@ MODES = {
     "Плотное облако — AMD OpenCL (эксперимент)": "dense-opencl",
     "Плотное облако — AMD HIP (эксперимент)": "dense-amd",
 }
+MODE_LABELS = {value: key for key, value in MODES.items()}
 
 
 def worker_command(images: str, output: Path, mode: str, cancel_file: Path,
@@ -42,10 +43,10 @@ def worker_command(images: str, output: Path, mode: str, cancel_file: Path,
 
 
 class App:
-    def __init__(self, root: tk.Tk) -> None:
+    def __init__(self, root: tk.Tk, auto_configure_on_start: bool = True) -> None:
         self.root = root
         root.title("Spatial Photo Cloud — эксперимент")
-        root.geometry("820x760")
+        root.geometry("820x810")
         root.minsize(700, 650)
         self.events: queue.Queue = queue.Queue()
         self.process: subprocess.Popen | None = None
@@ -55,6 +56,7 @@ class App:
         self.close_after_cancel = False
         self.result_dir: Path | None = None
         self.viewer_hosts = []
+        self.detecting_hardware = False
         self.images = tk.StringVar()
         self.destination = tk.StringVar()
         self.openmvs = tk.StringVar()
@@ -63,6 +65,7 @@ class App:
         from reconstruct import MAX_THREADS, recommended_threads
         self.threads = tk.StringVar(value=str(recommended_threads()))
         self.status = tk.StringVar(value="Выберите фотографии и папку результата")
+        self.hardware_status = tk.StringVar(value="Автоподбор комплектующих ещё не выполнен")
 
         # Minimal Linux desktops may default to a Latin-only font. Prefer a
         # Unicode font when it is available; Windows keeps its system font.
@@ -80,15 +83,23 @@ class App:
         self.path_row(frame, "Папка с фотографиями (CR2, JPG, PNG, TIFF)", self.images, self.choose_images)
         self.path_row(frame, "Где сохранять результат", self.destination, self.choose_destination)
         ttk.Label(frame, text="Режим").pack(anchor="w", pady=(8, 2))
-        ttk.Combobox(frame, state="readonly", values=list(MODES), textvariable=self.mode).pack(fill="x")
+        self.mode_combo = ttk.Combobox(frame, state="readonly", values=list(MODES), textvariable=self.mode)
+        self.mode_combo.pack(fill="x")
         thread_row = ttk.Frame(frame)
         thread_row.pack(fill="x", pady=(8, 0))
         ttk.Label(thread_row, text="Потоки CPU").pack(side="left")
         self.thread_spin = ttk.Spinbox(thread_row, from_=1, to=MAX_THREADS, width=6,
                                        textvariable=self.threads)
         self.thread_spin.pack(side="left", padx=(8, 8))
-        ttk.Label(thread_row, text=(f"Авто: {recommended_threads()} для текущего CPU; "
-                                    f"можно изменить (1–{MAX_THREADS})")).pack(side="left")
+        ttk.Label(thread_row, text=f"Можно изменить вручную (1–{MAX_THREADS})").pack(side="left")
+        hardware_row = ttk.Frame(frame)
+        hardware_row.pack(fill="x", pady=(7, 0))
+        self.hardware_label = ttk.Label(hardware_row, textvariable=self.hardware_status,
+                                        justify="left", wraplength=700)
+        self.hardware_label.pack(side="left", fill="x", expand=True)
+        self.auto_button = ttk.Button(hardware_row, text="Подобрать автоматически",
+                                      command=self.auto_configure)
+        self.auto_button.pack(side="right", padx=(8, 0))
         self.path_row(frame, "Папка OpenMVS (для плотного облака на CPU)", self.openmvs, self.choose_openmvs)
         install_row = ttk.Frame(frame)
         install_row.pack(fill="x", pady=(3, 0))
@@ -97,7 +108,7 @@ class App:
         if os.name != "nt":
             self.install_button.configure(state="disabled")
         ttk.Label(install_row, text="OpenMVS: AGPL-3.0; загружается отдельно").pack(side="left", padx=8)
-        self.path_row(frame, "COLMAP-CL для AMD OpenCL (или COLMAP с HIP)", self.colmap, self.choose_colmap)
+        self.path_row(frame, "COLMAP-CL для OpenCL / отдельная сборка COLMAP с HIP", self.colmap, self.choose_colmap)
         cl_row = ttk.Frame(frame)
         cl_row.pack(fill="x", pady=(3, 0))
         self.install_cl_button = ttk.Button(cl_row, text="Установить COLMAP-CL для AMD", command=self.install_colmap_cl)
@@ -109,7 +120,7 @@ class App:
 
         actions = ttk.Frame(frame)
         actions.pack(fill="x", pady=(0, 8))
-        self.start_button = ttk.Button(actions, text="Построить облако", command=self.start)
+        self.start_button = ttk.Button(actions, text="Построить облако", command=self.start, state="disabled")
         self.start_button.pack(side="left")
         self.open_button = ttk.Button(actions, text="Открыть папку результата", command=self.open_result, state="disabled")
         self.open_button.pack(side="left", padx=8)
@@ -126,6 +137,8 @@ class App:
         self.log = scrolledtext.ScrolledText(frame, height=11, state="disabled", wrap="word")
         self.log.pack(fill="both", expand=True)
         root.protocol("WM_DELETE_WINDOW", self.close)
+        if auto_configure_on_start:
+            root.after(100, self.auto_configure)
         root.after(100, self.read_events)
 
     @staticmethod
@@ -157,11 +170,12 @@ class App:
             self.colmap.set(value)
 
     def install_openmvs(self) -> None:
-        if self.installing or self.process:
+        if self.installing or self.process or self.detecting_hardware:
             return
         self.installing = True
         self.install_button.configure(state="disabled")
         self.install_cl_button.configure(state="disabled")
+        self.auto_button.configure(state="disabled")
         self.start_button.configure(state="disabled")
         self.status.set("Установка OpenMVS…")
         self.progress.start(15)
@@ -175,11 +189,12 @@ class App:
         threading.Thread(target=install, daemon=True).start()
 
     def install_colmap_cl(self) -> None:
-        if self.installing or self.process:
+        if self.installing or self.process or self.detecting_hardware:
             return
         self.installing = True
         self.install_button.configure(state="disabled")
         self.install_cl_button.configure(state="disabled")
+        self.auto_button.configure(state="disabled")
         self.start_button.configure(state="disabled")
         self.status.set("Установка COLMAP-CL…")
         self.progress.start(15)
@@ -192,6 +207,71 @@ class App:
                 self.events.put(("install_cl_error", str(exc)))
         threading.Thread(target=install, daemon=True).start()
 
+    def auto_configure(self) -> None:
+        """Inspect hardware and installed engines off the UI thread, then apply safe defaults."""
+        if self.detecting_hardware or self.installing or self.process:
+            return
+        self.detecting_hardware = True
+        self.start_button.configure(state="disabled")
+        self.auto_button.configure(state="disabled")
+        self.mode_combo.configure(state="disabled")
+        self.thread_spin.configure(state="disabled")
+        self.install_button.configure(state="disabled")
+        self.install_cl_button.configure(state="disabled")
+        self.hardware_status.set("Проверяем CPU, память, видеокарту и доступные движки…")
+        self.status.set("Автоматический подбор настроек…")
+        self.progress.start(15)
+        openmvs_path = self.openmvs.get()
+        colmap_path = self.colmap.get()
+
+        def detect() -> None:
+            try:
+                from hardware_profile import detect_hardware_profile
+                profile = detect_hardware_profile(openmvs_path, colmap_path)
+                self.events.put(("auto_config_done", profile))
+            except Exception as exc:
+                self.events.put(("auto_config_error", str(exc)))
+
+        threading.Thread(target=detect, daemon=True).start()
+
+    def finish_auto_configuration(self, profile: dict) -> None:
+        from reconstruct import recommended_threads
+
+        self.detecting_hardware = False
+        self.progress.stop()
+        self.mode_combo.configure(state="readonly")
+        self.thread_spin.configure(state="normal")
+        self.auto_button.configure(state="normal")
+        self.install_button.configure(state="normal" if os.name == "nt" else "disabled")
+        self.install_cl_button.configure(state="normal" if os.name == "nt" else "disabled")
+        if profile.get("openmvs_path") and not self.openmvs.get().strip():
+            self.openmvs.set(profile["openmvs_path"])
+        if profile.get("colmap_path") and not self.colmap.get().strip():
+            self.colmap.set(profile["colmap_path"])
+        mode = profile.get("recommended_mode", "sparse-cpu")
+        self.mode.set(MODE_LABELS.get(mode, MODE_LABELS["sparse-cpu"]))
+        self.threads.set(str(profile.get("recommended_threads", recommended_threads())))
+        self.hardware_status.set(profile.get("summary", "Автонастройка завершена."))
+        self.status.set("Настройки подобраны; режим и потоки можно изменить вручную")
+        self.start_button.configure(state="normal")
+        self.append_log("\nАвтонастройка оборудования завершена.\n")
+
+    def fail_auto_configuration(self, error: str) -> None:
+        from reconstruct import recommended_threads
+
+        self.detecting_hardware = False
+        self.progress.stop()
+        self.mode_combo.configure(state="readonly")
+        self.thread_spin.configure(state="normal")
+        self.auto_button.configure(state="normal")
+        self.install_button.configure(state="normal" if os.name == "nt" else "disabled")
+        self.install_cl_button.configure(state="normal" if os.name == "nt" else "disabled")
+        self.mode.set(MODE_LABELS["sparse-cpu"])
+        self.threads.set(str(recommended_threads()))
+        self.hardware_status.set("Не удалось завершить проверку оборудования: " + error)
+        self.status.set("Выбран безопасный CPU-режим; проверьте сообщение автоподбора")
+        self.start_button.configure(state="normal")
+
     def append_log(self, text: str) -> None:
         self.log.configure(state="normal")
         self.log.insert("end", text)
@@ -199,7 +279,7 @@ class App:
         self.log.configure(state="disabled")
 
     def start(self) -> None:
-        if self.process or self.installing:
+        if self.process or self.installing or self.detecting_hardware:
             return
         if not self.images.get().strip() or not self.destination.get().strip():
             messagebox.showerror("Не выбраны папки", "Выберите папку с фотографиями и папку результата.")
@@ -250,6 +330,7 @@ class App:
         self.cancel_button.configure(state="normal")
         self.install_button.configure(state="disabled")
         self.install_cl_button.configure(state="disabled")
+        self.auto_button.configure(state="disabled")
         self.status.set(f"Обработка… CPU-потоки: {threads}")
         self.progress.start(15)
         threading.Thread(target=self.consume, args=(self.process,), daemon=True).start()
@@ -266,11 +347,16 @@ class App:
                 kind, value = self.events.get_nowait()
                 if kind == "line":
                     self.append_log(value)
+                elif kind == "auto_config_done":
+                    self.finish_auto_configuration(value)
+                elif kind == "auto_config_error":
+                    self.fail_auto_configuration(value)
                 elif kind in {"install_done", "install_error", "install_cl_done", "install_cl_error"}:
                     self.installing = False
                     self.progress.stop()
                     self.install_button.configure(state="normal" if os.name == "nt" else "disabled")
                     self.install_cl_button.configure(state="normal" if os.name == "nt" else "disabled")
+                    self.auto_button.configure(state="normal")
                     self.start_button.configure(state="normal")
                     if kind == "install_done":
                         self.openmvs.set(value)
@@ -286,6 +372,8 @@ class App:
                     else:
                         self.status.set("Ошибка установки OpenMVS")
                         messagebox.showerror("OpenMVS", value)
+                    if kind in {"install_done", "install_cl_done"}:
+                        self.root.after(100, self.auto_configure)
                 else:
                     self.progress.stop()
                     self.process = None
@@ -297,6 +385,7 @@ class App:
                     self.cancel_button.configure(state="disabled")
                     self.install_button.configure(state="normal" if os.name == "nt" else "disabled")
                     self.install_cl_button.configure(state="normal" if os.name == "nt" else "disabled")
+                    self.auto_button.configure(state="normal")
                     if self.result_dir and self.result_dir.exists():
                         self.open_button.configure(state="normal")
                         if self.result_cloud() is not None and value == 0:
@@ -391,6 +480,9 @@ class App:
 
 
 def main() -> int:
+    if sys.argv[1:2] == ["--hardware-opencl-probe"]:
+        from hardware_profile import hardware_opencl_probe_main
+        return hardware_opencl_probe_main(verify="--inventory-only" not in sys.argv[2:])
     if sys.argv[1:2] == ["--worker"]:
         # A frozen Windows executable does not necessarily honor PYTHONUTF8.
         # The GUI reads this subprocess through a UTF-8 pipe.
@@ -445,7 +537,7 @@ def main() -> int:
     if sys.argv[1:2] == ["--ui-smoke-test"]:
         window = tk.Tk()
         window.withdraw()
-        App(window)
+        App(window, auto_configure_on_start=False)
         window.update()
         window.destroy()
         print("Spatial Photo Cloud: GUI initialized")

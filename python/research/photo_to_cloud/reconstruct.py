@@ -17,31 +17,28 @@ import sys
 import threading
 import time
 
+from hardware_profile import recommended_threads as hardware_recommended_threads
+from hardware_profile import (
+    cpu_model_name,
+    logical_processor_count,
+    physical_processor_count,
+    total_physical_memory_bytes,
+)
+
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".cr2"}
 MODES = ("sparse-cpu", "dense-cpu", "dense-amd", "dense-opencl")
 MAX_THREADS = 64
-# COLMAP/OpenMVS are usually limited by physical cores and memory bandwidth.
-# Keep a sensible automatic default while allowing an explicit override for
-# machines where a different balance is preferable.
-AUTO_THREAD_CAP = 16
 QUALITY_WARN_REGISTERED_RATIO = 0.80
 QUALITY_REJECT_REGISTERED_RATIO = 0.50
 QUALITY_WARN_MEAN_REPROJECTION_ERROR_PX = 2.5
 QUALITY_REJECT_MEAN_REPROJECTION_ERROR_PX = 8.0
 
 
-def recommended_threads(cpu_count: int | None = None) -> int:
-    """Return the default worker parallelism for the current machine.
-
-    ``os.cpu_count`` reports logical processors.  On a 16-core/32-thread
-    Ryzen 9 9950X, using 16 workers keeps the reconstruction stages busy
-    without creating twice as many memory-bandwidth competitors.  The value
-    remains deliberately conservative on smaller machines and can always be
-    overridden with ``--threads`` or the GUI field.
-    """
-    available = cpu_count if cpu_count is not None else os.cpu_count()
-    return max(1, min(AUTO_THREAD_CAP, int(available or 1)))
+def recommended_threads(cpu_count: int | None = None, memory_bytes: int | None = None,
+                        physical_count: int | None = None) -> int:
+    """Return a CPU and RAM-aware worker default, capped for memory bandwidth."""
+    return hardware_recommended_threads(cpu_count, memory_bytes, physical_count)
 
 
 def verified_match_statistics(database: Path) -> dict:
@@ -542,7 +539,16 @@ def reconstruct(images: Path, output: Path, mode: str, threads: int,
     report = {
         "status": "running", "mode": mode, "input_directory": str(images),
         "input_images": [p.relative_to(images).as_posix() for p in paths],
-        "threads": threads, "cpu_logical_threads": os.cpu_count() or 1,
+        "threads": threads, "cpu_logical_threads": logical_processor_count(),
+        "hardware": {
+            "cpu_model": cpu_model_name(),
+            "logical_processors": logical_processor_count(),
+            "physical_cores": physical_processor_count(logical_processor_count()),
+            "total_memory_bytes": total_physical_memory_bytes(),
+            "recommended_threads": recommended_threads(),
+            "selected_threads": threads,
+            "selected_mode": mode,
+        },
         "pycolmap_version": pycolmap.__version__,
         "scale": "unknown", "started_unix_seconds": time.time(),
         "compute_backends": {
@@ -588,7 +594,7 @@ def reconstruct(images: Path, output: Path, mode: str, threads: int,
         matching.num_threads, matching.use_gpu = threads, False
         mapping = pycolmap.IncrementalPipelineOptions()
         mapping.num_threads, mapping.min_model_size = threads, min(10, len(paths))
-        print(f"Параллелизм CPU: {threads} потоков (доступно логических: {os.cpu_count() or 1}).", flush=True)
+        print(f"Параллелизм CPU: {threads} потоков (доступно логических: {logical_processor_count()}).", flush=True)
         print("1/4. Поиск особенностей на фотографиях (CPU)...", flush=True)
         pycolmap.extract_features(db, processing_images, image_names=image_names,
                                   extraction_options=extraction, device=pycolmap.Device.cpu,

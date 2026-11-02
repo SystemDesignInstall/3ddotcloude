@@ -75,6 +75,7 @@ if (-not $SkipTests) {
     Invoke-Checked $executable @("--self-test")
     Invoke-Checked $executable @("--viewer-self-test")
     Invoke-Checked $executable @("--ui-smoke-test")
+    Invoke-Checked $executable @("--hardware-opencl-probe", "--inventory-only")
 }
 
 Copy-Item "WINDOWS-TEST.txt" (Join-Path $dist "SpatialPhotoCloud\README.txt") -Force
