@@ -1,5 +1,8 @@
 from pathlib import Path
+from contextlib import closing
 import hashlib
+import json
+import sqlite3
 import struct
 import sys
 import tempfile
@@ -7,6 +10,8 @@ import threading
 import time
 import unittest
 import zipfile
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from PIL import Image
 
@@ -26,6 +31,223 @@ class PhotoCloudSafetyTests(unittest.TestCase):
 
     def tearDown(self):
         self.tmp.cleanup()
+
+    def test_recommended_threads_respects_cpu_and_ram_budgets(self):
+        gib = 1024 ** 3
+        self.assertEqual(reconstruct.recommended_threads(32, 64 * gib, 16), 16)
+        self.assertEqual(reconstruct.recommended_threads(32, 32 * gib, 16), 8)
+        self.assertEqual(reconstruct.recommended_threads(16, 64 * gib, 8), 8)
+        self.assertEqual(reconstruct.recommended_threads(8, 64 * gib, 4), 4)
+        self.assertEqual(reconstruct.recommended_threads(32, 2 * gib, 16), 1)
+        self.assertEqual(reconstruct.recommended_threads(1, 64 * gib, 1), 1)
+
+    def test_worker_command_passes_explicit_threads(self):
+        import app
+
+        command = app.worker_command("photos", self.root / "result", "sparse-cpu",
+                                    self.root / "cancel", 16)
+        self.assertEqual(command[command.index("--threads") + 1], "16")
+
+    def test_verified_match_statistics_count_only_geometric_inliers(self):
+        database = self.root / "database.db"
+        with closing(sqlite3.connect(database)) as connection, connection:
+            connection.execute("CREATE TABLE two_view_geometries (pair_id INTEGER, rows INTEGER, cols INTEGER, data BLOB)")
+            connection.executemany("INSERT INTO two_view_geometries VALUES (?, ?, 2, X'00')",
+                                   [(1, 24), (2, 0), (3, 9)])
+        self.assertEqual(reconstruct.verified_match_statistics(database),
+                         {"verified_image_pairs": 2, "verified_inlier_matches": 33})
+
+    def _matching_database(self):
+        database = self.root / "matching.db"
+        with closing(sqlite3.connect(database)) as connection, connection:
+            connection.execute("CREATE TABLE two_view_geometries (pair_id INTEGER, rows INTEGER, cols INTEGER, data BLOB)")
+        return database
+
+    def test_opencl_matcher_is_kept_only_after_verified_pairs_exist(self):
+        database = self._matching_database()
+        cpu_calls = []
+        def opencl_match():
+            with closing(sqlite3.connect(database)) as connection, connection:
+                connection.execute("INSERT INTO two_view_geometries VALUES (1, 17, 2, X'00')")
+        result = reconstruct.match_with_opencl_fallback(database, opencl_match,
+                                                        lambda: cpu_calls.append(True), logger=lambda _: None)
+        self.assertEqual(result["status"], "verified")
+        self.assertEqual(result["backend"], "COLMAP-CL OpenCL")
+        self.assertEqual(result["statistics"]["verified_inlier_matches"], 17)
+        self.assertEqual(cpu_calls, [])
+        self.assertFalse(database.with_name(database.name + ".before-opencl-matching").exists())
+
+    def test_opencl_matcher_partial_failure_restores_database_before_cpu_fallback(self):
+        database = self._matching_database()
+        def opencl_match():
+            with closing(sqlite3.connect(database)) as connection, connection:
+                connection.execute("INSERT INTO two_view_geometries VALUES (1, 99, 2, X'00')")
+            raise RuntimeError("OpenCL matcher crashed after a partial write")
+        def cpu_match():
+            with closing(sqlite3.connect(database)) as connection, connection:
+                connection.execute("INSERT INTO two_view_geometries VALUES (2, 23, 2, X'00')")
+        result = reconstruct.match_with_opencl_fallback(database, opencl_match, cpu_match, logger=lambda _: None)
+        with closing(sqlite3.connect(database)) as connection, connection:
+            rows = connection.execute("SELECT pair_id, rows FROM two_view_geometries").fetchall()
+        self.assertEqual(result["status"], "cpu_fallback")
+        self.assertEqual(result["statistics"]["verified_inlier_matches"], 23)
+        self.assertEqual(rows, [(2, 23)])
+
+    def test_opencl_matcher_without_verified_pairs_restores_before_cpu_fallback(self):
+        database = self._matching_database()
+        cpu_calls = []
+        def opencl_match():
+            with closing(sqlite3.connect(database)) as connection, connection:
+                connection.execute("INSERT INTO two_view_geometries VALUES (1, 0, 2, X'00')")
+        def cpu_match():
+            cpu_calls.append(True)
+            with closing(sqlite3.connect(database)) as connection, connection:
+                connection.execute("INSERT INTO two_view_geometries VALUES (2, 19, 2, X'00')")
+        result = reconstruct.match_with_opencl_fallback(database, opencl_match, cpu_match, logger=lambda _: None)
+        with closing(sqlite3.connect(database)) as connection, connection:
+            rows = connection.execute("SELECT pair_id, rows FROM two_view_geometries").fetchall()
+        self.assertEqual(result["status"], "cpu_fallback")
+        self.assertEqual(result["statistics"]["verified_inlier_matches"], 19)
+        self.assertEqual(cpu_calls, [True])
+        self.assertEqual(rows, [(2, 19)])
+
+    def test_opencl_matching_cancellation_restores_database_without_cpu_fallback(self):
+        database = self._matching_database()
+        cpu_calls = []
+        def opencl_match():
+            with closing(sqlite3.connect(database)) as connection, connection:
+                connection.execute("INSERT INTO two_view_geometries VALUES (1, 99, 2, X'00')")
+            raise reconstruct.ReconstructionCancelled("cancelled")
+        with self.assertRaises(reconstruct.ReconstructionCancelled):
+            reconstruct.match_with_opencl_fallback(database, opencl_match,
+                                                   lambda: cpu_calls.append(True), logger=lambda _: None)
+        self.assertEqual(reconstruct.verified_match_statistics(database),
+                         {"verified_image_pairs": 0, "verified_inlier_matches": 0})
+        self.assertEqual(cpu_calls, [])
+
+    def test_no_verified_overlap_is_a_clear_quality_failure(self):
+        quality = reconstruct.failed_reconstruction_quality(
+            ["first.jpg", "second.jpg"],
+            {"verified_image_pairs": 0, "verified_inlier_matches": 0},
+            "Нет ни одной геометрически подтверждённой пары фотографий.",
+        )
+        self.assertEqual(quality["assessment"], "rejected")
+        self.assertFalse(quality["dense_reconstruction_allowed"])
+        self.assertEqual(quality["unregistered_images"], ["first.jpg", "second.jpg"])
+        self.assertEqual(quality["verified_image_pairs"], 0)
+
+    def test_quality_gate_blocks_dense_cloud_for_low_registration_and_bad_fit(self):
+        class FakeImage:
+            def __init__(self, name, image_id):
+                self.name, self.image_id = name, image_id
+                self.num_points3D = 20
+            def num_points2D(self):
+                return 100
+            def projection_center(self):
+                return (self.image_id, 0, 0)
+            def viewing_direction(self):
+                return (0, 0, 1)
+
+        class FakeModel:
+            def __init__(self):
+                self._images = {1: FakeImage("a.jpg", 1), 2: FakeImage("b.jpg", 2)}
+                self.points3D = {index: SimpleNamespace(error=9.5) for index in range(10)}
+            def reg_image_ids(self):
+                return list(self._images)
+            def image(self, image_id):
+                return self._images[image_id]
+            def num_points3D(self):
+                return len(self.points3D)
+            def compute_mean_reprojection_error(self):
+                return 9.5
+            def compute_mean_track_length(self):
+                return 2.0
+            def compute_mean_observations_per_reg_image(self):
+                return 50.0
+
+        quality, centers = reconstruct.assess_reconstruction_quality(
+            FakeModel(), [f"{name}.jpg" for name in "abcdefghij"],
+            {"verified_image_pairs": 1, "verified_inlier_matches": 30}, 1)
+        self.assertEqual(quality["assessment"], "rejected")
+        self.assertFalse(quality["dense_reconstruction_allowed"])
+        self.assertEqual(quality["registered_images"], 2)
+        self.assertEqual(len(quality["unregistered_images"]), 8)
+        self.assertEqual(len(centers), 2)
+
+    def test_quality_report_maps_prepared_raw_names_to_source_photos(self):
+        class FakeImage:
+            image_id = 1
+            name = "000001.jpg"
+            num_points3D = 30
+            def num_points2D(self):
+                return 120
+            def projection_center(self):
+                return (1.0, 2.0, 3.0)
+            def viewing_direction(self):
+                return (0.0, 0.0, 1.0)
+
+        class FakeModel:
+            images = {1: FakeImage()}
+            points3D = {index: SimpleNamespace(error=0.8) for index in range(10)}
+            def reg_image_ids(self):
+                return [1]
+            def image(self, image_id):
+                return self.images[image_id]
+            def num_points3D(self):
+                return len(self.points3D)
+            def compute_mean_reprojection_error(self):
+                return 0.8
+            def compute_mean_track_length(self):
+                return 3.0
+            def compute_mean_observations_per_reg_image(self):
+                return 30.0
+
+        quality, centers = reconstruct.assess_reconstruction_quality(
+            FakeModel(), ["IMG_1873.CR2"],
+            {"verified_image_pairs": 2, "verified_inlier_matches": 120}, 1,
+            [{"prepared": "000001.jpg", "source": "IMG_1873.CR2"}])
+        self.assertEqual(quality["unregistered_images"], [])
+        self.assertEqual(centers[0]["image"], "IMG_1873.CR2")
+        csv_path = self.root / "camera_centers.csv"
+        reconstruct.write_camera_centers(csv_path, centers)
+        self.assertIn(b"IMG_1873.CR2", csv_path.read_bytes())
+
+    def test_quality_report_rejects_empty_model_and_serializes_nonfinite_metrics_safely(self):
+        class FakeImage:
+            name = "bad.jpg"
+            num_points3D = 0
+            def num_points2D(self):
+                return 0
+            def projection_center(self):
+                return (float("nan"), 0.0, 0.0)
+            def viewing_direction(self):
+                return (0.0, float("inf"), 1.0)
+
+        class FakeModel:
+            points3D = {}
+            def reg_image_ids(self):
+                return [1]
+            def image(self, image_id):
+                return FakeImage()
+            def num_points3D(self):
+                return 0
+            def compute_mean_reprojection_error(self):
+                return float("nan")
+            def compute_mean_track_length(self):
+                return float("inf")
+            def compute_mean_observations_per_reg_image(self):
+                return float("nan")
+
+        quality, centers = reconstruct.assess_reconstruction_quality(
+            FakeModel(), ["bad.jpg"], {"verified_image_pairs": 1, "verified_inlier_matches": 20}, 1)
+        self.assertEqual(quality["assessment"], "rejected")
+        self.assertFalse(quality["dense_reconstruction_allowed"])
+        self.assertIsNone(quality["mean_reprojection_error_px"])
+        self.assertIsNone(quality["mean_track_length"])
+        self.assertIsNone(quality["mean_observations_per_registered_image"])
+        self.assertIsNone(centers[0]["center"][0])
+        self.assertIsNone(centers[0]["direction"][1])
+        json.dumps({"quality": quality, "centers": centers}, allow_nan=False)
 
     def test_existing_output_is_never_overwritten(self):
         output = self.root / "existing"

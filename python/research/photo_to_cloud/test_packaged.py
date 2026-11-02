@@ -71,6 +71,23 @@ def check_opencl_no_gpu(executable: Path, images: Path, root: Path, colmap_cl: P
         raise RuntimeError("AMD mode must reject a CPU-only OpenCL system without creating a result")
 
 
+def check_mesh_worker_entrypoint(executable: Path, root: Path) -> None:
+    source = root / "mesh-worker-no-normals.ply"
+    output = root / "mesh-worker-output.ply"
+    source.write_bytes(
+        b"ply\nformat ascii 1.0\nelement vertex 3\n"
+        b"property float x\nproperty float y\nproperty float z\n"
+        b"end_header\n0 0 0\n1 0 0\n0 1 0\n"
+    )
+    result = subprocess.run(
+        [str(executable), "--mesh-worker", "--input", str(source), "--output", str(output), "--threads", "1"],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", check=False,
+    )
+    print(result.stdout, flush=True)
+    if result.returncode != 1 or "нет нормалей" not in result.stdout or output.exists():
+        raise RuntimeError("Packaged Poisson worker did not validate its input safely")
+
+
 def check_cr2(executable: Path, sample: Path, root: Path) -> None:
     from PIL import Image
     import pycolmap
@@ -109,6 +126,7 @@ if __name__ == "__main__":
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
+    check_mesh_worker_entrypoint(args.executable, args.output)
     check_cancel(args.executable, args.images, args.output)
     check_dense(args.executable, args.images, args.output, args.openmvs)
     check_opencl_no_gpu(args.executable, args.images, args.output, args.colmap_cl)

@@ -19,6 +19,7 @@ main{flex:1;height:0;min-height:320px;position:relative}canvas{width:100%;height
 .crosshair{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);color:#fff;text-shadow:0 1px 5px #000;font-size:25px;line-height:1;pointer-events:none}
 .calibration{width:100%;display:flex;flex-wrap:wrap;gap:9px 12px;align-items:center;padding:12px;background:#102330;border:1px solid #385166;border-radius:7px}.calibration p{width:100%;margin:0}.calibration label{display:flex;gap:6px;align-items:center}.calibration input,.calibration select{font:inherit;padding:6px;border-radius:5px;border:1px solid #567083;background:#101923;color:var(--ink)}.calibration input{width:105px}.calibration a{color:#9be6ff;font-weight:700}.marker{position:absolute;transform:translate(-50%,-50%);width:22px;height:22px;display:grid;place-items:center;background:#ffdc69;color:#14212a;border:2px solid #fff;border-radius:50%;font-size:12px;font-weight:800;pointer-events:none;box-shadow:0 1px 8px #000}
 .orientation{width:100%;display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;padding:12px;background:#102330;border:1px solid #385166;border-radius:7px}.orientation p{width:100%;margin:0}.orientation label{display:flex;gap:6px;align-items:center}.orientation input[type=range]{width:115px}.orientation select,.orientation input.angle-entry{font:inherit;padding:6px;border-radius:5px;border:1px solid #567083;background:#101923;color:var(--ink)}.orientation input.angle-entry{width:72px;font-variant-numeric:tabular-nums}.orientation input[aria-invalid=true]{border-color:#ffb2ad;outline:1px solid #ffb2ad}.axis-control{display:flex;flex-wrap:wrap;gap:5px;align-items:center}.angle-error{color:#ffb2ad!important}.orientation button.small{padding:5px 8px}.orientation a{color:#9be6ff;font-weight:700}.grid{position:absolute;inset:0;pointer-events:none;background-image:linear-gradient(to right,#b7d9e32c 1px,transparent 1px),linear-gradient(to bottom,#b7d9e32c 1px,transparent 1px);background-size:10% 10%;background-position:center}
+.coordinates{position:absolute;z-index:4;top:14px;right:16px;width:min(460px,calc(100% - 32px));padding:12px;background:#102330ed;border:1px solid #567083;border-radius:8px;box-shadow:0 4px 20px #0008}.coordinate-actions{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:9px}.coordinate-readout{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin:8px 0}.coordinate-value{padding:8px;background:#192b3a;border-radius:5px;font-variant-numeric:tabular-nums}.coordinate-value b{color:#fff}.coordinate-zero{color:#ffe28a!important;font-variant-numeric:tabular-nums}.coordinates p{margin:6px 0}.axis-label,.origin-marker{position:absolute;z-index:2;transform:translate(-50%,-50%);pointer-events:none;font-weight:800;text-shadow:0 1px 4px #000,0 0 5px #000;white-space:nowrap}.axis-label{padding:2px 4px;border-radius:4px;background:#101923bb;font-size:13px}.axis-x{color:#ff6d6d}.axis-y{color:#7bf0a1}.axis-z{color:#72c9ff}.origin-marker{display:flex;align-items:center;gap:5px;color:#ffe28a;font-size:12px}.origin-dot{width:11px;height:11px;border:2px solid #fff;border-radius:50%;background:#ffd84d;box-shadow:0 0 0 2px #17232d,0 0 12px #ffd84d}
 @media(max-width:800px){main{min-height:55vh}.hint{font-size:12px}header{padding:12px}}
 </style>
 </head>
@@ -27,10 +28,12 @@ main{flex:1;height:0;min-height:320px;position:relative}canvas{width:100%;height
   <div class="intro"><h1>Просмотр полного облака</h1><p>Откройте файл <b>dense.ply</b> из папки результата. Данные остаются на вашем компьютере.</p></div>
   <div class="actions">
     <label class="upload">Выбрать PLY<input id="file" type="file" accept=".ply,application/octet-stream"></label>
+    <button class="secondary" id="surface-toggle" type="button" aria-pressed="false" disabled>Показать поверхность</button>
     <button class="secondary" id="orbit-mode" type="button" aria-pressed="true">Обзор</button>
     <button class="secondary" id="flight-mode" type="button" aria-pressed="false" disabled>Полёт</button>
     <button class="secondary" id="calibration-toggle" type="button" aria-expanded="false" disabled>Масштаб и измерение</button>
     <button class="secondary" id="orientation-toggle" type="button" aria-expanded="false" disabled>Выровнять облако</button>
+    <button class="secondary" id="coordinates-toggle" type="button" aria-expanded="false" disabled>XYZ и ноль</button>
     <button class="secondary" id="reset" type="button">Сбросить вид</button>
     <label>Размер точек <input id="size" type="range" min="1" max="6" step="0.5" value="2"></label>
     <label>Яркость <input id="brightness" type="range" min="0.6" max="3" step="0.1" value="1.3"></label>
@@ -68,6 +71,17 @@ main{flex:1;height:0;min-height:320px;position:relative}canvas{width:100%;height
 <main id="drop"><canvas id="view" tabindex="0" aria-label="Трёхмерное облако точек"></canvas>
 <div class="grid" id="alignment-grid" hidden aria-hidden="true"></div>
 <span class="crosshair" id="crosshair" hidden aria-hidden="true">+</span>
+<div class="coordinates" id="coordinates-panel" hidden>
+  <div class="coordinate-actions"><button class="secondary" id="pick-coordinate" type="button" aria-pressed="false" disabled>Выбрать точку</button><button class="secondary" id="focus-origin" type="button" disabled>Показать (0, 0, 0)</button><button class="secondary" id="toggle-axes" type="button" aria-pressed="true" disabled>Оси XYZ: включены</button></div>
+  <p id="coordinate-status" aria-live="polite">Абсолютный ноль исходного PLY: X 0 · Y 0 · Z 0.</p>
+  <p id="coordinate-pick-status" aria-live="polite">Нажмите «Выбрать точку», затем щёлкните по точке облака.</p>
+  <div class="coordinate-readout" aria-live="polite"><span class="coordinate-value">X: <b id="coordinate-x">—</b></span><span class="coordinate-value">Y: <b id="coordinate-y">—</b></span><span class="coordinate-value">Z: <b id="coordinate-z">—</b></span></div>
+  <p id="coordinate-unit">Выбранная точка показывается в исходных координатах PLY.</p>
+</div>
+<span id="axis-negative-x" class="axis-label axis-x" hidden>−X</span><span id="axis-positive-x" class="axis-label axis-x" hidden>+X</span>
+<span id="axis-negative-y" class="axis-label axis-y" hidden>−Y</span><span id="axis-positive-y" class="axis-label axis-y" hidden>+Y</span>
+<span id="axis-negative-z" class="axis-label axis-z" hidden>−Z</span><span id="axis-positive-z" class="axis-label axis-z" hidden>+Z</span>
+<span id="world-origin-marker" class="origin-marker" hidden><i class="origin-dot"></i><b>0,0,0</b></span>
 <span class="marker" id="marker-a" hidden aria-hidden="true">A</span><span class="marker" id="marker-b" hidden aria-hidden="true">B</span>
 <div class="hint" id="hint">Левая кнопка мыши — вращение · Shift + мышь — перемещение · Колесо — масштаб</div></main>
 <script id="parser-worker" type="text/x-worker">
@@ -79,24 +93,26 @@ function headerOf(buffer){
  if(!match)throw Error('Заголовок PLY не найден или неполный.');
  const end=match.index+match[0].length, endHeaderStart=match.index+(match[0].startsWith('\n')?1:0),lines=text.slice(0,end).split(/\r?\n/);
  if(lines[0].trim()!=='ply')throw Error('Выбранный файл не является PLY.');
- let format=null, current=null, found=false, count=0, props=[], before=false,metric=false,up='y',hasOtherElements=false;
+ let format=null, current=null, currentElement=null, found=false, count=0, props=[], elements=[], before=false,metric=false,up='y',hasOtherElements=false;
  for(const line of lines){
   const w=line.trim().split(/\s+/);if(line.trim()==='comment SpatialPhotoCloud units meters')metric=true;if(line.trim()==='comment SpatialPhotoCloud up z')up='z';if(w[0]==='format')format=w[1];
   else if(w[0]==='element'){
    const n=Number(w[2]);if(!Number.isSafeInteger(n)||n<0)throw Error('Некорректное число элементов в PLY.');
-   current=w[1];if(current!=='vertex'&&n>0)hasOtherElements=true;if(current==='vertex'){if(found)throw Error('В PLY несколько разделов vertex.');found=true;count=n;}
+   current=w[1];currentElement={name:current,count:n,props:[]};elements.push(currentElement);if(current!=='vertex'&&n>0)hasOtherElements=true;if(current==='vertex'){if(found)throw Error('В PLY несколько разделов vertex.');found=true;count=n;}
    else if(!found&&n>0)before=true;
-  }else if(w[0]==='property'&&current==='vertex'){
+  }else if(w[0]==='property'&&currentElement){
+   let property;
    if(w[1]==='list'){
     if(!types[w[2]]||!types[w[3]]||!/^u?(?:char|short|int|int8|int16|int32|8|16|32)$/.test(w[2]))throw Error('Неподдерживаемый тип списка PLY.');
-    props.push({name:w[4],type:w[3],countType:w[2],list:true});
-   }else{if(!types[w[1]])throw Error('Неподдерживаемый тип свойства PLY: '+w[1]);props.push({name:w[2],type:w[1],list:false});}
+    property={name:w[4],type:w[3],countType:w[2],list:true};
+   }else{if(!types[w[1]])throw Error('Неподдерживаемый тип свойства PLY: '+w[1]);property={name:w[2],type:w[1],list:false};}
+   currentElement.props.push(property);if(current==='vertex')props.push(property);
   }
  }
  if(before)throw Error('В PLY есть данные перед точками; откройте файл через CloudCompare и сохраните как PLY.');
  if(!found||!count||!['x','y','z'].every(k=>props.some(p=>p.name===k&&!p.list)))throw Error('В файле не найдены координаты точек x, y, z.');
  if(!['ascii','binary_little_endian','binary_big_endian'].includes(format))throw Error('Неподдерживаемый формат PLY: '+format);
- return {end,endHeaderStart,format,count,props,metric,up,hasOtherElements};
+ return {end,endHeaderStart,format,count,props,elements,metric,up,hasOtherElements};
 }
 function colorByte(value,type){if(!Number.isFinite(value))return 180;if((type==='float'||type==='float32'||type==='double'||type==='float64')&&value>=0&&value<=1)value*=255;else if((type==='ushort'||type==='uint16')&&value>255)value/=257;return Math.max(0,Math.min(255,Math.round(value)));}
 async function fileBytes(file){
@@ -124,6 +140,7 @@ async function parse(file){
    const c=rgbIndices.map(j=>j===undefined?180:colorByte(readScalar(base+offsets[j],h.props[j].type),h.props[j].type));store(x,y,z,c[0],c[1],c[2]);
    if(i%notifyEvery===0)self.postMessage({type:'progress',text:'Загрузка точек: '+Math.floor(i/h.count*100)+'%'});
   }
+  pos+=h.count*stride;
  }else{
   const decoder=new TextDecoder('utf-8');
   for(let i=0;i<h.count;i++){
@@ -140,12 +157,48 @@ async function parse(file){
   }
  }
  if(!valid)throw Error('В PLY нет точек с корректными координатами.');
+ let indices=new Uint32Array(0),indexCount=0,faceCount=0,indexCapacity=0;
+ function reserveIndices(add){
+  const needed=indexCount+add;if(!Number.isSafeInteger(needed)||needed>0x7ffffffe)throw Error('В сетке слишком много граней для браузерного просмотрщика.');
+  if(needed<=indexCapacity)return;let capacity=Math.max(65536,indexCapacity||0);while(capacity<needed){capacity=Math.min(0x7ffffffe,capacity*2);if(capacity<needed&&capacity===0x7ffffffe)throw Error('В сетке слишком много граней для браузерного просмотрщика.');}
+  const grown=new Uint32Array(capacity);grown.set(indices);indices=grown;indexCapacity=capacity;
+ }
+ function appendFace(vertices){
+  faceCount++;if(vertices.length<3)return;
+  if(valid!==h.count)throw Error('В сетке есть грани, но некоторые координаты вершин повреждены. Исправьте PLY перед отображением поверхности.');
+  for(const vertex of vertices)if(!Number.isSafeInteger(vertex)||vertex<0||vertex>=h.count)throw Error('Грань ссылается на вершину вне диапазона PLY.');
+  reserveIndices((vertices.length-2)*3);
+  for(let i=1;i<vertices.length-1;i++){indices[indexCount++]=vertices[0];indices[indexCount++]=vertices[i];indices[indexCount++]=vertices[i+1];}
+ }
+ const vertexElement=h.elements.findIndex(element=>element.name==='vertex');
+ for(const element of h.elements.slice(vertexElement+1)){
+  if(!element.count)continue;
+  const isFace=element.name==='face',decoder=new TextDecoder('utf-8');
+  for(let row=0;row<element.count;row++){
+   let fields=null,field=0;
+   if(h.format==='ascii'){if(pos>=bytes.length)throw Error('Файл PLY обрезан в элементах после вершин.');let end=bytes.indexOf(10,pos);if(end<0)end=bytes.length;fields=decoder.decode(bytes.subarray(pos,end)).trim().split(/\s+/);pos=Math.min(end+1,bytes.length);}
+   let faceVertices=null;
+   for(const property of element.props){
+    if(property.list){
+     let n;
+     if(h.format==='ascii'){n=Number(fields[field++]);if(!Number.isSafeInteger(n)||n<0||field+n>fields.length)throw Error('Некорректный список в элементе PLY.');}
+     else{n=readScalar(pos,property.countType);pos+=types[property.countType][0];if(!Number.isSafeInteger(n)||n<0||pos+n*types[property.type][0]>dv.byteLength)throw Error('Некорректный список в элементе PLY.');}
+     const isIndices=isFace&&(property.name==='vertex_indices'||property.name==='vertex_index');if(isIndices){if(faceVertices!==null)throw Error('В грани PLY объявлено несколько списков индексов.');faceVertices=new Array(n);}
+     for(let j=0;j<n;j++){let value;if(h.format==='ascii')value=Number(fields[field++]);else{value=readScalar(pos,property.type);pos+=types[property.type][0];}if(isIndices){if(!Number.isSafeInteger(value))throw Error('Индекс вершины грани должен быть целым числом.');faceVertices[j]=value;}}
+    }else if(h.format==='ascii'){
+     if(field>=fields.length)throw Error('Файл PLY обрезан в элементах после вершин.');field++;
+    }else{pos+=types[property.type][0];if(pos>dv.byteLength)throw Error('Файл PLY обрезан в элементах после вершин.');}
+   }
+   if(isFace){if(faceVertices===null)throw Error('В разделе face PLY не найдены индексы vertex_indices.');appendFace(faceVertices);}
+  }
+ }
+ indices=indices.slice(0,indexCount);
  self.postMessage({type:'progress',text:'Подготовка к отображению…'});
  const center=min.map((v,k)=>(v+max[k])/2),scale=Math.max(...max.map((v,k)=>v-min[k]))||1,positions=new Float32Array(valid*3);
  for(let i=0;i<valid;i++){for(let k=0;k<3;k++)positions[3*i+k]=(coordinates[3*i+k]-center[k])/scale;}
  const colorOut=valid===h.count?colors:colors.slice(0,valid*3);
  const extents=max.map((v,k)=>(v-min[k])/(2*scale));
- self.postMessage({type:'done',total:h.count,valid,extents,scale,center,metric:h.metric,up:h.up,hasOtherElements:h.hasOtherElements,positions:positions.buffer,colors:colorOut.buffer},[positions.buffer,colorOut.buffer]);
+ self.postMessage({type:'done',total:h.count,valid,extents,scale,center,metric:h.metric,up:h.up,hasOtherElements:h.hasOtherElements,faceCount,faceIndexCount:indexCount,indices:indices.buffer,positions:positions.buffer,colors:colorOut.buffer},[positions.buffer,colorOut.buffer,indices.buffer]);
 }
 async function exportScaled(file,factor,angles=[0,0,0],center=[0,0,0],up='y',metric=true,inputUp='y',mirror=null){
  if(!Number.isFinite(factor)||factor<=0||angles.length!==3||center.length!==3||![...angles,...center].every(Number.isFinite)||!['y','z'].includes(up)||!['y','z'].includes(inputUp))throw Error('Некорректное преобразование облака.');
@@ -202,12 +255,14 @@ const canvas=document.getElementById('view'),status=document.getElementById('sta
 const orbitButton=document.getElementById('orbit-mode'),flightButton=document.getElementById('flight-mode'),speed=document.getElementById('speed'),speedControl=document.getElementById('speed-control'),hint=document.getElementById('hint'),crosshair=document.getElementById('crosshair');
 const calibrationToggle=document.getElementById('calibration-toggle'),calibration=document.getElementById('calibration'),calibrationStatus=document.getElementById('calibration-status'),choosePoints=document.getElementById('choose-points'),knownDistance=document.getElementById('known-distance'),units=document.getElementById('units'),applyCalibration=document.getElementById('apply-calibration'),prepareExport=document.getElementById('prepare-export'),download=document.getElementById('download'),markers=[document.getElementById('marker-a'),document.getElementById('marker-b')];
 const orientationToggle=document.getElementById('orientation-toggle'),orientation=document.getElementById('orientation'),alignmentGrid=document.getElementById('alignment-grid'),rotations=['x','y','z'].map(a=>document.getElementById('rotate-'+a)),angleFields=['x','y','z'].map(a=>document.getElementById('angle-'+a)),angleError=document.getElementById('angle-error'),rotationStep=document.getElementById('rotation-step'),upAxis=document.getElementById('up-axis'),prepareAligned=document.getElementById('prepare-aligned'),downloadAligned=document.getElementById('download-aligned');
+const coordinatesToggle=document.getElementById('coordinates-toggle'),coordinatesPanel=document.getElementById('coordinates-panel'),coordinateStatus=document.getElementById('coordinate-status'),coordinatePickStatus=document.getElementById('coordinate-pick-status'),coordinateUnit=document.getElementById('coordinate-unit'),coordinateValues=['x','y','z'].map(a=>document.getElementById('coordinate-'+a)),pickCoordinate=document.getElementById('pick-coordinate'),focusOrigin=document.getElementById('focus-origin'),toggleAxes=document.getElementById('toggle-axes'),originMarker=document.getElementById('world-origin-marker'),axisLabels=['x','y','z'].flatMap(a=>[document.getElementById('axis-negative-'+a),document.getElementById('axis-positive-'+a)]);
 const oppositeView=document.getElementById('opposite-view'),mirrorCloud=document.getElementById('mirror-cloud'),mirrorWarning=document.getElementById('mirror-warning');
+const surfaceToggle=document.getElementById('surface-toggle');
 const saveCurrentButtons=[document.getElementById('save-current-calibration'),document.getElementById('save-current-alignment')];
 const gl=canvas.getContext('webgl',{antialias:false,alpha:false,depth:true,preserveDrawingBuffer:false});
-let program=null,posBuffer=null,colBuffer=null,count=0,extents=[.5,.5,.5],yaw=.35,pitch=-.2,zoom=1,panX=0,panY=0,drag=null,worker=null,frame=0;
-let mode='orbit',eye=[0,0,-1],savedOrbit=null,lastMoveTime=null;
-let pointPositions=null,sourceScale=1,sourceCenter=[0,0,0],sourceUp='y',loadedFile=null,metricFactor=null,selectedPoints=[],pickBuffer=null,pickFramebuffer=null,pickTexture=null,pickDepth=null,pickWidth=0,pickHeight=0,exportWorker=null,downloadUrl=null,saving=false,disabledBeforeSave=[];
+let program=null,posBuffer=null,colBuffer=null,indexBuffer=null,uint32IndexSupported=false,faceIndexCount=0,faceCount=0,surfaceMode=false,axisPositionBuffer=null,axisColorBuffer=null,axisVertexCount=0,count=0,extents=[.5,.5,.5],yaw=.35,pitch=-.2,zoom=1,panX=0,panY=0,drag=null,worker=null,frame=0;
+let mode='orbit',eye=[0,0,-1],orbitCenter=[0,0,0],savedOrbit=null,lastMoveTime=null;
+let pointPositions=null,sourceScale=1,sourceCenter=[0,0,0],sourceUp='y',sourceMetric=false,loadedFile=null,metricFactor=null,selectedPoints=[],selectedCoordinate=null,coordinatePickActive=false,axesVisible=true,pickBuffer=null,pickFramebuffer=null,pickTexture=null,pickDepth=null,pickWidth=0,pickHeight=0,exportWorker=null,downloadUrl=null,saving=false,disabledBeforeSave=[];
 let mirrorNormal=null,sourceHasOtherElements=false;
 const validAngles=[true,true,true];
 const heldKeys=new Set();
@@ -215,20 +270,20 @@ function statusText(text,kind=''){status.textContent=text;status.className='stat
 function shader(type,source){const sh=gl.createShader(type);gl.shaderSource(sh,source);gl.compileShader(sh);if(!gl.getShaderParameter(sh,gl.COMPILE_STATUS))throw Error('Ошибка WebGL: '+gl.getShaderInfoLog(sh));return sh;}
 function initialize(){
  if(!gl)throw Error('WebGL недоступен в браузере. Попробуйте Microsoft Edge или Google Chrome.');
- const vs=shader(gl.VERTEX_SHADER,`attribute vec3 pos;attribute vec4 col;uniform float yaw,pitch,zoom,aspect,size,bright,flight,picking,mirrorOn;uniform vec2 pan;uniform vec3 eye,rotationCos,rotationSin,mirrorPlane;varying vec4 color;
+ const vs=shader(gl.VERTEX_SHADER,`attribute vec3 pos;attribute vec4 col;uniform float yaw,pitch,zoom,aspect,size,bright,flight,picking,mirrorOn,transformCloud;uniform vec2 pan;uniform vec3 eye,orbitCenter,referenceOffset,rotationCos,rotationSin,mirrorPlane;varying vec4 color;
  void main(){float cy=cos(yaw),sy=sin(yaw),cp=cos(pitch),sp=sin(pitch);vec3 p=pos;
- if(mirrorOn>0.5)p-=2.0*dot(p,mirrorPlane)*mirrorPlane;
+ if(transformCloud>0.5){if(mirrorOn>0.5)p-=2.0*dot(p,mirrorPlane)*mirrorPlane;
  p.yz=vec2(rotationCos.x*p.y-rotationSin.x*p.z,rotationSin.x*p.y+rotationCos.x*p.z);
  p.xz=vec2(rotationCos.y*p.x+rotationSin.y*p.z,-rotationSin.y*p.x+rotationCos.y*p.z);
- p.xy=vec2(rotationCos.z*p.x-rotationSin.z*p.y,rotationSin.z*p.x+rotationCos.z*p.y);
- if(flight>0.5)p-=eye;
+ p.xy=vec2(rotationCos.z*p.x-rotationSin.z*p.y,rotationSin.z*p.x+rotationCos.z*p.y);}
+ if(transformCloud>0.5){if(flight>0.5)p-=eye;else p-=orbitCenter;}else p+=referenceOffset;
  float x=cy*p.x-sy*p.z;float z=sy*p.x+cy*p.z;float y=cp*p.y-sp*z;float depth=sp*p.y+cp*z;
  if(flight>0.5){float f=1.428148;float nearPlane=0.002;float farPlane=100.0;float A=(farPlane+nearPlane)/(farPlane-nearPlane);float B=-2.0*farPlane*nearPlane/(farPlane-nearPlane);gl_Position=vec4(-x*f/aspect,y*f,A*depth+B,depth);}
  else{vec2 ratio=aspect>=1.0?vec2(1.0/aspect,1.0):vec2(1.0,aspect);gl_Position=vec4(vec2(-x,y)*ratio*zoom+pan,depth*0.8,1.0);}
  gl_PointSize=size;color=picking>0.5?col:vec4(pow(col.rgb,vec3(1.0/bright)),1.0);}`);
  const fs=shader(gl.FRAGMENT_SHADER,`precision mediump float;varying vec4 color;void main(){gl_FragColor=color;}`);
  program=gl.createProgram();gl.attachShader(program,vs);gl.attachShader(program,fs);gl.linkProgram(program);if(!gl.getProgramParameter(program,gl.LINK_STATUS))throw Error('Ошибка WebGL: '+gl.getProgramInfoLog(program));
- gl.useProgram(program);posBuffer=gl.createBuffer();colBuffer=gl.createBuffer();gl.enable(gl.DEPTH_TEST);gl.disable(gl.DITHER);gl.depthFunc(gl.LEQUAL);gl.clearColor(0.063,0.098,0.137,1);
+ gl.useProgram(program);posBuffer=gl.createBuffer();colBuffer=gl.createBuffer();indexBuffer=gl.createBuffer();axisPositionBuffer=gl.createBuffer();axisColorBuffer=gl.createBuffer();uint32IndexSupported=!!gl.getExtension('OES_element_index_uint');gl.enable(gl.DEPTH_TEST);gl.disable(gl.DITHER);gl.disable(gl.CULL_FACE);gl.depthFunc(gl.LEQUAL);gl.clearColor(0.063,0.098,0.137,1);
 }
 function updateFlight(time){
  if(mode!=='flight'||!count){lastMoveTime=null;return false;}
@@ -245,12 +300,62 @@ function resizeCanvas(){const d=Math.min(window.devicePixelRatio||1,2),w=Math.ma
 function renderPoints(picking=false,widePick=false){const {d,w,h}=resizeCanvas();
  gl.useProgram(program);gl.bindBuffer(gl.ARRAY_BUFFER,posBuffer);let a=gl.getAttribLocation(program,'pos');gl.enableVertexAttribArray(a);gl.vertexAttribPointer(a,3,gl.FLOAT,false,0,0);
  gl.bindBuffer(gl.ARRAY_BUFFER,picking?pickBuffer:colBuffer);a=gl.getAttribLocation(program,'col');gl.enableVertexAttribArray(a);gl.vertexAttribPointer(a,picking?4:3,gl.UNSIGNED_BYTE,true,0,0);
- for(const [n,v] of [['yaw',yaw],['pitch',pitch],['zoom',zoom],['aspect',w/h],['size',(widePick?Math.max(9,Number(sizeInput.value)):Number(sizeInput.value))*d],['bright',Number(brightness.value)],['flight',mode==='flight'?1:0],['picking',picking?1:0]])gl.uniform1f(gl.getUniformLocation(program,n),v);
+ for(const [n,v] of [['yaw',yaw],['pitch',pitch],['zoom',zoom],['aspect',w/h],['size',(widePick?Math.max(9,Number(sizeInput.value)):Number(sizeInput.value))*d],['bright',Number(brightness.value)],['flight',mode==='flight'?1:0],['picking',picking?1:0],['transformCloud',1]])gl.uniform1f(gl.getUniformLocation(program,n),v);
  const angles=rotationAngles(),c=angles.map(Math.cos),s=angles.map(Math.sin);gl.uniform3f(gl.getUniformLocation(program,'rotationCos'),...c);gl.uniform3f(gl.getUniformLocation(program,'rotationSin'),...s);
  gl.uniform1f(gl.getUniformLocation(program,'mirrorOn'),mirrorNormal?1:0);gl.uniform3f(gl.getUniformLocation(program,'mirrorPlane'),...(mirrorNormal||[1,0,0]));
- gl.uniform2f(gl.getUniformLocation(program,'pan'),panX,panY);gl.uniform3f(gl.getUniformLocation(program,'eye'),eye[0],eye[1],eye[2]);gl.drawArrays(gl.POINTS,0,count);
+ gl.uniform2f(gl.getUniformLocation(program,'pan'),panX,panY);gl.uniform3f(gl.getUniformLocation(program,'eye'),eye[0],eye[1],eye[2]);gl.uniform3f(gl.getUniformLocation(program,'orbitCenter'),orbitCenter[0],orbitCenter[1],orbitCenter[2]);gl.drawArrays(gl.POINTS,0,count);
 }
-function draw(time=0){frame=0;if(!gl||!program)return;const moving=updateFlight(time),{w,h}=resizeCanvas();gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.viewport(0,0,w,h);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);if(count)renderPoints();updateMarkers();if(moving)refresh();
+function renderSurface(){const {d,w,h}=resizeCanvas();
+ gl.useProgram(program);gl.bindBuffer(gl.ARRAY_BUFFER,posBuffer);let a=gl.getAttribLocation(program,'pos');gl.enableVertexAttribArray(a);gl.vertexAttribPointer(a,3,gl.FLOAT,false,0,0);
+ gl.bindBuffer(gl.ARRAY_BUFFER,colBuffer);a=gl.getAttribLocation(program,'col');gl.enableVertexAttribArray(a);gl.vertexAttribPointer(a,3,gl.UNSIGNED_BYTE,true,0,0);
+ for(const [n,v] of [['yaw',yaw],['pitch',pitch],['zoom',zoom],['aspect',w/h],['size',1],['bright',Number(brightness.value)],['flight',mode==='flight'?1:0],['picking',0],['transformCloud',1]])gl.uniform1f(gl.getUniformLocation(program,n),v);
+ const angles=rotationAngles(),c=angles.map(Math.cos),s=angles.map(Math.sin);gl.uniform3f(gl.getUniformLocation(program,'rotationCos'),...c);gl.uniform3f(gl.getUniformLocation(program,'rotationSin'),...s);
+ gl.uniform1f(gl.getUniformLocation(program,'mirrorOn'),mirrorNormal?1:0);gl.uniform3f(gl.getUniformLocation(program,'mirrorPlane'),...(mirrorNormal||[1,0,0]));
+ gl.uniform2f(gl.getUniformLocation(program,'pan'),panX,panY);gl.uniform3f(gl.getUniformLocation(program,'eye'),eye[0],eye[1],eye[2]);gl.uniform3f(gl.getUniformLocation(program,'orbitCenter'),orbitCenter[0],orbitCenter[1],orbitCenter[2]);gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,indexBuffer);gl.drawElements(gl.TRIANGLES,faceIndexCount,gl.UNSIGNED_INT,0);
+}
+function updateSurfaceToggle(){surfaceToggle.textContent=surfaceMode?'Показать точки':'Показать поверхность';surfaceToggle.setAttribute('aria-pressed',String(surfaceMode));}
+function absoluteOriginNormalized(){return sourceCenter.map(value=>-value/sourceScale);}
+function uploadReferenceAxes(){
+ const origin=absoluteOriginNormalized(),length=.24,positions=[],colors=[];
+ const axes=[[[1,0,0],[255,70,70],[115,45,45]],[[0,1,0],[90,245,140],[40,115,70]],[[0,0,1],[90,190,255],[40,90,135]]];
+ if(!origin.every(Number.isFinite)||origin.some(value=>Math.abs(value)>1e30)){axisVertexCount=0;return;}
+ for(const [direction,positive,negative] of axes){
+  const before=direction.map(value=>-value*length),after=direction.map(value=>value*length),zero=[0,0,0];
+  positions.push(...before,...zero,...zero,...after);colors.push(...negative,...negative,...positive,...positive);
+ }
+ gl.bindBuffer(gl.ARRAY_BUFFER,axisPositionBuffer);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(positions),gl.STATIC_DRAW);
+ gl.bindBuffer(gl.ARRAY_BUFFER,axisColorBuffer);gl.bufferData(gl.ARRAY_BUFFER,new Uint8Array(colors),gl.STATIC_DRAW);axisVertexCount=12;
+}
+function renderAxes(){
+ if(!axesVisible||!axisVertexCount)return;const {w,h}=resizeCanvas();gl.useProgram(program);
+ gl.bindBuffer(gl.ARRAY_BUFFER,axisPositionBuffer);let a=gl.getAttribLocation(program,'pos');gl.enableVertexAttribArray(a);gl.vertexAttribPointer(a,3,gl.FLOAT,false,0,0);
+ gl.bindBuffer(gl.ARRAY_BUFFER,axisColorBuffer);a=gl.getAttribLocation(program,'col');gl.enableVertexAttribArray(a);gl.vertexAttribPointer(a,3,gl.UNSIGNED_BYTE,true,0,0);
+ for(const [n,v] of [['yaw',yaw],['pitch',pitch],['zoom',zoom],['aspect',w/h],['size',1],['bright',1],['flight',mode==='flight'?1:0],['picking',0],['transformCloud',0],['mirrorOn',0]])gl.uniform1f(gl.getUniformLocation(program,n),v);
+ const angles=rotationAngles(),c=angles.map(Math.cos),s=angles.map(Math.sin);gl.uniform3f(gl.getUniformLocation(program,'rotationCos'),...c);gl.uniform3f(gl.getUniformLocation(program,'rotationSin'),...s);
+ const referenceOffset=absoluteOriginNormalized().map((value,i)=>value-(mode==='flight'?eye[i]:orbitCenter[i]));
+ gl.uniform3f(gl.getUniformLocation(program,'mirrorPlane'),1,0,0);gl.uniform2f(gl.getUniformLocation(program,'pan'),panX,panY);gl.uniform3f(gl.getUniformLocation(program,'eye'),eye[0],eye[1],eye[2]);gl.uniform3f(gl.getUniformLocation(program,'orbitCenter'),orbitCenter[0],orbitCenter[1],orbitCenter[2]);gl.uniform3f(gl.getUniformLocation(program,'referenceOffset'),...referenceOffset);gl.lineWidth(2);gl.drawArrays(gl.LINES,0,axisVertexCount);
+}
+function projectReferencePoint(point){
+ const w=canvas.clientWidth,h=canvas.clientHeight,aspect=w/Math.max(1,h),cy=Math.cos(yaw),sy=Math.sin(yaw),cp=Math.cos(pitch),sp=Math.sin(pitch);let [px,py,pz]=point;
+ if(mode==='flight'){px-=eye[0];py-=eye[1];pz-=eye[2];}else{px-=orbitCenter[0];py-=orbitCenter[1];pz-=orbitCenter[2];}
+ const x=cy*px-sy*pz,z=sy*px+cy*pz,y=cp*py-sp*z,depth=sp*py+cp*z;let sx,syScreen,visible;
+ if(mode==='flight'){visible=depth>.002&&depth<100;sx=-x*1.428148/(aspect*depth);syScreen=y*1.428148/depth;}
+ else{const rx=aspect>=1?1/aspect:1,ry=aspect>=1?1:aspect;sx=-x*rx*zoom+panX;syScreen=y*ry*zoom+panY;visible=Math.abs(depth*0.8)<=1;}
+ visible=visible&&Number.isFinite(sx)&&Number.isFinite(syScreen)&&Math.abs(sx)<=1&&Math.abs(syScreen)<=1;
+ return {x:(sx+1)*w/2,y:(1-syScreen)*h/2,visible};
+}
+function updateReferenceOverlay(){
+ const visible=axesVisible&&count>0&&axisVertexCount>0;axisLabels.forEach(label=>label.hidden=!visible);originMarker.hidden=!visible;
+ if(!count)return;if(!axisVertexCount){coordinateStatus.textContent='Начало координат слишком далеко от облака или выходит за числовой диапазон PLY.';return;}
+ const origin=absoluteOriginNormalized(),projected=projectReferencePoint(origin);originMarker.hidden=!visible||!projected.visible;
+ if(!originMarker.hidden){originMarker.style.left=projected.x+'px';originMarker.style.top=projected.y+'px';}
+ for(let axis=0;axis<3;axis++)for(let side=0;side<2;side++){
+  const direction=[0,0,0];direction[axis]=side?1:-1;const point=origin.map((value,i)=>value+direction[i]*.24),tag=axisLabels[axis*2+side],screen=projectReferencePoint(point);
+  tag.hidden=!visible||!screen.visible;if(!tag.hidden){tag.style.left=screen.x+'px';tag.style.top=screen.y+'px';}
+ }
+ const state=projected.visible?'в кадре':'вне кадра';coordinateStatus.textContent=`Абсолютный ноль исходного PLY (X 0 · Y 0 · Z 0): ${state}. Оси остаются неподвижной опорой при выравнивании облака.`;
+}
+function draw(time=0){frame=0;if(!gl||!program)return;const moving=updateFlight(time),{w,h}=resizeCanvas();gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.viewport(0,0,w,h);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);if(count){if(surfaceMode)renderSurface();else renderPoints();renderAxes();}updateMarkers();updateReferenceOverlay();if(moving)refresh();
 }
 function refresh(){if(!frame)frame=requestAnimationFrame(draw)}
 function rotationAngles(){return rotations.map(input=>Number(input.value)*Math.PI/180);}
@@ -260,11 +365,31 @@ function updateMarkers(){
  const w=canvas.clientWidth,h=canvas.clientHeight,aspect=w/Math.max(1,h),cy=Math.cos(yaw),sy=Math.sin(yaw),cp=Math.cos(pitch),sp=Math.sin(pitch);
  markers.forEach((marker,i)=>{
   if(calibration.hidden||!selectedPoints[i]||mode!=='orbit'){marker.hidden=true;return;}
-  const [px,py,pz]=rotatePoint(selectedPoints[i]),x=cy*px-sy*pz,z=sy*px+cy*pz,y=cp*py-sp*z;
+  const centered=rotatePoint(selectedPoints[i]),px=centered[0]-orbitCenter[0],py=centered[1]-orbitCenter[1],pz=centered[2]-orbitCenter[2],x=cy*px-sy*pz,z=sy*px+cy*pz,y=cp*py-sp*z;
   const sx=-x*(aspect>=1?1/aspect:1)*zoom+panX,syScreen=y*(aspect>=1?1:aspect)*zoom+panY;
   marker.hidden=!Number.isFinite(sx)||!Number.isFinite(syScreen)||Math.abs(sx)>1||Math.abs(syScreen)>1;
   if(!marker.hidden){marker.style.left=((sx+1)*w/2)+'px';marker.style.top=((1-syScreen)*h/2)+'px';}
  });
+}
+function rawPointCoordinates(point){return point.map((value,i)=>value*sourceScale+sourceCenter[i]);}
+function updateCoordinateReadout(point){
+ selectedCoordinate=point;const values=point?rawPointCoordinates(point):null,f=n=>new Intl.NumberFormat('ru-RU',{maximumSignificantDigits:9}).format(n);
+ coordinateValues.forEach((element,i)=>{element.textContent=values?f(values[i]):'—';});
+ coordinateUnit.textContent=sourceMetric?'Координаты выбранной точки в метрах по заголовку PLY.':'Исходные единицы PLY; масштаб по фотографиям не подтверждён.';
+}
+function focusAbsoluteOrigin(){
+ if(!count)return;const origin=absoluteOriginNormalized();if(!origin.every(Number.isFinite)){coordinatePickStatus.textContent='Ноль не удаётся представить в координатах отображения этого PLY.';return;}
+ if(mode==='flight'){
+  const cp=Math.cos(pitch),sp=Math.sin(pitch),sy=Math.sin(yaw),cy=Math.cos(yaw),forward=[sy*cp,sp,cy*cp],distance=.6;
+  eye=origin.map((value,i)=>value-forward[i]*distance);
+ }else{
+  orbitCenter=origin.slice();panX=0;panY=0;
+ }
+ coordinatePickStatus.textContent='Начало координат размещено в центре вида.';refresh();
+}
+function beginCoordinatePick(){
+ if(!count)return;orbitMode();coordinatePickActive=true;pickCoordinate.setAttribute('aria-pressed','true');pickCoordinate.textContent='Выберите точку…';canvas.style.cursor='crosshair';
+ coordinatePickStatus.textContent='Щёлкните по видимой точке облака. Значения будут показаны в исходных координатах PLY.';
 }
 function disposePicking(){
  if(pickBuffer)gl.deleteBuffer(pickBuffer);if(pickFramebuffer)gl.deleteFramebuffer(pickFramebuffer);if(pickTexture)gl.deleteTexture(pickTexture);if(pickDepth)gl.deleteRenderbuffer(pickDepth);
@@ -287,16 +412,19 @@ function preparePicking(){
  if(!complete){disposePicking();throw Error('Не удалось подготовить выбор точек. Попробуйте уменьшить размер окна.');}
 }
 function selectPoint(clientX,clientY){
- if(!count||calibration.hidden||mode!=='orbit')return;
+ const coordinateSelection=coordinatePickActive;
+ if(!count||mode!=='orbit'||(!coordinateSelection&&calibration.hidden))return;
  try{
   preparePicking();const rect=canvas.getBoundingClientRect(),x=Math.floor((clientX-rect.left)*canvas.width/rect.width),y=Math.floor((clientY-rect.top)*canvas.height/rect.height);
   if(x<0||y<0||x>=canvas.width||y>=canvas.height)return;
   gl.bindFramebuffer(gl.FRAMEBUFFER,pickFramebuffer);gl.viewport(0,0,canvas.width,canvas.height);gl.clearColor(0,0,0,0);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);renderPoints(true);
   const pixel=new Uint8Array(4),readId=()=>{gl.readPixels(x,canvas.height-1-y,1,1,gl.RGBA,gl.UNSIGNED_BYTE,pixel);return (pixel[0]+pixel[1]*256+pixel[2]*65536+pixel[3]*16777216)>>>0;};
   let id=readId();if(!id){gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);renderPoints(true,true);id=readId();}gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.clearColor(0.063,0.098,0.137,1);
-  if(!id||id>count){calibrationStatus.textContent='Точка не найдена. Увеличьте участок и нажмите на видимую точку.';refresh();return;}
+  if(!id||id>count){if(coordinateSelection)coordinatePickStatus.textContent='Точка не найдена. Увеличьте участок и попробуйте ещё раз.';else calibrationStatus.textContent='Точка не найдена. Увеличьте участок и нажмите на видимую точку.';refresh();return;}
+  const i=(id-1)*3,point=[pointPositions[i],pointPositions[i+1],pointPositions[i+2]];
+  if(coordinateSelection){coordinatePickActive=false;pickCoordinate.setAttribute('aria-pressed','false');pickCoordinate.textContent='Выбрать точку';canvas.style.cursor='grab';updateCoordinateReadout(point);coordinatePickStatus.textContent='Точка выбрана. Координаты относятся к исходному PLY, до поворота предпросмотра.';refresh();return;}
   if(selectedPoints.length===2){selectedPoints=[];knownDistance.value='';}
-  const i=(id-1)*3;selectedPoints.push([pointPositions[i],pointPositions[i+1],pointPositions[i+2]]);updateCalibration();refresh();
+  selectedPoints.push(point);updateCalibration();refresh();
  }catch(error){gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.clearColor(0.063,0.098,0.137,1);calibrationStatus.textContent=error.message;refresh();}
 }
 function selectedDistance(){return selectedPoints.length===2?Math.hypot(...selectedPoints[0].map((v,i)=>v-selectedPoints[1][i]))*sourceScale:0;}
@@ -376,7 +504,7 @@ function releaseMouse(){if(document.pointerLockElement===canvas&&document.exitPo
 function orbitMode(restore=true){
  if(mode==='flight'){
   heldKeys.clear();lastMoveTime=null;releaseMouse();mode='orbit';
-  if(restore&&savedOrbit)({yaw,pitch,zoom,panX,panY}=savedOrbit);
+  if(restore&&savedOrbit){({yaw,pitch,zoom,panX,panY}=savedOrbit);orbitCenter=savedOrbit.orbitCenter.slice();}
   savedOrbit=null;drag=null;
  }
  showMode();refresh();
@@ -394,28 +522,29 @@ function flightMode(){
  if(!count||mode==='flight')return;if(validAngles.some(valid=>!valid)){angleFields[validAngles.indexOf(false)].focus();return;}
  if(!calibration.hidden)setCalibrationOpen(false);
  if(!orientation.hidden)setOrientationOpen(false);
- savedOrbit={yaw,pitch,zoom,panX,panY};normalizeFlightPitch();
+ savedOrbit={yaw,pitch,zoom,panX,panY,orbitCenter:orbitCenter.slice()};normalizeFlightPitch();
  const aspect=Math.max(1,canvas.clientWidth)/Math.max(1,canvas.clientHeight),rx=aspect>=1?1/aspect:1,ry=aspect>=1?1:aspect;
  const tx=panX/(rx*zoom),ty=-panY/(ry*zoom),cy=Math.cos(yaw),sy=Math.sin(yaw),cp=Math.cos(pitch),sp=Math.sin(pitch);
  const target=[cy*tx-sy*sp*ty,cp*ty,-sy*tx-cy*sp*ty],forward=[sy*cp,sp,cy*cp];
  const distance=Math.max(.04,Math.min(20,1.428148/(ry*zoom)));
- eye=target.map((v,i)=>v-forward[i]*distance);mode='flight';heldKeys.clear();lastMoveTime=null;drag=null;
+ eye=target.map((v,i)=>orbitCenter[i]+v-forward[i]*distance);mode='flight';heldKeys.clear();lastMoveTime=null;drag=null;
  showMode();canvas.focus({preventScroll:true});grabMouse();refresh();
 }
 function fitView(){
+ orbitCenter=[0,0,0];
  const [ex,ey,ez]=extents,cy=Math.cos(yaw),sy=Math.sin(yaw),cp=Math.cos(pitch),sp=Math.sin(pitch),aspect=Math.max(1,canvas.clientWidth)/Math.max(1,canvas.clientHeight);let x=0,y=0;
  for(const dx of [-ex,ex])for(const dy of [-ey,ey])for(const dz of [-ez,ez]){const [px,py,pz]=rotatePoint([dx,dy,dz]),z=sy*px+cy*pz;x=Math.max(x,Math.abs(cy*px-sy*pz));y=Math.max(y,Math.abs(cp*py-sp*z));}
  zoom=Math.min(100,.88/Math.max(1e-9,x*(aspect>=1?1/aspect:1)),.88/Math.max(1e-9,y*(aspect>=1?1:aspect)));refresh();
 }
 function fixedView(top=false){orbitMode();yaw=0;pitch=top?-Math.PI/2:0;panX=0;panY=0;fitView();}
-function resetView(){orbitMode(false);yaw=.35;pitch=-.2;panX=0;panY=0;fitView();}
+function resetView(){orbitMode(false);orbitCenter=[0,0,0];yaw=.35;pitch=-.2;panX=0;panY=0;fitView();}
 function load(file,restore=null){
  if(!program||saving)return;if(!file||!file.name.toLowerCase().endsWith('.ply')){statusText('Выберите файл с расширением .ply.','error');return;}
- if(worker)worker.terminate();cancelExport();orbitMode(false);disposePicking();count=0;pointPositions=null;loadedFile=null;sourceScale=1;sourceCenter=[0,0,0];sourceUp='y';sourceHasOtherElements=false;mirrorNormal=null;syncMirror();metricFactor=null;selectedPoints=[];knownDistance.value='';setCalibrationOpen(false);setOrientationOpen(false);initialOrientation();flightButton.disabled=true;calibrationToggle.disabled=true;orientationToggle.disabled=true;refresh();statusText('Подготовка файла: '+file.name+'…');
+ if(worker)worker.terminate();cancelExport();orbitMode(false);disposePicking();count=0;pointPositions=null;faceIndexCount=0;faceCount=0;surfaceMode=false;surfaceToggle.disabled=true;updateSurfaceToggle();loadedFile=null;sourceScale=1;sourceCenter=[0,0,0];sourceUp='y';sourceMetric=false;sourceHasOtherElements=false;orbitCenter=[0,0,0];mirrorNormal=null;syncMirror();metricFactor=null;selectedPoints=[];selectedCoordinate=null;coordinatePickActive=false;axisVertexCount=0;axesVisible=true;coordinatesPanel.hidden=true;coordinatesToggle.setAttribute('aria-expanded','false');coordinatesToggle.disabled=true;pickCoordinate.disabled=true;focusOrigin.disabled=true;toggleAxes.disabled=true;toggleAxes.setAttribute('aria-pressed','true');toggleAxes.textContent='Оси XYZ: включены';pickCoordinate.setAttribute('aria-pressed','false');pickCoordinate.textContent='Выбрать точку';coordinateValues.forEach(element=>element.textContent='—');coordinatePickStatus.textContent='Нажмите «Выбрать точку», затем щёлкните по точке облака.';coordinateUnit.textContent='Выбранная точка показывается в исходных координатах PLY.';originMarker.hidden=true;axisLabels.forEach(label=>label.hidden=true);canvas.style.cursor='grab';setCalibrationOpen(false);setOrientationOpen(false);initialOrientation();flightButton.disabled=true;calibrationToggle.disabled=true;orientationToggle.disabled=true;refresh();statusText('Подготовка файла: '+file.name+'…');
  const activeWorker=makeWorker();worker=activeWorker;
  activeWorker.onmessage=e=>{if(worker!==activeWorker)return;const r=e.data;if(r.type==='progress')statusText(r.text);else if(r.type==='error'){statusText((restore?'PLY сохранён, но повторное открытие не удалось: ':'')+r.text,'error');activeWorker.terminate();worker=null;}else if(r.type==='done'){
-  try{pointPositions=new Float32Array(r.positions);gl.bindBuffer(gl.ARRAY_BUFFER,posBuffer);gl.bufferData(gl.ARRAY_BUFFER,pointPositions,gl.STATIC_DRAW);gl.bindBuffer(gl.ARRAY_BUFFER,colBuffer);gl.bufferData(gl.ARRAY_BUFFER,new Uint8Array(r.colors),gl.STATIC_DRAW);const error=gl.getError();if(error!==gl.NO_ERROR)throw Error('Не удалось загрузить точки в WebGL (код '+error+').');
-   count=r.valid;extents=r.extents;sourceScale=r.scale;sourceCenter=r.center;sourceUp=r.up;sourceHasOtherElements=r.hasOtherElements;metricFactor=r.metric?1:null;loadedFile=file;initialOrientation();flightButton.disabled=false;calibrationToggle.disabled=false;orientationToggle.disabled=false;
+  try{pointPositions=new Float32Array(r.positions);gl.bindBuffer(gl.ARRAY_BUFFER,posBuffer);gl.bufferData(gl.ARRAY_BUFFER,pointPositions,gl.STATIC_DRAW);gl.bindBuffer(gl.ARRAY_BUFFER,colBuffer);gl.bufferData(gl.ARRAY_BUFFER,new Uint8Array(r.colors),gl.STATIC_DRAW);faceCount=r.faceCount||0;faceIndexCount=r.faceIndexCount||0;if(uint32IndexSupported&&faceIndexCount){gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,indexBuffer);gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,new Uint32Array(r.indices),gl.STATIC_DRAW);surfaceMode=true;}else surfaceMode=false;surfaceToggle.disabled=!(uint32IndexSupported&&faceIndexCount>0);updateSurfaceToggle();const error=gl.getError();if(error!==gl.NO_ERROR)throw Error('Не удалось загрузить точки или грани в WebGL (код '+error+').');
+   count=r.valid;extents=r.extents;sourceScale=r.scale;sourceCenter=r.center;sourceUp=r.up;sourceMetric=r.metric;sourceHasOtherElements=r.hasOtherElements;metricFactor=r.metric?1:null;loadedFile=file;axesVisible=true;uploadReferenceAxes();updateCoordinateReadout(null);coordinatesToggle.disabled=false;pickCoordinate.disabled=false;focusOrigin.disabled=false;toggleAxes.disabled=false;initialOrientation();flightButton.disabled=false;calibrationToggle.disabled=false;orientationToggle.disabled=false;
    if(restore){
     if(restore.panel==='orientation')setOrientationOpen(true);else setCalibrationOpen(true);yaw=restore.yaw;pitch=restore.pitch;
     zoom=Math.max(.1,Math.min(100,restore.zoom*r.scale/(restore.scale*restore.factor)));
@@ -426,15 +555,18 @@ function load(file,restore=null){
     const cy=Math.cos(yaw),sy=Math.sin(yaw),cp=Math.cos(pitch),sp=Math.sin(pitch),x=cy*offset[0]-sy*offset[2],z=sy*offset[0]+cy*offset[2],y=cp*offset[1]-sp*z,aspect=canvas.clientWidth/Math.max(1,canvas.clientHeight);
     panX=restore.panX+x*(aspect>=1?1/aspect:1)*zoom;panY=restore.panY-y*(aspect>=1?1:aspect)*zoom;refresh();
    }else resetView();
-   const f=n=>new Intl.NumberFormat('ru-RU').format(n);statusText('Загружено точек: '+f(r.valid)+' из '+f(r.total)+(r.valid<r.total?' (некорректные координаты пропущены)':'')+(r.metric?' · координаты в метрах':'')+(restore?' · Сохранено в исходный PLY. Резервная копия: '+restore.backup:''),'good');
+   const f=n=>new Intl.NumberFormat('ru-RU').format(n);statusText('Загружено точек: '+f(r.valid)+' из '+f(r.total)+(r.valid<r.total?' (некорректные координаты пропущены)':'')+(r.faceIndexCount?' · треугольников: '+f(r.faceIndexCount/3):r.faceCount?' · нет пригодных граней для отображения':' · в этом PLY только точки; постройте 3D-сетку из основного окна программы')+(r.faceCount&&!uint32IndexSupported?' · для поверхности нужен WebGL OES_element_index_uint':'')+(r.metric?' · координаты в метрах':'')+(restore?' · Сохранено в исходный PLY. Резервная копия: '+restore.backup:''),'good');
   }catch(error){statusText(error.message,'error');count=0;pointPositions=null;refresh()}activeWorker.terminate();worker=null;
  }};activeWorker.onerror=e=>{if(worker!==activeWorker)return;statusText('Ошибка чтения PLY: '+e.message,'error');activeWorker.terminate();worker=null;};activeWorker.postMessage(file);
 }
 try{initialize();refresh()}catch(error){statusText(error.message,'error')}
 fileInput.addEventListener('change',()=>{load(fileInput.files[0]);fileInput.value=''});
 document.getElementById('reset').addEventListener('click',resetView);sizeInput.addEventListener('input',refresh);brightness.addEventListener('input',refresh);
+surfaceToggle.addEventListener('click',()=>{if(surfaceToggle.disabled)return;surfaceMode=!surfaceMode;updateSurfaceToggle();refresh();});
 orbitButton.addEventListener('click',()=>orbitMode());flightButton.addEventListener('click',flightMode);
 calibrationToggle.addEventListener('click',()=>setCalibrationOpen(calibration.hidden));choosePoints.addEventListener('click',()=>{selectedPoints=[];knownDistance.value='';updateCalibration();refresh();});applyCalibration.addEventListener('click',applyScale);prepareExport.addEventListener('click',()=>startExport());saveCurrentButtons.forEach(button=>button.addEventListener('click',()=>startExport(true)));
+coordinatesToggle.addEventListener('click',()=>{const open=coordinatesPanel.hidden;coordinatesPanel.hidden=!open;coordinatesToggle.setAttribute('aria-expanded',String(open));if(!open&&coordinatePickActive){coordinatePickActive=false;pickCoordinate.setAttribute('aria-pressed','false');pickCoordinate.textContent='Выбрать точку';canvas.style.cursor='grab';}refresh();});
+pickCoordinate.addEventListener('click',beginCoordinatePick);focusOrigin.addEventListener('click',focusAbsoluteOrigin);toggleAxes.addEventListener('click',()=>{axesVisible=!axesVisible;toggleAxes.setAttribute('aria-pressed',String(axesVisible));toggleAxes.textContent='Оси XYZ: '+(axesVisible?'включены':'выключены');refresh();});
 orientationToggle.addEventListener('click',()=>{const opening=orientation.hidden;if(!opening&&validAngles.some(valid=>!valid)){angleFields[validAngles.indexOf(false)].focus();return;}setOrientationOpen(opening);if(opening)fixedView(false);});
 rotations.forEach((input,i)=>input.addEventListener('input',()=>{syncAngle(i);updateRotation();}));
 angleFields.forEach((input,i)=>{
@@ -449,7 +581,7 @@ document.getElementById('front-view').addEventListener('click',()=>fixedView(fal
 function look(dx,dy){yaw-=dx*.0025;pitch=Math.max(-1.52,Math.min(1.52,pitch-dy*.0025));refresh();}
 canvas.addEventListener('pointerdown',e=>{if(saving||e.button!==0||!count)return;canvas.focus({preventScroll:true});if(mode==='flight'&&document.pointerLockElement===canvas)return;drag={x:e.clientX,y:e.clientY,startX:e.clientX,startY:e.clientY,moved:false,pan:e.shiftKey};canvas.setPointerCapture(e.pointerId);});
 canvas.addEventListener('pointermove',e=>{if(!drag||mode==='flight'&&document.pointerLockElement===canvas)return;const dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(Math.hypot(e.clientX-drag.startX,e.clientY-drag.startY)>4)drag.moved=true;if(mode==='flight')look(dx,dy);else if(drag.pan){panX+=2*dx/canvas.clientWidth;panY-=2*dy/canvas.clientHeight;}else{yaw+=dx*.008;pitch+=dy*.008;}drag.x=e.clientX;drag.y=e.clientY;refresh();});
-canvas.addEventListener('pointerup',e=>{if(!drag)return;const was=drag;drag=null;if(!was.moved){if(mode==='flight')grabMouse();else if(!calibration.hidden)selectPoint(e.clientX,e.clientY);}});
+canvas.addEventListener('pointerup',e=>{if(!drag)return;const was=drag;drag=null;if(!was.moved){if(mode==='flight')grabMouse();else if(!calibration.hidden||coordinatePickActive)selectPoint(e.clientX,e.clientY);}});
 canvas.addEventListener('pointercancel',()=>drag=null);
 document.addEventListener('mousemove',e=>{if(mode==='flight'&&document.pointerLockElement===canvas)look(e.movementX,e.movementY);});
 document.addEventListener('pointerlockchange',()=>{if(document.pointerLockElement!==canvas){heldKeys.clear();lastMoveTime=null;}showMode();});

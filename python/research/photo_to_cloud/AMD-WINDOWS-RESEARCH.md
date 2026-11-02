@@ -22,7 +22,16 @@
   запись изображения. Это не проверка Windows, RX 7900 XTX или полного COLMAP-CL.
 - На компьютере пользователя малые тесты изображений и буфера OpenCL прошли для
   обеих записей `gfx1100`. Работа COLMAP-CL и построение плотного PLY на AMD
-  остаются непроверенными до запуска полного эксперимента на устройстве.
+  были подтверждены полным пользовательским запуском 2026-11-02: `gfx1100`,
+  OpenCL 2.0 AMD-APP 3683.0, 146/146 зарегистрированных снимков, 168 796
+  разреженных и 2 527 538 плотных точек. В `colmap-cl.log` `patch_match_stereo`
+  выбрал `gpu_index 1` и повторно указал `gfx1100`; PatchMatch занял 3,957 минуты,
+  CPU fusion — 7,455 минуты. Весь запуск занял 39 минут 7 секунд. Этот пакет
+  подтвердил AMD GPU именно для PatchMatch; прежнее SIFT-сопоставление было CPU.
+- Текущий код добавляет экспериментальную попытку OpenCL SIFT-сопоставления через
+  `exhaustive_matcher`. Перед запуском база сохраняется; при ошибке или отсутствии
+  подтверждённых пар восстанавливается копия и выполняется CPU-сопоставление.
+  Эту новую ветку ещё нужно проверить на Windows с установленным COLMAP-CL.
 
 COLMAP-CL скачивался только во временную CI-среду из его официального релиза. Для
 повторяемости проверяется SHA-256 `0439d39d1231b7a6cd3b521f9c5ca327d9bec1c88084b38af36c942256ec1750`,
@@ -34,12 +43,14 @@ COLMAP-CL скачивался только во временную CI-сред�
 
 `amd_opencl_diagnostic.py` — отдельный тест драйвера: выбирает GPU AMD, выполняет
 небольшое чтение/запись изображения через OpenCL и сохраняет результаты и версию
-драйвера. Успешная диагностика подтверждает выполнение этого небольшого ядра,
-но не проверяет ядра COLMAP-CL, полную реконструкцию, качество или производительность.
-Полную реконструкцию нужно проверять отдельно на реальной карте пользователя.
+драйвера. Успешная диагностика сама по себе подтверждает только выполнение этого
+небольшого ядра. Полный запуск выше отдельно подтвердил ядро PatchMatch на карте,
+но приложенный старый `report.json` не содержал метрик reprojection error и не
+доказывает физическую точность или масштаб облака.
 
-AMD документирует HIP SDK 6.4.2 для Windows 10 22H2 и RX 7900 XTX, но отмечает
-отсутствие поддержки CMake HIP Language в Windows SDK. Поэтому из наличия SDK не
-следует работоспособность штатной HIP-сборки COLMAP на Windows:
-[AMD system requirements](https://rocm.docs.amd.com/projects/install-on-windows/en/docs-6.4.2/reference/system-requirements.html),
-[AMD component support](https://rocm.docs.amd.com/projects/install-on-windows/en/docs-6.4.2/reference/component-support.html).
+AMD HIP SDK 6.2.4 перечислял Windows 10 22H2 и RX 7900 XTX; текущий HIP SDK 7.2
+перечисляет только Windows 11, а CMake HIP Language в Windows-компонентах
+по-прежнему помечен как неподдерживаемый. Поэтому штатная HIP-сборка COLMAP не
+является готовым путём для этого компьютера:
+[AMD SDK 7.2 system requirements](https://rocm.docs.amd.com/projects/install-on-windows/en/docs-7.2/reference/system-requirements.html),
+[AMD component support](https://rocm.docs.amd.com/projects/install-on-windows/en/latest/conceptual/component-support.html).
