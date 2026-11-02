@@ -51,11 +51,14 @@ def verified_match_statistics(database: Path) -> dict:
     matches, so these counts are a useful, concrete overlap diagnostic.
     """
     try:
-        with sqlite3.connect(database) as connection:
+        connection = sqlite3.connect(database)
+        try:
             row = connection.execute(
                 "SELECT COUNT(*), COALESCE(SUM(rows), 0) "
                 "FROM two_view_geometries WHERE rows > 0"
             ).fetchone()
+        finally:
+            connection.close()
     except sqlite3.Error as exc:
         raise ReconstructionError(f"Не удалось прочитать проверенные пересечения COLMAP: {exc}") from exc
     return {"verified_image_pairs": int(row[0]), "verified_inlier_matches": int(row[1])}

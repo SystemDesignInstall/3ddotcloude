@@ -1,4 +1,5 @@
 from pathlib import Path
+from contextlib import closing
 import hashlib
 import json
 import sqlite3
@@ -48,7 +49,7 @@ class PhotoCloudSafetyTests(unittest.TestCase):
 
     def test_verified_match_statistics_count_only_geometric_inliers(self):
         database = self.root / "database.db"
-        with sqlite3.connect(database) as connection:
+        with closing(sqlite3.connect(database)) as connection, connection:
             connection.execute("CREATE TABLE two_view_geometries (pair_id INTEGER, rows INTEGER, cols INTEGER, data BLOB)")
             connection.executemany("INSERT INTO two_view_geometries VALUES (?, ?, 2, X'00')",
                                    [(1, 24), (2, 0), (3, 9)])
@@ -57,7 +58,7 @@ class PhotoCloudSafetyTests(unittest.TestCase):
 
     def _matching_database(self):
         database = self.root / "matching.db"
-        with sqlite3.connect(database) as connection:
+        with closing(sqlite3.connect(database)) as connection, connection:
             connection.execute("CREATE TABLE two_view_geometries (pair_id INTEGER, rows INTEGER, cols INTEGER, data BLOB)")
         return database
 
@@ -65,7 +66,7 @@ class PhotoCloudSafetyTests(unittest.TestCase):
         database = self._matching_database()
         cpu_calls = []
         def opencl_match():
-            with sqlite3.connect(database) as connection:
+            with closing(sqlite3.connect(database)) as connection, connection:
                 connection.execute("INSERT INTO two_view_geometries VALUES (1, 17, 2, X'00')")
         result = reconstruct.match_with_opencl_fallback(database, opencl_match,
                                                         lambda: cpu_calls.append(True), logger=lambda _: None)
@@ -78,14 +79,14 @@ class PhotoCloudSafetyTests(unittest.TestCase):
     def test_opencl_matcher_partial_failure_restores_database_before_cpu_fallback(self):
         database = self._matching_database()
         def opencl_match():
-            with sqlite3.connect(database) as connection:
+            with closing(sqlite3.connect(database)) as connection, connection:
                 connection.execute("INSERT INTO two_view_geometries VALUES (1, 99, 2, X'00')")
             raise RuntimeError("OpenCL matcher crashed after a partial write")
         def cpu_match():
-            with sqlite3.connect(database) as connection:
+            with closing(sqlite3.connect(database)) as connection, connection:
                 connection.execute("INSERT INTO two_view_geometries VALUES (2, 23, 2, X'00')")
         result = reconstruct.match_with_opencl_fallback(database, opencl_match, cpu_match, logger=lambda _: None)
-        with sqlite3.connect(database) as connection:
+        with closing(sqlite3.connect(database)) as connection, connection:
             rows = connection.execute("SELECT pair_id, rows FROM two_view_geometries").fetchall()
         self.assertEqual(result["status"], "cpu_fallback")
         self.assertEqual(result["statistics"]["verified_inlier_matches"], 23)
@@ -95,14 +96,14 @@ class PhotoCloudSafetyTests(unittest.TestCase):
         database = self._matching_database()
         cpu_calls = []
         def opencl_match():
-            with sqlite3.connect(database) as connection:
+            with closing(sqlite3.connect(database)) as connection, connection:
                 connection.execute("INSERT INTO two_view_geometries VALUES (1, 0, 2, X'00')")
         def cpu_match():
             cpu_calls.append(True)
-            with sqlite3.connect(database) as connection:
+            with closing(sqlite3.connect(database)) as connection, connection:
                 connection.execute("INSERT INTO two_view_geometries VALUES (2, 19, 2, X'00')")
         result = reconstruct.match_with_opencl_fallback(database, opencl_match, cpu_match, logger=lambda _: None)
-        with sqlite3.connect(database) as connection:
+        with closing(sqlite3.connect(database)) as connection, connection:
             rows = connection.execute("SELECT pair_id, rows FROM two_view_geometries").fetchall()
         self.assertEqual(result["status"], "cpu_fallback")
         self.assertEqual(result["statistics"]["verified_inlier_matches"], 19)
@@ -113,7 +114,7 @@ class PhotoCloudSafetyTests(unittest.TestCase):
         database = self._matching_database()
         cpu_calls = []
         def opencl_match():
-            with sqlite3.connect(database) as connection:
+            with closing(sqlite3.connect(database)) as connection, connection:
                 connection.execute("INSERT INTO two_view_geometries VALUES (1, 99, 2, X'00')")
             raise reconstruct.ReconstructionCancelled("cancelled")
         with self.assertRaises(reconstruct.ReconstructionCancelled):
