@@ -46,6 +46,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & .\dist\SpatialPhotoCloud\SpatialPhotoCloud.exe --ui-smoke-test
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .\dist\SpatialPhotoCloud\SpatialPhotoCloud.exe --hardware-opencl-probe --inventory-only
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Install verified external OpenMVS for testing
         run: python python/research/photo_to_cloud/openmvs_install.py --destination "${{ runner.temp }}/openmvs-test"
       - name: Install external COLMAP-CL for testing
