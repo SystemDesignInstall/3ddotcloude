@@ -8,6 +8,8 @@ import queue
 import subprocess
 import threading
 
+from texture_worker import inspect_glb
+
 
 def check_cancel(executable: Path, images: Path, root: Path) -> None:
     cancel = root / "cancel-request"
@@ -60,6 +62,32 @@ def check_dense(executable: Path, images: Path, root: Path, openmvs: Path) -> No
           f"{report['point_count']} points, {report['preview_points']} preview points", flush=True)
 
 
+def check_textured_glb(executable: Path, root: Path, openmvs: Path) -> None:
+    dense = root / "dense"
+    mesh = root / "dense" / "dense-mesh.ply"
+    model = root / "dense-textured.glb"
+    mesh_result = subprocess.run(
+        [str(executable), "--mesh-worker", "--input", str(dense / "dense.ply"), "--output", str(mesh), "--threads", "4"],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
+        check=False, timeout=600,
+    )
+    print(mesh_result.stdout, flush=True)
+    if mesh_result.returncode != 0 or not mesh.is_file():
+        raise RuntimeError(f"Packaged mesh worker failed with code {mesh_result.returncode}")
+    texture_result = subprocess.run(
+        [str(executable), "--texture-worker", "--mesh", str(mesh), "--workspace", str(dense / "dense_workspace"),
+         "--openmvs-dir", str(openmvs), "--output", str(model), "--threads", "4"],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
+        check=False, timeout=900,
+    )
+    print(texture_result.stdout, flush=True)
+    if texture_result.returncode != 0 or not model.is_file():
+        raise RuntimeError(f"Packaged OpenMVS texturing failed with code {texture_result.returncode}")
+    report = inspect_glb(model)
+    print(f"Packaged textured GLB: {report['image_count']} images, "
+          f"{report['texture_count']} textures, {report['material_count']} materials", flush=True)
+
+
 def check_opencl_no_gpu(executable: Path, images: Path, root: Path, colmap_cl: Path) -> None:
     output = root / "opencl-without-gpu"
     result = subprocess.run([str(executable), "--worker", "--images", str(images), "--output", str(output),
@@ -86,6 +114,24 @@ def check_mesh_worker_entrypoint(executable: Path, root: Path) -> None:
     print(result.stdout, flush=True)
     if result.returncode != 1 or "нет нормалей" not in result.stdout or output.exists():
         raise RuntimeError("Packaged Poisson worker did not validate its input safely")
+
+
+def check_texture_worker_entrypoint(executable: Path, openmvs: Path, root: Path) -> None:
+    mesh = root / "texture-worker-mesh.ply"
+    output = root / "texture-worker-output.glb"
+    mesh.write_bytes(
+        b"ply\nformat ascii 1.0\nelement vertex 3\nproperty float x\nproperty float y\nproperty float z\n"
+        b"element face 1\nproperty list uchar int vertex_indices\nend_header\n"
+        b"0 0 0\n1 0 0\n0 1 0\n3 0 1 2\n"
+    )
+    result = subprocess.run(
+        [str(executable), "--texture-worker", "--mesh", str(mesh), "--workspace", str(root / "missing-workspace"),
+         "--openmvs-dir", str(openmvs), "--output", str(output), "--threads", "1"],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", check=False,
+    )
+    print(result.stdout, flush=True)
+    if result.returncode != 1 or "Папка реконструкции не найдена" not in result.stdout or output.exists():
+        raise RuntimeError("Packaged texture worker did not validate workspace input safely")
 
 
 def check_cr2(executable: Path, sample: Path, root: Path) -> None:
@@ -127,7 +173,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
     check_mesh_worker_entrypoint(args.executable, args.output)
+    check_texture_worker_entrypoint(args.executable, args.openmvs, args.output)
     check_cancel(args.executable, args.images, args.output)
     check_dense(args.executable, args.images, args.output, args.openmvs)
+    check_textured_glb(args.executable, args.output, args.openmvs)
     check_opencl_no_gpu(args.executable, args.images, args.output, args.colmap_cl)
     check_cr2(args.executable, args.cr2_sample, args.output)

@@ -60,6 +60,16 @@ class HardwareProfileTests(unittest.TestCase):
             ("sparse-cpu", "движки плотной обработки не найдены; доступно разреженное облако CPU"),
         )
 
+    def test_finds_previous_openmvs_folder_when_new_texturing_install_is_absent(self):
+        current = Path("new-textured")
+        legacy = Path("openmvs-2.4.0")
+        with patch.object(hardware_profile, "_default_engine_path",
+                          side_effect=lambda module, function: current if function == "default_destination" else legacy), \
+             patch.object(hardware_profile, "_openmvs_ready", side_effect=lambda path: path == legacy):
+            path, ready = hardware_profile._resolve_openmvs("")
+        self.assertEqual(path, legacy)
+        self.assertTrue(ready)
+
     def test_hung_opencl_driver_returns_cpu_fallback_reason(self):
         with patch.object(hardware_profile.subprocess, "run",
                           side_effect=subprocess.TimeoutExpired("probe", timeout=12)):

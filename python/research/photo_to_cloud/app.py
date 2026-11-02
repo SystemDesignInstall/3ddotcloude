@@ -53,17 +53,31 @@ def mesh_worker_command(input_path: Path, output_path: Path, cancel_file: Path,
                       "--threads", str(threads), "--cancel-file", str(cancel_file)]
 
 
+def texture_worker_command(mesh_path: Path, workspace: Path, openmvs_dir: Path,
+                           output_path: Path, cancel_file: Path,
+                           threads: int) -> list[str]:
+    """Run photo texturing in an isolated process so the window stays responsive."""
+    if getattr(sys, "frozen", False):
+        command = [sys.executable, "--texture-worker"]
+    else:
+        command = [sys.executable, "-u", str(Path(__file__).with_name("texture_worker.py"))]
+    return command + ["--mesh", str(mesh_path), "--workspace", str(workspace),
+                      "--openmvs-dir", str(openmvs_dir), "--output", str(output_path),
+                      "--threads", str(threads), "--cancel-file", str(cancel_file)]
+
+
 class App:
     def __init__(self, root: tk.Tk, auto_configure_on_start: bool = True) -> None:
         self.root = root
         root.title("Spatial Photo Cloud — эксперимент")
-        root.geometry("820x810")
-        root.minsize(700, 650)
+        root.geometry("820x840")
+        root.minsize(700, 680)
         self.events: queue.Queue = queue.Queue()
         self.process: subprocess.Popen | None = None
         self.current_task: str | None = None
         self.mesh_output: Path | None = None
         self.mesh_job_id: str | None = None
+        self.texture_output: Path | None = None
         self.cancel_requested = False
         self.cancel_dir: tempfile.TemporaryDirectory | None = None
         self.cancel_file: Path | None = None
@@ -115,10 +129,10 @@ class App:
         self.auto_button = ttk.Button(hardware_row, text="Подобрать автоматически",
                                       command=self.auto_configure)
         self.auto_button.pack(side="right", padx=(8, 0))
-        self.path_row(frame, "Папка OpenMVS (для плотного облака на CPU)", self.openmvs, self.choose_openmvs)
+        self.path_row(frame, "Папка OpenMVS (плотное облако и текстурирование)", self.openmvs, self.choose_openmvs)
         install_row = ttk.Frame(frame)
         install_row.pack(fill="x", pady=(3, 0))
-        self.install_button = ttk.Button(install_row, text="Установить OpenMVS (22 МБ)", command=self.install_openmvs)
+        self.install_button = ttk.Button(install_row, text="Установить / обновить OpenMVS (22 МБ)", command=self.install_openmvs)
         self.install_button.pack(side="left")
         if os.name != "nt":
             self.install_button.configure(state="disabled")
@@ -148,6 +162,11 @@ class App:
         ttk.Button(viewer_actions, text="Открыть готовый PLY…", command=self.choose_cloud).pack(side="left", padx=8)
         self.mesh_button = ttk.Button(viewer_actions, text="Построить 3D-сетку из PLY…", command=self.build_mesh)
         self.mesh_button.pack(side="left", padx=8)
+        texture_actions = ttk.Frame(frame)
+        texture_actions.pack(fill="x", pady=(0, 8))
+        self.texture_button = ttk.Button(texture_actions, text="Экспортировать текстурированную модель GLB…",
+                                         command=self.texture_mesh)
+        self.texture_button.pack(side="left")
         ttk.Label(frame, textvariable=self.status).pack(anchor="w", pady=(0, 4))
         self.progress = ttk.Progressbar(frame, mode="indeterminate")
         self.progress.pack(fill="x", pady=(0, 8))
@@ -177,7 +196,7 @@ class App:
             self.destination.set(value)
 
     def choose_openmvs(self) -> None:
-        value = filedialog.askdirectory(title="Папка с InterfaceCOLMAP и DensifyPointCloud")
+        value = filedialog.askdirectory(title="Папка с InterfaceCOLMAP, DensifyPointCloud и TextureMesh")
         if value:
             self.openmvs.set(value)
 
@@ -346,6 +365,8 @@ class App:
         self.start_button.configure(state="disabled")
         self.open_button.configure(state="disabled")
         self.preview_button.configure(state="disabled")
+        self.mesh_button.configure(state="disabled")
+        self.texture_button.configure(state="disabled")
         self.cancel_button.configure(state="normal")
         self.install_button.configure(state="disabled")
         self.install_cl_button.configure(state="disabled")
@@ -419,11 +440,105 @@ class App:
         self.open_button.configure(state="disabled")
         self.preview_button.configure(state="disabled")
         self.mesh_button.configure(state="disabled")
+        self.texture_button.configure(state="disabled")
         self.cancel_button.configure(state="normal")
         self.install_button.configure(state="disabled")
         self.install_cl_button.configure(state="disabled")
         self.auto_button.configure(state="disabled")
         self.status.set("Построение треугольной поверхности из PLY…")
+        self.progress.start(15)
+        threading.Thread(target=self.consume, args=(self.process,), daemon=True).start()
+
+    def texture_mesh(self) -> None:
+        if self.process or self.installing or self.detecting_hardware:
+            return
+        if not self.openmvs.get().strip():
+            messagebox.showerror("Нужен OpenMVS", "Сначала установите OpenMVS 2.4.0 кнопкой выше.")
+            return
+        openmvs_dir = Path(self.openmvs.get()).expanduser()
+        texturer_name = "TextureMesh.exe" if os.name == "nt" else "TextureMesh"
+        if not (openmvs_dir / texturer_name).is_file():
+            messagebox.showerror(
+                "Нужно обновить OpenMVS",
+                "В выбранной папке нет TextureMesh. Нажмите «Установить / обновить OpenMVS»: "
+                "новая проверенная версия установится рядом, не заменяя старую."
+            )
+            return
+        mesh_name = filedialog.askopenfilename(
+            title="Выберите сетку PLY для наложения фотографий",
+            filetypes=[("3D-сетка PLY", "*.ply"), ("Все файлы", "*")],
+        )
+        if not mesh_name:
+            return
+        mesh_path = Path(mesh_name).expanduser().resolve()
+        initial_workspace = self.result_dir if self.result_dir and self.result_dir.is_dir() else mesh_path.parent
+        workspace_name = filedialog.askdirectory(
+            title="Выберите dense_workspace или папку результата той же реконструкции",
+            initialdir=str(initial_workspace),
+        )
+        if not workspace_name:
+            return
+        workspace_path = Path(workspace_name).expanduser().resolve()
+        output_name = filedialog.asksaveasfilename(
+            title="Сохранить автономную текстурированную модель",
+            initialdir=str(mesh_path.parent),
+            initialfile=f"{mesh_path.stem}-textured.glb",
+            defaultextension=".glb",
+            filetypes=[("Текстурированная модель GLB", "*.glb")],
+        )
+        if not output_name:
+            return
+        output_path = Path(output_name).expanduser().resolve()
+        if output_path == mesh_path:
+            messagebox.showerror("Нужно отдельное имя", "Исходная сетка PLY не изменяется. Выберите отдельное имя GLB.")
+            return
+        if output_path.exists():
+            messagebox.showerror("Файл уже существует", "Существующий GLB не заменяется. Выберите другое имя.")
+            return
+        try:
+            threads = int(self.threads.get().strip())
+        except ValueError:
+            messagebox.showerror("Некорректное число потоков", "Введите целое число от 1 до 64.")
+            return
+        from reconstruct import MAX_THREADS
+        if not 1 <= threads <= MAX_THREADS:
+            messagebox.showerror("Некорректное число потоков", "Введите целое число от 1 до 64.")
+            return
+
+        self.cancel_dir = tempfile.TemporaryDirectory(prefix="spatial-texture-cancel-")
+        self.cancel_file = Path(self.cancel_dir.name) / "cancel"
+        self.current_task = "texture"
+        self.texture_output = output_path
+        self.cancel_requested = False
+        self.close_after_cancel = False
+        command = texture_worker_command(mesh_path, workspace_path, openmvs_dir,
+                                         output_path, self.cancel_file, threads)
+        environment = os.environ.copy()
+        environment["PYTHONUTF8"] = "1"
+        try:
+            self.process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                            text=True, encoding="utf-8", errors="replace", env=environment,
+                                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        except OSError as exc:
+            self.cancel_dir.cleanup()
+            self.cancel_dir = None
+            self.cancel_file = None
+            self.current_task = None
+            self.texture_output = None
+            messagebox.showerror("Не удалось запустить текстурирование", str(exc))
+            return
+        self.append_log(f"\nСетка: {mesh_path}\nПапка реконструкции: {workspace_path}\nРезультат GLB: {output_path}\n")
+        self.append_log(f"OpenMVS TextureMesh; запрошено CPU-потоков: {threads}.\n")
+        self.start_button.configure(state="disabled")
+        self.open_button.configure(state="disabled")
+        self.preview_button.configure(state="disabled")
+        self.mesh_button.configure(state="disabled")
+        self.texture_button.configure(state="disabled")
+        self.cancel_button.configure(state="normal")
+        self.install_button.configure(state="disabled")
+        self.install_cl_button.configure(state="disabled")
+        self.auto_button.configure(state="disabled")
+        self.status.set("Создание текстурированной модели GLB…")
         self.progress.start(15)
         threading.Thread(target=self.consume, args=(self.process,), daemon=True).start()
 
@@ -470,6 +585,7 @@ class App:
                     task = self.current_task
                     mesh_output = self.mesh_output
                     mesh_job_id = self.mesh_job_id
+                    texture_output = self.texture_output
                     self.progress.stop()
                     self.process = None
                     if task == "mesh" and mesh_output is not None and mesh_job_id is not None:
@@ -492,6 +608,7 @@ class App:
                     self.install_cl_button.configure(state="normal" if os.name == "nt" else "disabled")
                     self.auto_button.configure(state="normal")
                     self.mesh_button.configure(state="normal")
+                    self.texture_button.configure(state="normal")
                     if self.result_dir and self.result_dir.exists():
                         self.open_button.configure(state="normal")
                         if self.result_cloud() is not None and value == 0:
@@ -509,6 +626,18 @@ class App:
                         else:
                             self.status.set("Сетка не построена — смотрите журнал")
                             messagebox.showerror("Не удалось построить сетку", "Подробности находятся в журнале окна.")
+                    elif task == "texture":
+                        self.texture_output = None
+                        if value == 0 and texture_output is not None and texture_output.is_file():
+                            self.status.set("Текстурированная модель GLB готова")
+                            self.append_log(f"Текстурированная модель сохранена: {texture_output}\n")
+                            messagebox.showinfo("Модель готова", f"Файл можно импортировать в 3D-программу:\n\n{texture_output}")
+                            self.open_path_location(texture_output.parent)
+                        elif value == 130 or self.cancel_requested:
+                            self.status.set("Текстурирование остановлено; исходная сетка не изменена")
+                        else:
+                            self.status.set("GLB не создан — смотрите журнал")
+                            messagebox.showerror("Не удалось создать GLB", "Подробности находятся в журнале окна.")
                     elif value == 0:
                         self.status.set("Готово")
                         messagebox.showinfo("Готово", f"Результат сохранён в:\n{self.result_dir}")
@@ -535,6 +664,16 @@ class App:
                 subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(self.result_dir)])
         except OSError as exc:
             messagebox.showerror("Не удалось открыть папку", str(exc))
+
+    @staticmethod
+    def open_path_location(path: Path) -> None:
+        try:
+            if os.name == "nt":
+                os.startfile(str(path))  # type: ignore[attr-defined]
+            else:
+                subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(path)])
+        except OSError:
+            pass
 
     def open_preview(self) -> None:
         cloud = self.result_cloud()
@@ -586,6 +725,8 @@ class App:
                     # so termination cannot replace the input or final output.
                     self.process.terminate()
                 else:
+                    # Reconstruction and texturing workers poll this file and
+                    # terminate their own external processes before returning.
                     self.cancel_file.write_text("cancel\n", encoding="ascii")
                 self.status.set("Останавливаем обработку…")
                 self.cancel_button.configure(state="disabled")
@@ -619,6 +760,15 @@ def main() -> int:
         from mesh_worker import main as mesh_main
         sys.argv = [sys.argv[0], *sys.argv[2:]]
         return mesh_main()
+    if sys.argv[1:2] == ["--texture-worker"]:
+        # The worker owns the OpenMVS child process so cancellation does not
+        # leave TextureMesh running after the main window closes.
+        for stream in (sys.stdout, sys.stderr):
+            if stream is not None and hasattr(stream, "reconfigure"):
+                stream.reconfigure(encoding="utf-8", errors="replace")
+        from texture_worker import main as texture_main
+        sys.argv = [sys.argv[0], *sys.argv[2:]]
+        return texture_main()
     if sys.argv[1:2] == ["--worker"]:
         # A frozen Windows executable does not necessarily honor PYTHONUTF8.
         # The GUI reads this subprocess through a UTF-8 pipe.
@@ -639,6 +789,7 @@ def main() -> int:
         import exifread
         import piexif
         import mesh_worker
+        import texture_worker
         import viewer_host
         if not callable(getattr(pycolmap, "poisson_meshing", None)) or not hasattr(pycolmap, "PoissonMeshingOptions"):
             raise RuntimeError("В комплекте PyCOLMAP нет Poisson meshing, необходимого для построения 3D-сетки.")
