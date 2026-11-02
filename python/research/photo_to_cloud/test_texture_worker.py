@@ -21,7 +21,7 @@ MESH_PLY = (
 )
 
 
-def make_glb(document: dict | None = None) -> bytes:
+def make_glb(document: dict | None = None, binary: bytes | None = None) -> bytes:
     document = document or {
         "asset": {"version": "2.0"},
         "images": [{"uri": "data:image/png;base64,AA=="}],
@@ -30,9 +30,32 @@ def make_glb(document: dict | None = None) -> bytes:
     }
     json_chunk = json.dumps(document, separators=(",", ":")).encode("utf-8")
     json_chunk += b" " * (-len(json_chunk) % 4)
-    total_size = 12 + 8 + len(json_chunk)
-    return (struct.pack("<4sII", b"glTF", 2, total_size)
-            + struct.pack("<II", len(json_chunk), texture_worker.GLB_JSON_CHUNK) + json_chunk)
+    chunks = [struct.pack("<II", len(json_chunk), texture_worker.GLB_JSON_CHUNK) + json_chunk]
+    if binary is not None:
+        padded_binary = binary + b"\0" * (-len(binary) % 4)
+        chunks.append(struct.pack("<II", len(padded_binary), 0x004E4942) + padded_binary)
+    total_size = 12 + sum(map(len, chunks))
+    return struct.pack("<4sII", b"glTF", 2, total_size) + b"".join(chunks)
+
+
+def make_external_glb(uri: str = "textured-model_0.png") -> bytes:
+    return make_glb({
+        "asset": {"version": "2.0"},
+        "images": [{"uri": uri, "mimeType": "image/png"}],
+        "textures": [{"source": 0}],
+        "materials": [{"pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}}],
+        "buffers": [{"byteLength": 4}],
+        "bufferViews": [{"buffer": 0, "byteOffset": 0, "byteLength": 4}],
+    }, binary=b"GEOM")
+
+
+def glb_document(path: Path) -> dict:
+    with path.open("rb") as stream:
+        stream.seek(12)
+        chunk_size, chunk_type = struct.unpack("<II", stream.read(8))
+        if chunk_type != texture_worker.GLB_JSON_CHUNK:
+            raise AssertionError("JSON is not the first GLB chunk")
+        return json.loads(stream.read(chunk_size).decode("utf-8").rstrip(" \t\r\n\0"))
 
 
 class TextureWorkerTests(unittest.TestCase):
@@ -77,7 +100,13 @@ class TextureWorkerTests(unittest.TestCase):
                     cancel_on_interface.write_text("cancel", encoding="ascii")
             else:
                 output = (cwd / args[args.index("--output-file") + 1]).with_suffix(".glb")
-                output.write_bytes(glb if glb is not None else make_glb())
+                payload = glb if glb is not None else make_external_glb()
+                output.write_bytes(payload)
+                document = glb_document(output)
+                for image in document.get("images", []):
+                    uri = image.get("uri", "")
+                    if uri and not uri.startswith("data:") and ".." not in Path(uri).parts:
+                        (cwd / uri).write_bytes(b"fake PNG texture")
         return calls, working_directories, runner
 
     def test_creates_standalone_textured_glb_from_matching_workspace(self):
@@ -90,6 +119,11 @@ class TextureWorkerTests(unittest.TestCase):
         self.assertEqual(report["status"], "succeeded")
         self.assertEqual(report["registered_images"], 3)
         self.assertEqual(report["glb_textures"], 1)
+        document = glb_document(self.output)
+        self.assertNotIn("uri", document["images"][0])
+        view = document["bufferViews"][document["images"][0]["bufferView"]]
+        self.assertGreaterEqual(view["byteOffset"], 4)
+        self.assertEqual(document["buffers"][0]["byteLength"], view["byteOffset"] + view["byteLength"])
         self.assertEqual([Path(call[0]).stem for call in calls], ["InterfaceCOLMAP", "TextureMesh"])
         self.assertIn("--image-folder", calls[0])
         self.assertIn("--mesh-file", calls[1])
@@ -152,6 +186,14 @@ class TextureWorkerTests(unittest.TestCase):
         glb.write_bytes(external)
         with self.assertRaisesRegex(texture_worker.TextureError, "не является автономной"):
             texture_worker.inspect_glb(glb)
+
+    def test_rejects_texture_path_escape_without_publishing_output(self):
+        calls, _, runner = self.runner_for(make_external_glb("../outside.png"))
+        with self.assertRaisesRegex(texture_worker.TextureError, "за пределами временной папки"):
+            texture_worker.build_textured_model(self.mesh, self.workspace, self.openmvs,
+                                                self.output, threads=1, runner=runner)
+        self.assertEqual(len(calls), 2)
+        self.assertFalse(self.output.exists())
 
 
 if __name__ == "__main__":
