@@ -5,6 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 import queue
+import struct
 import subprocess
 import threading
 
@@ -64,16 +65,9 @@ def check_dense(executable: Path, images: Path, root: Path, openmvs: Path) -> No
 
 def check_textured_glb(executable: Path, root: Path, openmvs: Path) -> None:
     dense = root / "dense"
-    mesh = root / "dense" / "dense-mesh.ply"
+    mesh = root / "dense" / "texturing-test-mesh.ply"
     model = root / "dense-textured.glb"
-    mesh_result = subprocess.run(
-        [str(executable), "--mesh-worker", "--input", str(dense / "dense.ply"), "--output", str(mesh), "--threads", "4"],
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
-        check=False, timeout=600,
-    )
-    print(mesh_result.stdout, flush=True)
-    if mesh_result.returncode != 0 or not mesh.is_file():
-        raise RuntimeError(f"Packaged mesh worker failed with code {mesh_result.returncode}")
+    _write_camera_aligned_test_mesh(dense / "dense_workspace", mesh)
     texture_result = subprocess.run(
         [str(executable), "--texture-worker", "--mesh", str(mesh), "--workspace", str(dense / "dense_workspace"),
          "--openmvs-dir", str(openmvs), "--output", str(model), "--threads", "4"],
@@ -86,6 +80,62 @@ def check_textured_glb(executable: Path, root: Path, openmvs: Path) -> None:
     report = inspect_glb(model)
     print(f"Packaged textured GLB: {report['image_count']} images, "
           f"{report['texture_count']} textures, {report['material_count']} materials", flush=True)
+
+
+def _read_first_colmap_pose(workspace: Path) -> tuple[list[list[float]], list[float]]:
+    """Read the first registered camera pose from the COLMAP binary model."""
+    sparse = workspace / "sparse"
+    model = sparse / "0" if (sparse / "0" / "images.bin").is_file() else sparse
+    image_file = model / "images.bin"
+    with image_file.open("rb") as stream:
+        count_data = stream.read(8)
+        if len(count_data) != 8:
+            raise RuntimeError(f"Invalid COLMAP image model: {image_file}")
+        count, = struct.unpack("<Q", count_data)
+        if count < 1:
+            raise RuntimeError("COLMAP image model has no registered cameras")
+        record = stream.read(struct.calcsize("<i7di"))
+        if len(record) != struct.calcsize("<i7di"):
+            raise RuntimeError("COLMAP image model has a truncated camera pose")
+        _, qw, qx, qy, qz, tx, ty, tz, _ = struct.unpack("<i7di", record)
+    rotation = [
+        [1 - 2 * (qy * qy + qz * qz), 2 * (qx * qy - qz * qw), 2 * (qx * qz + qy * qw)],
+        [2 * (qx * qy + qz * qw), 1 - 2 * (qx * qx + qz * qz), 2 * (qy * qz - qx * qw)],
+        [2 * (qx * qz - qy * qw), 2 * (qy * qz + qx * qw), 1 - 2 * (qx * qx + qy * qy)],
+    ]
+    translation = [tx, ty, tz]
+    center = [-sum(rotation[row][axis] * translation[row] for row in range(3)) for axis in range(3)]
+    return rotation, center
+
+
+def _write_camera_aligned_test_mesh(workspace: Path, output: Path) -> None:
+    """Place a small plane in a real reconstructed camera's view for texturing QA."""
+    rotation, center = _read_first_colmap_pose(workspace)
+    half_width, half_height, depth = 1.2, 0.9, 5.5
+    camera_vertices = [
+        (-half_width, -half_height, depth),
+        (half_width, -half_height, depth),
+        (half_width, half_height, depth),
+        (-half_width, half_height, depth),
+    ]
+    # COLMAP qvec/tvec map world coordinates to camera coordinates. Transform
+    # the fixture plane back into the same world frame as the dense workspace.
+    vertices = []
+    for point in camera_vertices:
+        vertices.append([
+            center[axis] + sum(rotation[row][axis] * point[row] for row in range(3))
+            for axis in range(3)
+        ])
+    with output.open("x", encoding="ascii", newline="\n") as stream:
+        stream.write(
+            "ply\nformat ascii 1.0\nelement vertex 4\n"
+            "property float x\nproperty float y\nproperty float z\n"
+            "element face 2\nproperty list uchar int vertex_indices\nend_header\n"
+        )
+        for vertex in vertices:
+            stream.write("{:.9g} {:.9g} {:.9g}\n".format(*vertex))
+        # Reverse the camera-plane winding so both faces point toward camera 0.
+        stream.write("3 0 2 1\n3 0 3 2\n")
 
 
 def check_opencl_no_gpu(executable: Path, images: Path, root: Path, colmap_cl: Path) -> None:
