@@ -90,7 +90,7 @@ class TextureWorkerTests(unittest.TestCase):
         self.assertEqual(report["status"], "succeeded")
         self.assertEqual(report["registered_images"], 3)
         self.assertEqual(report["glb_textures"], 1)
-        self.assertEqual([Path(call[0]).name for call in calls], ["InterfaceCOLMAP", "TextureMesh"])
+        self.assertEqual([Path(call[0]).stem for call in calls], ["InterfaceCOLMAP", "TextureMesh"])
         self.assertIn("--image-folder", calls[0])
         self.assertIn("--mesh-file", calls[1])
         self.assertEqual(calls[1][calls[1].index("--export-type") + 1], "glb")
