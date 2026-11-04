@@ -345,3 +345,33 @@ dependencies:
     status: active
     notes: Vendored GTSAM build recipe and two original packaging patches; MIT notice retained in conan/recipes/gtsam/LICENSE-CII.txt. Native GTSAM source remains fetched by its pinned SHA-256 and is not copied into Core.
     security_notes: null
+  - name: Google-ARCore
+    repository: https://github.com/google-ar/arcore-android-sdk
+    version: "1.57.0"
+    code_license: ARCore Additional Terms of Service (binary SDK); Apache-2.0 (examples)
+    model_license: null
+    commercial_use: conditional
+    redistribution: conditional
+    status: planned
+    notes: Used by the isolated mobile/android development preview; no Core linkage. Runtime Google Play Services for AR is installed separately. Production distribution remains subject to SDK terms review; see mobile/android/THIRD_PARTY.md.
+    security_notes: null
+  - name: Android-Gradle-Plugin
+    repository: https://android.googlesource.com/platform/tools/base
+    version: "8.7.3"
+    code_license: Apache-2.0
+    model_license: null
+    commercial_use: yes
+    redistribution: yes
+    status: planned
+    notes: Build tooling for isolated mobile/android preview, not a runtime Core dependency.
+    security_notes: null
+  - name: Gradle
+    repository: https://github.com/gradle/gradle
+    version: "8.9"
+    code_license: Apache-2.0
+    model_license: null
+    commercial_use: yes
+    redistribution: yes
+    status: planned
+    notes: Wrapper and build tooling for isolated mobile/android preview.
+    security_notes: null
