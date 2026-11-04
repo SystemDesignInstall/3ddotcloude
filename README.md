@@ -110,3 +110,11 @@ surface changes, RFC/ADR structure, domain types, worker isolation, architecture
 debt, dependencies and schemas. The Constitution check verifies that a cited
 RFC exists and is ratified; Architecture Review must still assess its scope.
 See `.github/workflows/ci.yml` and the build guide.
+
+## Android capture preview
+
+[`mobile/android`](mobile/android/README_RU.md) contains an isolated ARCore Raw Depth
+capture client: colored point-cloud preview, PLY export, immutable per-frame
+recording, and a desktop ZIP validator/recovery tool. It does not change Core
+contracts or claim native Scene/CAS registration. Physical-device validation and
+metric accuracy assessment remain required.
