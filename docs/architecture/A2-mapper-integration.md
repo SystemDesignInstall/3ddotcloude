@@ -16,7 +16,7 @@ it does not reconstruct space from the phone camera.
 | Work | Current delivery | Remaining acceptance |
 |---|---|---|
 | Whole export folder | GUI + CLI import LAS/TXT with optional selected CSV | Actual SHARE/A2 recordings; generic raw-capture discovery is separate |
-| Cloud + trajectory in one session | Portable research capture bundle, UUID, sources, configuration and hashes | Core session/scene/CAS publication |
+| Cloud + trajectory in one session | Portable bundle with verified reopening and read-only joint viewer; full-route sampled overlay | Core session/scene/CAS publication |
 | Control points with time | SHARE/A2 parsing; explicit rejection report; RTK-fixed filtering | Datum/time/lever-arm calibration and correction |
 | Original and corrected versions | Original source snapshots retained; no correction fabricated | Immutable derived corrected trajectory and rebuilt cloud |
 | Color workflow | Existing LAS RGB preserved in display PLY; 8/16-bit choice | Independent image-based colorization with calibration/visibility |
@@ -100,9 +100,17 @@ Synthetic LAS 1.2 formats 0/3 and LAS 1.4 format 7, large coordinates with milli
 differences, 8/16-bit RGB, decimal epoch timestamps, malformed inputs, CSV rejections,
 RTK status, source mutation, cancellation, CLI and viewer compatibility are covered by
 `python/research/photo_to_cloud/test_a2_import.py`.
-Full local research suite: 104 tests passed, including 29 A2 import, CLI, UI orchestration
-and actual viewer-parser tests. Architecture constitution/dependency/domain/worker/debt
-and schema checks passed.
+The reopening slice adds `test_capture_session.py`: portable directories, changed cloud
+and trajectory rejection, missing/legacy manifests, full-route sampling with exact time,
+HTTP read-only protection, and actual viewer scripts/parser under a Node DOM/WebGL shim.
+The shim checks overlay alignment with a real parsed LAS-derived PLY before/after
+rotation, opt-in controls, export blocking and switching back to a standalone PLY.
+Full local research suite: 113 tests passed, including 29 A2 importer tests and 9 capture
+session tests. Architecture constitution/dependency/domain/worker/debt and schema checks
+are run separately; see PR checks for the current revision.
 Native GUI smoke execution was attempted but this executor has no DISPLAY/X server;
 system Xvfb installation is unavailable due process permission restrictions.
-Real Windows packaging/UI and actual A2 export accuracy remain unverified.
+The preceding importer revision passed Windows packaging and packaged GUI smoke tests
+in Actions run 42488156429. The reopening revision requires its own CI result.
+Full browser rendering was not locally verified: Chromium download returned an invalid
+archive. Actual A2 export accuracy and interactive Windows acceptance remain unverified.

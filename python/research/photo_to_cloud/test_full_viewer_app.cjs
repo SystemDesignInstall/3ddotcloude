@@ -18,11 +18,14 @@ class Element {
     this.textContent=''; this.className=''; this.style={}; this.listeners={}; this.attributes={};
     this.clientWidth=1200; this.clientHeight=700; this.width=1200; this.height=700;
     this.dataset={};for(const m of attrs.matchAll(/\bdata-([a-z-]+)="([^"]*)"/g))this.dataset[m[1].replace(/-([a-z])/g,(_,x)=>x.toUpperCase())]=m[2];
+    this.checked=/\schecked(?:\s|>|=|$)/.test(attrs);this.children=[];
   }
   addEventListener(type, callback) { (this.listeners[type] ||= []).push(callback); }
   dispatch(type,extra={}) { if(this.disabled)return; for(const fn of this.listeners[type]||[]) fn({target:this,preventDefault(){},button:0,...extra}); }
   setAttribute(name,value) { this.attributes[name]=value; }
   removeAttribute(name) { delete this.attributes[name]; }
+  replaceChildren() { this.children=[]; }
+  appendChild(child) { this.children.push(child); }
   querySelectorAll() { return []; }
   focus() {}
   getBoundingClientRect() { return {left:0,top:0,width:this.clientWidth,height:this.clientHeight}; }
@@ -42,6 +45,7 @@ const axisButtons=Array.from(html.matchAll(/<button([^>]*\bdata-axis="[^"]+"[^>]
 elements.orientation.querySelectorAll=()=>axisButtons;
 elements.units.value='1'; elements['up-axis'].value='y';elements['rotation-step'].value='0.1';
 const document={getElementById:id=>elements[id],querySelectorAll:()=>[...Object.values(elements).filter(e=>['BUTTON','INPUT','SELECT'].includes(e.tagName)),...axisButtons],addEventListener(){},pointerLockElement:null};
+document.createElementNS=(_namespace,tag)=>new Element('',tag,'');
 const localFetch = (url,options={})=>{
   const headers=new Headers(options.headers||{});
   if(options.method&&options.method!=='GET')headers.set('Origin',address.origin);
@@ -66,6 +70,36 @@ function approximate(actual,expected){actual.forEach((v,i)=>assert(Math.abs(v-ex
 
 (async()=>{
   await waitFor(()=>elements.status.textContent.includes('Загружено точек:'));
+  if(process.argv[4]==='capture'){
+    assert.equal(elements['capture-panel'].hidden,false);
+    assert.equal(elements['capture-controls'].checked,false);
+    assert.equal(elements['save-current-alignment'].hidden,true);
+    assert.equal(elements['prepare-aligned'].disabled,true);
+    const overlay=elements['capture-overlay'];
+    const render=()=>vm.runInContext('drawCaptureOverlay()',context);
+    const circles=()=>overlay.children.filter(e=>e.tagName==='CIRCLE');
+    render();assert.equal(circles().length,2);
+    assert(overlay.children.some(e=>e.tagName==='PATH'&&e.attributes.d.includes(' L ')));
+    // The trajectory starts on the first LAS point. Compare its projected
+    // position with the real parser's normalized point, before/after rotation.
+    const pointScreen=()=>vm.runInContext('projectReferencePoint(rotatePoint(Array.from(pointPositions.slice(0,3))))',context);
+    const compare=()=>{const p=pointScreen(),c=circles()[0];approximate([Number(c.attributes.cx),Number(c.attributes.cy)],[p.x,p.y]);};
+    compare();const before=circles()[0].attributes.cx;
+    elements['angle-y'].value='17';elements['angle-y'].dispatch('input');render();compare();
+    assert.notEqual(circles()[0].attributes.cx,before);
+    elements['capture-controls'].checked=true;elements['capture-controls'].dispatch('change');render();
+    assert.equal(circles().length,3);assert(overlay.children.some(e=>e.textContent==='PT1'));
+    elements['capture-route'].checked=false;render();assert.equal(circles().length,1);
+    vm.runInContext('startExport(true)',context);
+    assert(elements.status.textContent.includes('только для чтения'));
+    assert.deepEqual(fs.readFileSync(cloudPath),initial);
+    const standalone={name:'other.ply',arrayBuffer:async()=>initial.buffer.slice(initial.byteOffset,initial.byteOffset+initial.byteLength)};
+    context.standalone=standalone;vm.runInContext('load(standalone)',context);
+    await waitFor(()=>elements.status.textContent.includes('Загружено точек:'));
+    assert.equal(elements['capture-panel'].hidden,true);assert.equal(overlay.children.length,0);
+    console.log('Capture overlay follows cloud rotation, controls require opt-in, export is blocked: PASS');
+    return;
+  }
   assert(elements.status.textContent.includes('в этом PLY только точки; постройте 3D-сетку'),
     'a point-only PLY should explain why the surface toggle is unavailable');
   assert.equal(elements['save-current-alignment'].hidden,false);

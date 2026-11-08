@@ -98,6 +98,7 @@ class App:
         self.result_dir: Path | None = None
         self.viewer_hosts = []
         self.detecting_hardware = False
+        self.opening_capture = False
         self.images = tk.StringVar()
         self.destination = tk.StringVar()
         self.openmvs = tk.StringVar()
@@ -185,6 +186,7 @@ class App:
         self.a2_button.pack(side="left")
         self.a2_report_button = ttk.Button(capture_actions, text="Отчёт съёмки A2", command=self.open_a2_report)
         self.a2_report_button.pack(side="left", padx=8)
+        ttk.Button(capture_actions, text="Открыть съёмку…", command=self.choose_capture).pack(side="left")
         ttk.Label(frame, textvariable=self.status).pack(anchor="w", pady=(0, 4))
         self.progress = ttk.Progressbar(frame, mode="indeterminate")
         self.progress.pack(fill="x", pady=(0, 8))
@@ -612,12 +614,47 @@ class App:
             self.events.put(("line", line))
         self.events.put(("done", process.wait()))
 
+    def choose_capture(self) -> None:
+        if self.process or self.installing or self.detecting_hardware:
+            return
+        folder = filedialog.askdirectory(title="Папка сохранённой съёмки A2")
+        if folder:
+            self.open_capture(Path(folder))
+
+    def open_capture(self, folder: Path) -> None:
+        if self.process or self.installing or self.detecting_hardware:
+            return
+        self.opening_capture = self.installing = True
+        self.status.set("Проверка сохранённой съёмки и контрольных сумм…")
+        self.progress.start(15)
+        def prepare():
+            try:
+                from capture_session import open_capture
+                cloud, capture = open_capture(folder)
+                self.events.put(("capture_ready", (cloud, capture)))
+            except Exception as exc:
+                self.events.put(("capture_error", str(exc)))
+        threading.Thread(target=prepare, daemon=True).start()
+
     def read_events(self) -> None:
         try:
             while True:
                 kind, value = self.events.get_nowait()
                 if kind == "line":
                     self.append_log(value)
+                elif kind in ("capture_ready", "capture_error"):
+                    self.opening_capture = self.installing = False
+                    self.progress.stop()
+                    if kind == "capture_ready":
+                        cloud, capture = value
+                        self.result_dir = cloud.parent
+                        self.open_button.configure(state="normal")
+                        self.preview_button.configure(state="normal")
+                        self.status.set("Съёмка открыта для совместного просмотра")
+                        self.open_cloud(cloud, capture=capture)
+                    else:
+                        self.status.set("Не удалось открыть съёмку")
+                        messagebox.showerror("Съёмка не открыта", value)
                 elif kind == "auto_config_done":
                     self.finish_auto_configuration(value)
                 elif kind == "auto_config_error":
@@ -744,6 +781,9 @@ class App:
             pass
 
     def open_preview(self) -> None:
+        if self.result_dir and (self.result_dir / "capture/manifest.json").is_file():
+            self.open_capture(self.result_dir)
+            return
         cloud = self.result_cloud()
         if cloud is not None:
             self.open_cloud(cloud)
@@ -765,11 +805,11 @@ class App:
         if path:
             self.open_cloud(Path(path))
 
-    def open_cloud(self, cloud: Path) -> None:
+    def open_cloud(self, cloud: Path, capture: dict | None = None) -> None:
         from viewer_host import ViewerHost, open_window
         host = None
         try:
-            host = ViewerHost(cloud)
+            host = ViewerHost(cloud, capture=capture)
             if not open_window(host):
                 raise OSError("Не найден браузер, способный открыть окно просмотра.")
             self.viewer_hosts.append(host)
@@ -802,6 +842,9 @@ class App:
                 messagebox.showerror("Не удалось остановить", str(exc))
 
     def close(self) -> None:
+        if self.opening_capture:
+            messagebox.showinfo("Проверка съёмки", "Дождитесь завершения проверки файлов.")
+            return
         if self.installing:
             messagebox.showinfo("Установка", "Дождитесь завершения установки движка.")
             return

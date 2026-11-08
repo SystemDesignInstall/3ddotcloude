@@ -169,7 +169,7 @@ class CloudSaveSession:
 class ViewerHost:
     """A per-window loopback server; paths never expose a directory listing."""
 
-    def __init__(self, cloud: Path) -> None:
+    def __init__(self, cloud: Path, capture: dict | None = None) -> None:
         cloud = cloud.expanduser().resolve(strict=True)
         if not cloud.is_file() or cloud.suffix.casefold() != ".ply":
             raise ValueError("Выберите существующий файл PLY.")
@@ -177,6 +177,8 @@ class ViewerHost:
         token = secrets.token_urlsafe(32)
         prefix = f"/{token}/"
         saver = CloudSaveSession(cloud)
+        capture_bytes = json.dumps(capture, ensure_ascii=False, allow_nan=False).encode("utf-8") if capture else None
+        cloud_snapshot = _fingerprint(cloud)
 
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, _format, *_args):
@@ -207,11 +209,17 @@ class ViewerHost:
                     self.send_content(200, "text/html; charset=utf-8", len(page))
                     self.wfile.write(page)
                 elif path == prefix + "meta.json":
-                    body = json.dumps({"name": cloud.name}, ensure_ascii=False).encode("utf-8")
+                    body = json.dumps({"name": cloud.name, "capture": capture is not None}, ensure_ascii=False).encode("utf-8")
                     self.send_content(200, "application/json; charset=utf-8", len(body))
                     self.wfile.write(body)
+                elif path == prefix + "capture.json" and capture_bytes is not None:
+                    self.send_content(200, "application/json; charset=utf-8", len(capture_bytes))
+                    self.wfile.write(capture_bytes)
                 elif path == prefix + "cloud":
                     try:
+                        if capture is not None and _fingerprint(cloud) != cloud_snapshot:
+                            self.send_error(409, "Capture cloud changed")
+                            return
                         with cloud.open("rb") as source:
                             size = os.fstat(source.fileno()).st_size
                             self.send_content(200, "application/octet-stream", size)
@@ -224,6 +232,9 @@ class ViewerHost:
                     self.send_error(404)
 
             def do_POST(self) -> None:
+                if capture is not None:
+                    self.send_error(403, "Capture view is read-only")
+                    return
                 expected_host = f"127.0.0.1:{self.server.server_port}"
                 if (self.headers.get("Host") != expected_host or
                     self.headers.get("Origin") != "http://" + expected_host or
