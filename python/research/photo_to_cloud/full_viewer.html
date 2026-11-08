@@ -8,6 +8,7 @@
 :root{color-scheme:dark;--bg:#101923;--panel:#192b3a;--ink:#edf4fa;--muted:#bbccda;--accent:#5ac1dd}
 *{box-sizing:border-box}body{margin:0;min-height:100vh;display:flex;flex-direction:column;font:15px system-ui,sans-serif;background:var(--bg);color:var(--ink)}
 [hidden]{display:none!important}
+#capture-panel input[type=checkbox]{width:auto;margin:0;accent-color:var(--accent)}
 header{padding:14px 20px 12px;background:var(--panel);border-bottom:1px solid #385166;display:flex;flex-wrap:wrap;gap:10px 20px;align-items:center}
 h1{font-size:19px;margin:0 0 3px}p{margin:4px 0;color:var(--muted)}.intro{min-width:250px;flex:1}.actions{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
 button,.upload{border:0;border-radius:6px;padding:9px 13px;font:inherit;font-weight:600;cursor:pointer;color:#09212a;background:var(--accent)}
@@ -40,6 +41,12 @@ main{flex:1;height:0;min-height:320px;position:relative}canvas{width:100%;height
     <label id="speed-control" hidden>Скорость <input id="speed" type="range" min="0.05" max="1.5" step="0.05" value="0.35"></label>
   </div>
   <div id="status" class="status" aria-live="polite">Выберите PLY или перетащите его в это окно.</div>
+  <div id="capture-panel" class="calibration" hidden>
+    <p id="capture-status"></p>
+    <label><input id="capture-route" type="checkbox" checked> Траектория</label>
+    <label><input id="capture-controls" type="checkbox"> Опоры: подтверждаю общую систему координат</label>
+    <p>Линии показаны поверх геометрии, в том числе за стенами. Привязка и точность не проверены. Изменения вида не записываются в съёмку.</p>
+  </div>
   <div id="calibration" class="calibration" hidden>
     <p id="calibration-status" aria-live="polite">Выберите на облаке две точки с известным расстоянием между ними.</p>
     <button id="choose-points" class="secondary" type="button">Выбрать точки заново</button>
@@ -69,6 +76,7 @@ main{flex:1;height:0;min-height:320px;position:relative}canvas{width:100%;height
   </div>
 </header>
 <main id="drop"><canvas id="view" tabindex="0" aria-label="Трёхмерное облако точек"></canvas>
+<svg id="capture-overlay" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:3" aria-label="Маршрут сканера и опоры"></svg>
 <div class="grid" id="alignment-grid" hidden aria-hidden="true"></div>
 <span class="crosshair" id="crosshair" hidden aria-hidden="true">+</span>
 <div class="coordinates" id="coordinates-panel" hidden>
@@ -355,7 +363,20 @@ function updateReferenceOverlay(){
  }
  const state=projected.visible?'в кадре':'вне кадра';coordinateStatus.textContent=`Абсолютный ноль исходного PLY (X 0 · Y 0 · Z 0): ${state}. Оси остаются неподвижной опорой при выравнивании облака.`;
 }
-function draw(time=0){frame=0;if(!gl||!program)return;const moving=updateFlight(time),{w,h}=resizeCanvas();gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.viewport(0,0,w,h);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);if(count){if(surfaceMode)renderSurface();else renderPoints();renderAxes();}updateMarkers();updateReferenceOverlay();if(moving)refresh();
+let captureSession=null;
+const capturePanel=document.getElementById('capture-panel'),captureOverlay=document.getElementById('capture-overlay'),captureRoute=document.getElementById('capture-route'),captureControls=document.getElementById('capture-controls');
+function drawCaptureOverlay(){
+ if(!captureSession||!captureOverlay)return;
+ captureOverlay.replaceChildren();if(!count)return;
+ const project=p=>projectReferencePoint(rotatePoint(p.map((v,i)=>(v-sourceCenter[i])/sourceScale)));
+ function add(tag,attributes,text){const e=document.createElementNS('http://www.w3.org/2000/svg',tag);for(const [k,v] of Object.entries(attributes))e.setAttribute(k,String(v));if(text)e.textContent=text;captureOverlay.appendChild(e);}
+ if(captureRoute.checked){let last=null,path='';for(const pose of captureSession.route){const p=project(pose.position);if(p.visible){path+=(last?' L ':' M ')+p.x+' '+p.y;last=p;}else last=null;}add('path',{d:path,fill:'none',stroke:'#ffb347','stroke-width':2});
+ for(const [pose,label,color] of [[captureSession.route[0],'Старт','#6df7ac'],[captureSession.route.at(-1),'Финиш','#ff7979']]){const p=project(pose.position);if(p.visible){add('circle',{cx:p.x,cy:p.y,r:5,fill:color});add('text',{x:p.x+8,y:p.y-8,fill:color,'font-size':13},label);}}}
+ if(captureControls.checked)for(const mark of captureSession.controls){const p=project(mark.position);if(p.visible){add('circle',{cx:p.x,cy:p.y,r:5,fill:'#7cdaff',stroke:'#fff'});add('text',{x:p.x+8,y:p.y+14,fill:'#7cdaff','font-size':13},mark.name);}}
+}
+if(captureRoute)captureRoute.addEventListener('change',refresh);
+if(captureControls)captureControls.addEventListener('change',refresh);
+function draw(time=0){frame=0;if(!gl||!program)return;const moving=updateFlight(time),{w,h}=resizeCanvas();gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.viewport(0,0,w,h);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);if(count){if(surfaceMode)renderSurface();else renderPoints();renderAxes();}updateMarkers();updateReferenceOverlay();drawCaptureOverlay();if(moving)refresh();
 }
 function refresh(){if(!frame)frame=requestAnimationFrame(draw)}
 function rotationAngles(){return rotations.map(input=>Number(input.value)*Math.PI/180);}
@@ -432,7 +453,8 @@ function updateCalibration(){
  const n=selectedPoints.length,distance=selectedDistance(),f=n=>new Intl.NumberFormat('ru-RU',{maximumSignificantDigits:7}).format(n);
  const invalid=validAngles.some(valid=>!valid),unsupported=!!mirrorNormal&&sourceHasOtherElements;angleError.hidden=!invalid;mirrorWarning.hidden=!unsupported;
  applyCalibration.disabled=saving||n!==2||!Number.isFinite(distance)||distance<=0;prepareExport.disabled=saving||invalid||unsupported||metricFactor===null||!!exportWorker;prepareAligned.disabled=saving||invalid||unsupported||!!exportWorker;
- saveCurrentButtons.forEach((button,i)=>{button.hidden=!loadedFile||loadedFile.kind!=='app-file';button.disabled=saving||invalid||unsupported||!!exportWorker||(i===0&&metricFactor===null);});
+ saveCurrentButtons.forEach((button,i)=>{button.hidden=!!captureSession||!loadedFile||loadedFile.kind!=='app-file';button.disabled=saving||invalid||unsupported||!!exportWorker||(i===0&&metricFactor===null);});
+ if(captureSession){applyCalibration.disabled=true;prepareExport.disabled=true;prepareAligned.disabled=true;}
  const prefix=metricFactor===null?'Масштаб пока не задан. ':'Масштаб задан. ';
  if(n===0)calibrationStatus.textContent=prefix+'Выберите две точки на облаке.';
  else if(n===1)calibrationStatus.textContent=prefix+'Точка A выбрана. Выберите точку B.';
@@ -473,6 +495,7 @@ function setSaving(value){
  else{disabledBeforeSave.forEach(([el,disabled])=>el.disabled=disabled);disabledBeforeSave=[];updateCalibration();}
 }
 function startExport(writeOriginal=false){
+ if(captureSession){statusText('Совместный просмотр доступен только для чтения. Откройте PLY отдельно для редактирования.','error');return;}
  if(!loadedFile||exportWorker||saving||validAngles.some(valid=>!valid)||(mirrorNormal&&sourceHasOtherElements)||(writeOriginal&&loadedFile.kind!=='app-file'))return;
  clearDownload();const active=makeWorker(),isMetric=metricFactor!==null,angles=rotationAngles(),up=upAxis.value,factor=metricFactor??1,mirror=mirrorNormal?mirrorNormal.slice():null;
  const state={file:loadedFile,yaw,pitch,zoom,panX,panY,scale:sourceScale,center:sourceCenter.slice(),inputUp:sourceUp,up,factor,panel:orientation.hidden?'calibration':'orientation'};
@@ -539,6 +562,7 @@ function fitView(){
 function fixedView(top=false){orbitMode();yaw=0;pitch=top?-Math.PI/2:0;panX=0;panY=0;fitView();}
 function resetView(){orbitMode(false);orbitCenter=[0,0,0];yaw=.35;pitch=-.2;panX=0;panY=0;fitView();}
 function load(file,restore=null){
+ if(captureSession&&file&&file.kind!=='app-file'){captureSession=null;capturePanel.hidden=true;captureOverlay.replaceChildren();}
  if(!program||saving)return;if(!file||!file.name.toLowerCase().endsWith('.ply')){statusText('Выберите файл с расширением .ply.','error');return;}
  if(worker)worker.terminate();cancelExport();orbitMode(false);disposePicking();count=0;pointPositions=null;faceIndexCount=0;faceCount=0;surfaceMode=false;surfaceToggle.disabled=true;updateSurfaceToggle();loadedFile=null;sourceScale=1;sourceCenter=[0,0,0];sourceUp='y';sourceMetric=false;sourceHasOtherElements=false;orbitCenter=[0,0,0];mirrorNormal=null;syncMirror();metricFactor=null;selectedPoints=[];selectedCoordinate=null;coordinatePickActive=false;axisVertexCount=0;axesVisible=true;coordinatesPanel.hidden=true;coordinatesToggle.setAttribute('aria-expanded','false');coordinatesToggle.disabled=true;pickCoordinate.disabled=true;focusOrigin.disabled=true;toggleAxes.disabled=true;toggleAxes.setAttribute('aria-pressed','true');toggleAxes.textContent='Оси XYZ: включены';pickCoordinate.setAttribute('aria-pressed','false');pickCoordinate.textContent='Выбрать точку';coordinateValues.forEach(element=>element.textContent='—');coordinatePickStatus.textContent='Нажмите «Выбрать точку», затем щёлкните по точке облака.';coordinateUnit.textContent='Выбранная точка показывается в исходных координатах PLY.';originMarker.hidden=true;axisLabels.forEach(label=>label.hidden=true);canvas.style.cursor='grab';setCalibrationOpen(false);setOrientationOpen(false);initialOrientation();flightButton.disabled=true;calibrationToggle.disabled=true;orientationToggle.disabled=true;refresh();statusText('Подготовка файла: '+file.name+'…');
  const activeWorker=makeWorker();worker=activeWorker;
@@ -593,7 +617,7 @@ for(const event of ['dragenter','dragover'])document.addEventListener(event,e=>{
 canvas.addEventListener('webglcontextlost',e=>{e.preventDefault();statusText('Браузер потерял контекст WebGL. Обновите страницу и откройте PLY снова.','error')});
 async function openApplicationCloud(){
  if(new URLSearchParams(location.search).get('app')!=='1'||!['127.0.0.1','localhost','[::1]'].includes(location.hostname))return;
- try{const response=await fetch('./meta.json',{cache:'no-store'});if(!response.ok)throw Error('Не удалось получить сведения о файле.');const data=await response.json();if(typeof data.name!=='string'||!data.name.toLowerCase().endsWith('.ply'))throw Error('Некорректное имя файла PLY.');load({kind:'app-file',name:data.name,url:new URL('./cloud',location.href).href});}catch(error){statusText(error.message,'error');}
+ try{const response=await fetch('./meta.json',{cache:'no-store'});if(!response.ok)throw Error('Не удалось получить сведения о файле.');const data=await response.json();if(typeof data.name!=='string'||!data.name.toLowerCase().endsWith('.ply'))throw Error('Некорректное имя файла PLY.');if(data.capture){const r=await fetch('./capture.json',{cache:'no-store'});if(!r.ok)throw Error('Не удалось прочитать съёмку.');captureSession=await r.json();capturePanel.hidden=false;captureControls.checked=false;captureControls.disabled=!captureSession.controls.length;document.getElementById('capture-status').textContent='Сессия '+captureSession.session_id+' · '+captureSession.coordinate_frame+' · поз: '+captureSession.pose_count+' (на экране '+captureSession.route.length+') · опор XYZ: '+captureSession.control_count+' · геодезических опор без преобразования: '+captureSession.geodetic_controls;}load({kind:'app-file',name:data.name,url:new URL('./cloud',location.href).href});}catch(error){statusText(error.message,'error');}
 }
 openApplicationCloud();
 </script>

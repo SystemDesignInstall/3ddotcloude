@@ -203,6 +203,21 @@ Gate order (AI-neutral): **Actual output → Canonical Artifact feasibility → 
 - **VGGT:** `commercial_use` kept `research_only_pending`; note updated — commercial path now exists via `VGGT-1B-Commercial` (application form; military excluded) pending legal/Architecture review.
 - **LingBot-Map:** added as `verification_required` / `research_only_pending` with note — repository 404 (2026-08-12); removed from THIRD_PARTY.yml; registration invalid until a real repository appears.
 
+## A2 mapper addendum — 2026-11-08
+
+A2 mapper (Werdna0107/A2-slam, v4, `5212867f9fb7198d55f0a08f72aa0f381c11fa67`)
+is a **closed-source external evaluation reference**, not an embedded open-source backend.
+The Python research desktop application now imports its documented LAS + trajectory
+exports and optional SHARE/A2 control-point CSV, preserving original files and hashes.
+This does not implement raw LiDAR odometry, trajectory correction, image colorization
+or Core/.spx integration. Metric accuracy, frame conventions, clocks and CRS remain
+unverified until established from data/calibration.
+
+See [import usage](a2-mapper-import.md) and the
+[integration/evaluation record](../architecture/A2-mapper-integration.md) for adopted
+ideas, delivered work, benchmark protocol and the remaining acceptance gates.
+The original M2 decision below is retained as historical context.
+
 ## 8. Exit decision for M2
 
 The Board decides the four questions; this matrix is the input. License verification is complete (primary sources, §2); the capability matrix is class-separated (§3); embeddability is scored per candidate (§4); the Robbyant gate produced two eligible-but-deferred AI outcomes (VGGT prior pipeline, gsplat later) and blocked the LingBot family (§5); the recommendation is a COLMAP-led capability stack (§6).

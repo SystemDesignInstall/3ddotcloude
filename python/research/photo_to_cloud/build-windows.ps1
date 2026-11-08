@@ -53,11 +53,13 @@ $pyinstallerArgs = @(
     "-m", "PyInstaller", "--noconfirm", "--clean", "--onedir", "--console",
     "--name", "SpatialPhotoCloud",
     "--add-data", "full_viewer.html;.",
+    "--add-data", "licenses;licenses",
     "--collect-all", "pycolmap",
     "--collect-all", "PIL",
     "--collect-all", "pyopencl",
     "--collect-all", "numpy",
     "--collect-all", "rawpy",
+    "--collect-all", "laspy",
     "--paths", $ProjectRoot,
     "app.py"
 )
