@@ -23,7 +23,7 @@ class CaptureSessionTests(unittest.TestCase):
 
     def test_reopen_with_exact_timestamps_and_controls(self):
         cloud, data = open_capture(self.root)
-        self.assertEqual(cloud, self.root / 'cloud.ply')
+        self.assertEqual(cloud, (self.root / 'cloud.ply').resolve())
         self.assertEqual(data['route'][0]['timestamp_ns'], '1735725777104061985')
         self.assertEqual(data['controls'][0]['name'], 'PT1')
         self.assertTrue(data['read_only'])
