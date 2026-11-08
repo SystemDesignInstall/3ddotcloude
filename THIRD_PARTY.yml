@@ -24,6 +24,26 @@
 # backends (AGPL-3.0, LGPL-2.1) are WARNINGS here: they may only enter the
 # product through the separate-adapter process after legal review.
 dependencies:
+  - name: laspy
+    repository: https://github.com/laspy/laspy
+    version: "2.6.1"
+    code_license: BSD-2-Clause
+    model_license: null
+    commercial_use: yes
+    redistribution: yes
+    status: active
+    notes: Chunked uncompressed LAS reader in the Python research capture importer only; no Core dependency. License shipped in photo_to_cloud/licenses/laspy.txt.
+    security_notes: Malformed files fail before the research bundle manifest is published; compressed LAZ is rejected.
+  - name: A2-mapper
+    repository: https://github.com/Werdna0107/A2-slam
+    version: "v4 / 5212867f9fb7198d55f0a08f72aa0f381c11fa67"
+    code_license: A2 mapper Freeware License (proprietary)
+    model_license: null
+    commercial_use: yes
+    redistribution: conditional
+    status: planned
+    notes: External evaluation reference only. Our importer reads documented user-owned LAS/TXT/CSV outputs; no A2 binary or source is distributed or executed. No documented CLI/API. Reverse engineering and modification prohibited by upstream terms.
+    security_notes: Algorithm accuracy and runtime behavior unverified; outputs retain unverified frame, time and metric accuracy status.
   - name: eigen
     repository: https://gitlab.com/libeigen/eigen
     version: "3.4"

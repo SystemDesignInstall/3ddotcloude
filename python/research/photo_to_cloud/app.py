@@ -66,6 +66,18 @@ def texture_worker_command(mesh_path: Path, workspace: Path, openmvs_dir: Path,
                       "--threads", str(threads), "--cancel-file", str(cancel_file)]
 
 
+def a2_worker_command(options: dict, output: Path, cancel_file: Path) -> list[str]:
+    command = ([sys.executable, "--a2-import-worker"] if getattr(sys, "frozen", False)
+               else [sys.executable, "-u", str(Path(__file__).with_name("a2_import.py"))])
+    command += ["--input", options["source"], "--output", str(output),
+                "--coordinate-frame", options["coordinate_frame"], "--source-version", options["source_version"],
+                "--rgb-encoding", options["rgb_encoding"], "--up-axis", options["up_axis"],
+                "--cancel-file", str(cancel_file)]
+    if options["controls"]:
+        command += ["--controls", options["controls"]]
+    return command
+
+
 class App:
     def __init__(self, root: tk.Tk, auto_configure_on_start: bool = True) -> None:
         self.root = root
@@ -167,6 +179,12 @@ class App:
         self.texture_button = ttk.Button(texture_actions, text="Экспортировать текстурированную модель GLB…",
                                          command=self.texture_mesh)
         self.texture_button.pack(side="left")
+        capture_actions = ttk.Frame(frame)
+        capture_actions.pack(fill="x", pady=(0, 8))
+        self.a2_button = ttk.Button(capture_actions, text="Импорт съёмки A2 mapper…", command=self.import_a2)
+        self.a2_button.pack(side="left")
+        self.a2_report_button = ttk.Button(capture_actions, text="Отчёт съёмки A2", command=self.open_a2_report)
+        self.a2_report_button.pack(side="left", padx=8)
         ttk.Label(frame, textvariable=self.status).pack(anchor="w", pady=(0, 4))
         self.progress = ttk.Progressbar(frame, mode="indeterminate")
         self.progress.pack(fill="x", pady=(0, 8))
@@ -542,6 +560,52 @@ class App:
         self.progress.start(15)
         threading.Thread(target=self.consume, args=(self.process,), daemon=True).start()
 
+    def import_a2(self) -> None:
+        if self.process or self.installing or self.detecting_hardware:
+            return
+        from a2_import_dialog import show_dialog
+        show_dialog(self.root, self.destination.get(), self.start_a2_import)
+
+    def start_a2_import(self, options: dict) -> bool:
+        if self.process or self.installing or self.detecting_hardware:
+            return False
+        output = Path(options["destination"]) / ("a2-capture-" + uuid.uuid4().hex[:12])
+        self.cancel_dir = tempfile.TemporaryDirectory(prefix="spatial-a2-cancel-")
+        self.cancel_file = Path(self.cancel_dir.name) / "cancel"
+        environment = os.environ.copy()
+        environment["PYTHONUTF8"] = "1"
+        try:
+            self.process = subprocess.Popen(a2_worker_command(options, output, self.cancel_file),
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
+                env=environment, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        except OSError as exc:
+            self.cancel_dir.cleanup()
+            self.cancel_dir = self.cancel_file = None
+            messagebox.showerror("Импорт не запущен", str(exc))
+            return False
+        self.result_dir = output
+        self.current_task = "a2"
+        self.cancel_requested = self.close_after_cancel = False
+        self.destination.set(options["destination"])
+        for button in (self.start_button, self.mesh_button, self.texture_button, self.a2_button,
+                       self.install_button, self.install_cl_button, self.auto_button,
+                       self.preview_button, self.open_button):
+            button.configure(state="disabled")
+        self.cancel_button.configure(state="normal")
+        self.status.set("Импорт съёмки A2…")
+        self.append_log(f"\nИмпорт съёмки A2. Результат: {output}\n")
+        self.progress.start(15)
+        threading.Thread(target=self.consume, args=(self.process,), daemon=True).start()
+        return True
+
+    def open_a2_report(self) -> None:
+        import webbrowser
+        report = self.result_dir / "capture" / "report.html" if self.result_dir else None
+        if report is not None and report.is_file() and (report.parent / "manifest.json").is_file():
+            webbrowser.open(report.resolve().as_uri())
+        else:
+            messagebox.showinfo("Отчёт съёмки", "Сначала импортируйте папку результатов A2 mapper.")
+
     def consume(self, process: subprocess.Popen) -> None:
         assert process.stdout is not None
         for line in process.stdout:
@@ -609,6 +673,7 @@ class App:
                     self.auto_button.configure(state="normal")
                     self.mesh_button.configure(state="normal")
                     self.texture_button.configure(state="normal")
+                    self.a2_button.configure(state="normal")
                     if self.result_dir and self.result_dir.exists():
                         self.open_button.configure(state="normal")
                         if self.result_cloud() is not None and value == 0:
@@ -638,6 +703,9 @@ class App:
                         else:
                             self.status.set("GLB не создан — смотрите журнал")
                             messagebox.showerror("Не удалось создать GLB", "Подробности находятся в журнале окна.")
+                    elif task == "a2" and value == 0:
+                        self.status.set("Съёмка импортирована; точность и привязка требуют проверки")
+                        self.open_a2_report()
                     elif value == 0:
                         self.status.set("Готово")
                         messagebox.showinfo("Готово", f"Результат сохранён в:\n{self.result_dir}")
@@ -685,7 +753,7 @@ class App:
     def result_cloud(self) -> Path | None:
         if self.result_dir is None:
             return None
-        for name in ("dense.ply", "sparse.ply"):
+        for name in ("dense.ply", "sparse.ply", "cloud.ply"):
             path = self.result_dir / name
             if path.is_file():
                 return path
@@ -747,6 +815,12 @@ class App:
 
 
 def main() -> int:
+    if sys.argv[1:2] == ["--a2-import-worker"]:
+        for stream in (sys.stdout, sys.stderr):
+            if stream is not None and hasattr(stream, "reconfigure"):
+                stream.reconfigure(encoding="utf-8", errors="replace")
+        from a2_import import main as a2_main
+        return a2_main(sys.argv[2:])
     if sys.argv[1:2] == ["--hardware-opencl-probe"]:
         from hardware_profile import hardware_opencl_probe_main
         return hardware_opencl_probe_main(verify="--inventory-only" not in sys.argv[2:])
@@ -791,6 +865,8 @@ def main() -> int:
         import mesh_worker
         import texture_worker
         import viewer_host
+        import a2_import
+        import laspy
         if not callable(getattr(pycolmap, "poisson_meshing", None)) or not hasattr(pycolmap, "PoissonMeshingOptions"):
             raise RuntimeError("В комплекте PyCOLMAP нет Poisson meshing, необходимого для построения 3D-сетки.")
         print(f"Spatial Photo Cloud: pycolmap {pycolmap.__version__}; Pillow {PIL.__version__}")
