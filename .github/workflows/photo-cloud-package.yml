@@ -57,6 +57,13 @@ jobs:
         run: python python/research/photo_to_cloud/colmap_cl_install.py --destination "${{ runner.temp }}/colmap-cl-test"
       - name: Generate synthetic images
         run: python python/research/photo_to_cloud/generate_test_images.py "${{ runner.temp }}/photo-cloud-images"
+      - name: Fetch the openMVG sample photos for comparison
+        uses: actions/checkout@v4
+        with:
+          repository: openMVG/ImageDataset_SceauxCastle
+          ref: fde7f5faba555e3c54700477c304488613346a19
+          path: profile-benchmark-photos
+          persist-credentials: false
       - name: Download a CC0 Canon CR2 fixture
         shell: pwsh
         run: |
@@ -71,6 +78,7 @@ jobs:
           --openmvs "${{ runner.temp }}/openmvs-test"
           --colmap-cl "${{ runner.temp }}/colmap-cl-test/bin/colmap.exe"
           --cr2-sample "${{ runner.temp }}/canon-sample.CR2"
+          --benchmark-images "${{ github.workspace }}/profile-benchmark-photos/images"
           --output "${{ runner.temp }}/photo-cloud-test"
       - name: Add user instructions
         shell: pwsh

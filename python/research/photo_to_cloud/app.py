@@ -24,6 +24,7 @@ MODES = {
     "Плотное облако — AMD HIP (эксперимент)": "dense-amd",
 }
 MODE_LABELS = {value: key for key, value in MODES.items()}
+MODEL_QUALITY = {"Быстро": "fast", "Детально": "detail"}
 
 
 def worker_command(images: str, output: Path, mode: str, cancel_file: Path,
@@ -104,6 +105,7 @@ class App:
         self.openmvs = tk.StringVar()
         self.colmap = tk.StringVar()
         self.mode = tk.StringVar(value=next(iter(MODES)))
+        self.model_quality = tk.StringVar(value=next(iter(MODEL_QUALITY)))
         from reconstruct import MAX_THREADS, recommended_threads
         self.threads = tk.StringVar(value=str(recommended_threads()))
         self.status = tk.StringVar(value="Выберите фотографии и папку результата")
@@ -124,9 +126,14 @@ class App:
         ttk.Label(frame, text="Обработка на этом компьютере. Результат: облако, сетка и текстурированный GLB.").pack(anchor="w", pady=(4, 12))
         self.path_row(frame, "Папка с фотографиями (CR2, JPG, PNG, TIFF)", self.images, self.choose_images)
         self.path_row(frame, "Где сохранять результат", self.destination, self.choose_destination)
-        self.start_button = ttk.Button(frame, text="Построить 3D-модель из фото", command=lambda: self.start(model=True),
+        model_actions = ttk.Frame(frame)
+        model_actions.pack(fill="x", pady=(8, 0))
+        ttk.Label(model_actions, text="Качество модели").pack(side="left", padx=(0, 8))
+        ttk.Combobox(model_actions, state="readonly", values=list(MODEL_QUALITY),
+                     textvariable=self.model_quality, width=12).pack(side="left", padx=(0, 8))
+        self.start_button = ttk.Button(model_actions, text="Построить 3D-модель из фото", command=lambda: self.start(model=True),
                                        state="disabled")
-        self.start_button.pack(anchor="w", pady=(8, 0))
+        self.start_button.pack(side="left")
         ttk.Label(frame, text="Режим отдельного построения облака").pack(anchor="w", pady=(8, 2))
         self.mode_combo = ttk.Combobox(frame, state="readonly", values=list(MODES), textvariable=self.mode)
         self.mode_combo.pack(fill="x")
@@ -369,10 +376,12 @@ class App:
         self.current_task = "model" if model else "reconstruction"
         self.cancel_requested = False
         if model:
+            quality = self.model_quality.get()
             command = ([sys.executable, "--model-worker"] if getattr(sys, "frozen", False)
                        else [sys.executable, "-u", str(Path(__file__).with_name("model_worker.py"))])
             command += ["--images", self.images.get(), "--output", str(self.result_dir),
-                        "--threads", str(threads), "--cancel-file", str(self.cancel_file)]
+                        "--threads", str(threads), "--cancel-file", str(self.cancel_file),
+                        "--quality", MODEL_QUALITY[quality]]
         else:
             command = worker_command(self.images.get(), self.result_dir, mode, self.cancel_file, threads)
         if mode == "dense-cpu" and openmvs:
@@ -395,6 +404,8 @@ class App:
             return
         self.append_log(f"\nПапка результата: {self.result_dir}\n")
         self.append_log(f"Потоки CPU: {threads}\n")
+        if model:
+            self.append_log(f"Качество модели: {quality}\n")
         self.start_button.configure(state="disabled")
         self.open_button.configure(state="disabled")
         self.preview_button.configure(state="disabled")

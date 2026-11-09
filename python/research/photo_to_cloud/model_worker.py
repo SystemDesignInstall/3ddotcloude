@@ -7,20 +7,23 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import time
 
 from mesh_worker import inspect_mesh, publish_without_replacement
-from reconstruct import (MAX_THREADS, ReconstructionCancelled, ReconstructionError,
+from reconstruct import (MAX_THREADS, OPENMVS_QUALITY, ReconstructionCancelled, ReconstructionError,
                          check_cancel, executable, image_paths, recommended_threads,
                          reconstruct, run_program, save_report)
 from texture_worker import TextureCancelled, build_textured_model
 
 
 def build_model(images: Path, output: Path, threads: int, openmvs_dir: Path | None,
-                cancel_file: Path | None = None) -> None:
+                cancel_file: Path | None = None, *, quality_profile: str = "fast") -> None:
     images = images.expanduser().resolve()
     output = output.expanduser().resolve()
     if not 1 <= threads <= MAX_THREADS:
         raise ReconstructionError(f"Число потоков должно быть от 1 до {MAX_THREADS}.")
+    if quality_profile not in OPENMVS_QUALITY:
+        raise ReconstructionError("Неизвестный профиль качества.")
     if output.is_relative_to(images):
         raise ReconstructionError("Папка результата должна находиться вне папки фотографий.")
     if output.exists():
@@ -42,13 +45,14 @@ def build_model(images: Path, output: Path, threads: int, openmvs_dir: Path | No
     mesher = executable(openmvs_dir, "ReconstructMesh")
 
     print("Этап 1 из 3. Фотографии → плотное облако", flush=True)
+    started = time.monotonic()
     reconstruct(images, output, "dense-cpu", threads, openmvs_dir=openmvs_dir,
-                cancel_file=cancel_file)
+                cancel_file=cancel_file, quality_profile=quality_profile)
 
     mesh_path = output / "model-mesh.ply"
     stage = "mesh"
     report = {"status": "failed", "stage": stage, "point_cloud": "dense.ply",
-              "scale": "unknown"}
+              "scale": "unknown", "quality_profile": quality_profile}
     try:
         print("Этап 2 из 3. Плотное облако → сетка", flush=True)
         with tempfile.TemporaryDirectory(prefix="mesh-", dir=output) as directory:
@@ -77,6 +81,7 @@ def build_model(images: Path, output: Path, threads: int, openmvs_dir: Path | No
     finally:
         # report.json records photo reconstruction separately and remains useful
         # even if a later stage is cancelled or fails.
+        report["elapsed_seconds"] = round(time.monotonic() - started, 3)
         save_report(output / "model-report.json", report)
 
 
@@ -86,10 +91,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--threads", type=int, default=recommended_threads())
     parser.add_argument("--openmvs-dir", type=Path)
+    parser.add_argument("--quality", choices=OPENMVS_QUALITY, default="fast")
     parser.add_argument("--cancel-file", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     try:
-        build_model(args.images, args.output, args.threads, args.openmvs_dir, args.cancel_file)
+        build_model(args.images, args.output, args.threads, args.openmvs_dir, args.cancel_file,
+                    quality_profile=args.quality)
     except (ReconstructionCancelled, TextureCancelled) as exc:
         print(str(exc), file=sys.stderr, flush=True)
         return 130
