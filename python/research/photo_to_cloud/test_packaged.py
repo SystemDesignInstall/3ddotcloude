@@ -47,20 +47,45 @@ def check_cancel(executable: Path, images: Path, root: Path) -> None:
             process.wait()
 
 
-def check_dense(executable: Path, images: Path, root: Path, openmvs: Path) -> None:
-    output = root / "dense"
-    result = subprocess.run([str(executable), "--worker", "--images", str(images), "--output", str(output),
-                             "--mode", "dense-cpu", "--openmvs-dir", str(openmvs), "--threads", "4"],
-                            check=False, timeout=600)
+def check_model(executable: Path, images: Path, root: Path, openmvs: Path,
+                quality: str = "fast") -> None:
+    output = root / ("dense" if quality == "fast" else "dense-detail")
+    command = [str(executable), "--model-worker", "--images", str(images),
+               "--output", str(output), "--openmvs-dir", str(openmvs), "--threads", "4"]
+    if quality == "detail":
+        command += ["--quality", quality]
+    try:
+        result = subprocess.run(command, check=False, timeout=900, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
+    except subprocess.TimeoutExpired as exc:
+        print((exc.stdout or b"").decode("utf-8", errors="replace"), end="", flush=True)
+        raise
+    print(result.stdout, end="", flush=True)
     if result.returncode != 0:
-        raise RuntimeError(f"dense worker failed with code {result.returncode}")
+        raise RuntimeError(f"photo-to-model worker ({quality}) failed with code {result.returncode}")
+    level, resolution = (2, 1280) if quality == "fast" else (1, 2560)
+    flags = f"--resolution-level {level} --min-resolution 320 --max-resolution {resolution}"
+    if not any("DensifyPointCloud.exe" in line and flags in line for line in result.stdout.splitlines()):
+        raise RuntimeError(f"OpenMVS did not receive the expected {quality} profile")
     report = json.loads((output / "report.json").read_text(encoding="utf-8"))
     if (report["status"] != "succeeded" or report["registered_images"] < 3 or report["point_count"] < 100
             or not (output / "dense.ply").is_file() or not (output / "preview.html").is_file()
             or not (output / "full_viewer.html").is_file()):
         raise RuntimeError(f"invalid dense result: {report}")
-    print(f"Packaged dense reconstruction: {report['registered_images']} cameras, "
-          f"{report['point_count']} points, {report['preview_points']} preview points", flush=True)
+    model = json.loads((output / "model-report.json").read_text(encoding="utf-8"))
+    if (model["status"] != "succeeded" or model["stage"] != "complete"
+            or model["mesh_faces"] < 1 or not (output / "model-mesh.ply").is_file()):
+        raise RuntimeError(f"invalid model report: {model}")
+    if (report["dense_settings"]["profile"] != quality
+            or report["dense_settings"]["max_resolution_px"] != resolution
+            or model["quality_profile"] != quality
+            or not 0 < report["densify_seconds"] <= model["elapsed_seconds"]):
+        raise RuntimeError(f"profile settings or timings missing: {quality}")
+    glb = inspect_glb(output / "model.glb")
+    print(f"Packaged photos to GLB ({quality}): {report['registered_images']} cameras, "
+          f"{report['point_count']} points, {model['mesh_faces']} faces, "
+          f"{glb['texture_count']} textures, dense {report['densify_seconds']} s, "
+          f"total {model['elapsed_seconds']} s", flush=True)
 
 
 def check_textured_glb(executable: Path, root: Path, openmvs: Path) -> None:
@@ -215,17 +240,27 @@ def check_cr2(executable: Path, sample: Path, root: Path) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--executable", required=True, type=Path)
-    parser.add_argument("--images", required=True, type=Path)
+    inputs = parser.add_mutually_exclusive_group(required=True)
+    inputs.add_argument("--images", type=Path)
+    inputs.add_argument("--benchmark-images", type=Path)
     parser.add_argument("--openmvs", required=True, type=Path)
-    parser.add_argument("--colmap-cl", required=True, type=Path)
-    parser.add_argument("--cr2-sample", required=True, type=Path)
+    parser.add_argument("--colmap-cl", type=Path)
+    parser.add_argument("--cr2-sample", type=Path)
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
+    if args.images is not None and (args.colmap_cl is None or args.cr2_sample is None):
+        parser.error("--images requires --colmap-cl and --cr2-sample")
     args.output.mkdir(parents=True, exist_ok=False)
-    check_mesh_worker_entrypoint(args.executable, args.output)
-    check_texture_worker_entrypoint(args.executable, args.openmvs, args.output)
-    check_cancel(args.executable, args.images, args.output)
-    check_dense(args.executable, args.images, args.output, args.openmvs)
-    check_textured_glb(args.executable, args.output, args.openmvs)
-    check_opencl_no_gpu(args.executable, args.images, args.output, args.colmap_cl)
-    check_cr2(args.executable, args.cr2_sample, args.output)
+    if args.benchmark_images is not None:
+        print("Comparing both profiles on the same real photographs", flush=True)
+        check_model(args.executable, args.benchmark_images, args.output, args.openmvs)
+        check_model(args.executable, args.benchmark_images, args.output, args.openmvs, quality="detail")
+    else:
+        check_mesh_worker_entrypoint(args.executable, args.output)
+        check_texture_worker_entrypoint(args.executable, args.openmvs, args.output)
+        check_cancel(args.executable, args.images, args.output)
+        check_model(args.executable, args.images, args.output, args.openmvs)
+        check_model(args.executable, args.images, args.output, args.openmvs, quality="detail")
+        check_textured_glb(args.executable, args.output, args.openmvs)
+        check_opencl_no_gpu(args.executable, args.images, args.output, args.colmap_cl)
+        check_cr2(args.executable, args.cr2_sample, args.output)

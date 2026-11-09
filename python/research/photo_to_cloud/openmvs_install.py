@@ -110,7 +110,8 @@ def install_archive(archive: Path, destination: Path, expected_sha: str = SHA256
     return destination
 
 
-def download_and_install(destination: Path, progress=print) -> Path:
+def download_and_install(destination: Path, progress=print, *, check_cancel=lambda: None) -> Path:
+    check_cancel()
     if destination.exists():
         # The normal validation below accepts only an installation we recognise.
         if _valid_installation(destination, SHA256):
@@ -126,6 +127,7 @@ def download_and_install(destination: Path, progress=print) -> Path:
                     raise InstallError("Недопустимое перенаправление при загрузке OpenMVS.")
                 size = 0
                 while True:
+                    check_cancel()
                     chunk = response.read(1024 * 1024)
                     if not chunk:
                         break
@@ -136,6 +138,7 @@ def download_and_install(destination: Path, progress=print) -> Path:
         except (OSError, ValueError) as exc:
             raise InstallError(f"Не удалось скачать OpenMVS: {exc}") from exc
         progress("Проверка архива и установка OpenMVS…")
+        check_cancel()
         return install_archive(archive, destination)
 
 

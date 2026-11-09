@@ -28,6 +28,10 @@ from hardware_profile import (
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".cr2"}
 MODES = ("sparse-cpu", "dense-cpu", "dense-amd", "dense-opencl")
+OPENMVS_QUALITY = {
+    "fast": (2, 1280),
+    "detail": (1, 2560),
+}
 MAX_THREADS = 64
 QUALITY_WARN_REGISTERED_RATIO = 0.80
 QUALITY_REJECT_REGISTERED_RATIO = 0.50
@@ -492,9 +496,11 @@ def save_report(path: Path, report: dict) -> None:
 
 def reconstruct(images: Path, output: Path, mode: str, threads: int,
                 openmvs_dir: Path | None = None, colmap: Path | None = None,
-                cancel_file: Path | None = None) -> dict:
+                cancel_file: Path | None = None, *, quality_profile: str = "fast") -> dict:
     if mode not in MODES or threads < 1 or threads > MAX_THREADS:
         raise ReconstructionError("Некорректный режим или число потоков (1–64).")
+    if quality_profile not in OPENMVS_QUALITY or (quality_profile != "fast" and mode != "dense-cpu"):
+        raise ReconstructionError("Выбранный профиль качества доступен только для плотного расчёта OpenMVS.")
 
     images = images.expanduser().resolve()
     output = output.expanduser().resolve()
@@ -566,6 +572,10 @@ def reconstruct(images: Path, output: Path, mode: str, threads: int,
     if selected_gpu is not None:
         report.update(backend="COLMAP-CL 1.5 (внешний, эксперимент)", opencl_device=selected_gpu,
                       opencl_device_verified=False, backend_log="colmap-cl.log", opencl_stages={})
+    if mode == "dense-cpu":
+        resolution_level, max_resolution = OPENMVS_QUALITY[quality_profile]
+        report["dense_settings"] = {"profile": quality_profile, "resolution_level": resolution_level,
+                                    "min_resolution_px": 320, "max_resolution_px": max_resolution}
     report_path = output / "report.json"
     save_report(report_path, report)
     watch = CancellationWatch(cancel_file, pycolmap)
@@ -715,9 +725,11 @@ def reconstruct(images: Path, output: Path, mode: str, threads: int,
                 scene, dense_scene = output / "scene.mvs", output / "dense.mvs"
                 run_program([str(interface), "-i", str(workspace), "-o", str(scene),
                              "--image-folder", str(workspace / "images"), "--max-threads", str(threads)], output, cancel_file)
+                dense_started = time.monotonic()
                 run_program([str(densifier), "-i", str(scene), "-o", str(dense_scene),
-                             "--max-threads", str(threads), "--resolution-level", "2",
-                             "--min-resolution", "320", "--max-resolution", "1280"], output, cancel_file)
+                             "--max-threads", str(threads), "--resolution-level", str(resolution_level),
+                             "--min-resolution", "320", "--max-resolution", str(max_resolution)], output, cancel_file)
+                report["densify_seconds"] = round(time.monotonic() - dense_started, 3)
                 report["compute_backends"]["dense_stereo"] = "OpenMVS CPU"
                 result_path = output / "dense.ply"
             elif mode == "dense-opencl":
