@@ -54,8 +54,12 @@ def check_model(executable: Path, images: Path, root: Path, openmvs: Path,
                "--output", str(output), "--openmvs-dir", str(openmvs), "--threads", "4"]
     if quality == "detail":
         command += ["--quality", quality]
-    result = subprocess.run(command, check=False, timeout=900, stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
+    try:
+        result = subprocess.run(command, check=False, timeout=900, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
+    except subprocess.TimeoutExpired as exc:
+        print((exc.stdout or b"").decode("utf-8", errors="replace"), end="", flush=True)
+        raise
     print(result.stdout, end="", flush=True)
     if result.returncode != 0:
         raise RuntimeError(f"photo-to-model worker ({quality}) failed with code {result.returncode}")
@@ -236,25 +240,27 @@ def check_cr2(executable: Path, sample: Path, root: Path) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--executable", required=True, type=Path)
-    parser.add_argument("--images", required=True, type=Path)
+    inputs = parser.add_mutually_exclusive_group(required=True)
+    inputs.add_argument("--images", type=Path)
+    inputs.add_argument("--benchmark-images", type=Path)
     parser.add_argument("--openmvs", required=True, type=Path)
-    parser.add_argument("--colmap-cl", required=True, type=Path)
-    parser.add_argument("--cr2-sample", required=True, type=Path)
-    parser.add_argument("--benchmark-images", type=Path)
+    parser.add_argument("--colmap-cl", type=Path)
+    parser.add_argument("--cr2-sample", type=Path)
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
+    if args.images is not None and (args.colmap_cl is None or args.cr2_sample is None):
+        parser.error("--images requires --colmap-cl and --cr2-sample")
     args.output.mkdir(parents=True, exist_ok=False)
-    check_mesh_worker_entrypoint(args.executable, args.output)
-    check_texture_worker_entrypoint(args.executable, args.openmvs, args.output)
-    check_cancel(args.executable, args.images, args.output)
-    check_model(args.executable, args.images, args.output, args.openmvs)
-    check_model(args.executable, args.images, args.output, args.openmvs, quality="detail")
-    check_textured_glb(args.executable, args.output, args.openmvs)
-    check_opencl_no_gpu(args.executable, args.images, args.output, args.colmap_cl)
-    check_cr2(args.executable, args.cr2_sample, args.output)
     if args.benchmark_images is not None:
-        benchmark = args.output / "profile-benchmark"
-        benchmark.mkdir()
         print("Comparing both profiles on the same real photographs", flush=True)
-        check_model(args.executable, args.benchmark_images, benchmark, args.openmvs)
-        check_model(args.executable, args.benchmark_images, benchmark, args.openmvs, quality="detail")
+        check_model(args.executable, args.benchmark_images, args.output, args.openmvs)
+        check_model(args.executable, args.benchmark_images, args.output, args.openmvs, quality="detail")
+    else:
+        check_mesh_worker_entrypoint(args.executable, args.output)
+        check_texture_worker_entrypoint(args.executable, args.openmvs, args.output)
+        check_cancel(args.executable, args.images, args.output)
+        check_model(args.executable, args.images, args.output, args.openmvs)
+        check_model(args.executable, args.images, args.output, args.openmvs, quality="detail")
+        check_textured_glb(args.executable, args.output, args.openmvs)
+        check_opencl_no_gpu(args.executable, args.images, args.output, args.colmap_cl)
+        check_cr2(args.executable, args.cr2_sample, args.output)
