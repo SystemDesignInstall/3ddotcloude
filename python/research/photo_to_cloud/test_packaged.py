@@ -47,20 +47,26 @@ def check_cancel(executable: Path, images: Path, root: Path) -> None:
             process.wait()
 
 
-def check_dense(executable: Path, images: Path, root: Path, openmvs: Path) -> None:
+def check_model(executable: Path, images: Path, root: Path, openmvs: Path) -> None:
     output = root / "dense"
-    result = subprocess.run([str(executable), "--worker", "--images", str(images), "--output", str(output),
-                             "--mode", "dense-cpu", "--openmvs-dir", str(openmvs), "--threads", "4"],
-                            check=False, timeout=600)
+    result = subprocess.run([str(executable), "--model-worker", "--images", str(images),
+                             "--output", str(output), "--openmvs-dir", str(openmvs), "--threads", "4"],
+                            check=False, timeout=900)
     if result.returncode != 0:
-        raise RuntimeError(f"dense worker failed with code {result.returncode}")
+        raise RuntimeError(f"photo-to-model worker failed with code {result.returncode}")
     report = json.loads((output / "report.json").read_text(encoding="utf-8"))
     if (report["status"] != "succeeded" or report["registered_images"] < 3 or report["point_count"] < 100
             or not (output / "dense.ply").is_file() or not (output / "preview.html").is_file()
             or not (output / "full_viewer.html").is_file()):
         raise RuntimeError(f"invalid dense result: {report}")
-    print(f"Packaged dense reconstruction: {report['registered_images']} cameras, "
-          f"{report['point_count']} points, {report['preview_points']} preview points", flush=True)
+    model = json.loads((output / "model-report.json").read_text(encoding="utf-8"))
+    if (model["status"] != "succeeded" or model["stage"] != "complete"
+            or model["mesh_faces"] < 1 or not (output / "model-mesh.ply").is_file()):
+        raise RuntimeError(f"invalid model report: {model}")
+    glb = inspect_glb(output / "model.glb")
+    print(f"Packaged photos to GLB: {report['registered_images']} cameras, "
+          f"{report['point_count']} points, {model['mesh_faces']} faces, "
+          f"{glb['texture_count']} textures", flush=True)
 
 
 def check_textured_glb(executable: Path, root: Path, openmvs: Path) -> None:
@@ -225,7 +231,7 @@ if __name__ == "__main__":
     check_mesh_worker_entrypoint(args.executable, args.output)
     check_texture_worker_entrypoint(args.executable, args.openmvs, args.output)
     check_cancel(args.executable, args.images, args.output)
-    check_dense(args.executable, args.images, args.output, args.openmvs)
+    check_model(args.executable, args.images, args.output, args.openmvs)
     check_textured_glb(args.executable, args.output, args.openmvs)
     check_opencl_no_gpu(args.executable, args.images, args.output, args.colmap_cl)
     check_cr2(args.executable, args.cr2_sample, args.output)

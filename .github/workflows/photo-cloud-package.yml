@@ -63,7 +63,7 @@ jobs:
           $file = Join-Path $env:RUNNER_TEMP 'canon-sample.CR2'
           Invoke-WebRequest -Uri 'https://github.com/tellodaniel/revelraw-sample-raw-files/releases/download/v1/Canon-5D-Mark-IV.CR2' -OutFile $file
           if ((Get-FileHash -Algorithm SHA256 $file).Hash -ne '02B23F9CC6DC4C99FB39AA4D1F65AC227804D06461AC1BD0F842AA2F3BEB8FE4') { throw 'Unexpected CR2 fixture checksum' }
-      - name: Run packaged cancellation and dense reconstruction
+      - name: Run packaged photo-to-GLB and cancellation tests
         run: >-
           python python/research/photo_to_cloud/test_packaged.py
           --executable "${{ github.workspace }}/dist/SpatialPhotoCloud/SpatialPhotoCloud.exe"
@@ -80,7 +80,7 @@ jobs:
       - name: Publish test artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SpatialPhotoCloud-Windows-AMD-experiment
+          name: SpatialPhotoCloud-Windows-x64
           path: dist/SpatialPhotoCloud/
           if-no-files-found: error
           retention-days: 14

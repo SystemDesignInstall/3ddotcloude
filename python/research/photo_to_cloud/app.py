@@ -81,7 +81,7 @@ def a2_worker_command(options: dict, output: Path, cancel_file: Path) -> list[st
 class App:
     def __init__(self, root: tk.Tk, auto_configure_on_start: bool = True) -> None:
         self.root = root
-        root.title("Spatial Photo Cloud — эксперимент")
+        root.title("Spatial Photo Cloud")
         root.geometry("820x840")
         root.minsize(700, 680)
         self.events: queue.Queue = queue.Queue()
@@ -120,11 +120,14 @@ class App:
 
         frame = ttk.Frame(root, padding=16)
         frame.pack(fill="both", expand=True)
-        ttk.Label(frame, text="Фотографии → облако точек", font=(title_family, 17, "bold")).pack(anchor="w")
-        ttk.Label(frame, text="Локальный эксперимент: файлы не загружаются в интернет.").pack(anchor="w", pady=(4, 12))
+        ttk.Label(frame, text="Фотографии → 3D-модель", font=(title_family, 17, "bold")).pack(anchor="w")
+        ttk.Label(frame, text="Обработка на этом компьютере. Результат: облако, сетка и текстурированный GLB.").pack(anchor="w", pady=(4, 12))
         self.path_row(frame, "Папка с фотографиями (CR2, JPG, PNG, TIFF)", self.images, self.choose_images)
         self.path_row(frame, "Где сохранять результат", self.destination, self.choose_destination)
-        ttk.Label(frame, text="Режим").pack(anchor="w", pady=(8, 2))
+        self.start_button = ttk.Button(frame, text="Построить 3D-модель из фото", command=lambda: self.start(model=True),
+                                       state="disabled")
+        self.start_button.pack(anchor="w", pady=(8, 0))
+        ttk.Label(frame, text="Режим отдельного построения облака").pack(anchor="w", pady=(8, 2))
         self.mode_combo = ttk.Combobox(frame, state="readonly", values=list(MODES), textvariable=self.mode)
         self.mode_combo.pack(fill="x")
         thread_row = ttk.Frame(frame)
@@ -162,8 +165,7 @@ class App:
 
         actions = ttk.Frame(frame)
         actions.pack(fill="x", pady=(0, 8))
-        self.start_button = ttk.Button(actions, text="Построить облако", command=self.start, state="disabled")
-        self.start_button.pack(side="left")
+        ttk.Button(actions, text="Построить только облако", command=self.start).pack(side="left")
         self.open_button = ttk.Button(actions, text="Открыть папку результата", command=self.open_result, state="disabled")
         self.open_button.pack(side="left", padx=8)
         self.cancel_button = ttk.Button(actions, text="Остановить", command=self.cancel, state="disabled")
@@ -209,6 +211,8 @@ class App:
         value = filedialog.askdirectory(title="Папка с фотографиями")
         if value:
             self.images.set(value)
+            if not self.destination.get().strip():
+                self.destination.set(str(Path(value).parent / "SpatialPhotoCloud Results"))
 
     def choose_destination(self) -> None:
         value = filedialog.askdirectory(title="Папка для результатов")
@@ -334,14 +338,15 @@ class App:
         self.log.see("end")
         self.log.configure(state="disabled")
 
-    def start(self) -> None:
+    def start(self, *, model: bool = False) -> None:
         if self.process or self.installing or self.detecting_hardware:
             return
         if not self.images.get().strip() or not self.destination.get().strip():
             messagebox.showerror("Не выбраны папки", "Выберите папку с фотографиями и папку результата.")
             return
-        mode = MODES[self.mode.get()]
-        if mode == "dense-cpu" and not self.openmvs.get().strip():
+        mode = "dense-cpu" if model else MODES[self.mode.get()]
+        openmvs = self.openmvs.get().strip()
+        if mode == "dense-cpu" and not openmvs and (not model or os.name != "nt"):
             messagebox.showerror("Нужен OpenMVS", "Выберите папку с программами OpenMVS.")
             return
         if mode in {"dense-amd", "dense-opencl"} and not self.colmap.get().strip():
@@ -361,15 +366,22 @@ class App:
         self.cancel_dir = tempfile.TemporaryDirectory(prefix="spatial-cancel-")
         self.cancel_file = Path(self.cancel_dir.name) / "cancel"
         self.close_after_cancel = False
-        self.current_task = "reconstruction"
+        self.current_task = "model" if model else "reconstruction"
         self.cancel_requested = False
-        command = worker_command(self.images.get(), self.result_dir, mode, self.cancel_file, threads)
-        if mode == "dense-cpu":
-            command += ["--openmvs-dir", self.openmvs.get()]
+        if model:
+            command = ([sys.executable, "--model-worker"] if getattr(sys, "frozen", False)
+                       else [sys.executable, "-u", str(Path(__file__).with_name("model_worker.py"))])
+            command += ["--images", self.images.get(), "--output", str(self.result_dir),
+                        "--threads", str(threads), "--cancel-file", str(self.cancel_file)]
+        else:
+            command = worker_command(self.images.get(), self.result_dir, mode, self.cancel_file, threads)
+        if mode == "dense-cpu" and openmvs:
+            command += ["--openmvs-dir", openmvs]
         elif mode in {"dense-amd", "dense-opencl"}:
             command += ["--colmap", self.colmap.get()]
         environment = os.environ.copy()
         environment["PYTHONUTF8"] = "1"
+        environment["PYTHONUNBUFFERED"] = "1"
         try:
             self.process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                             text=True, encoding="utf-8", errors="replace", env=environment,
@@ -378,6 +390,7 @@ class App:
             self.cancel_dir.cleanup()
             self.cancel_dir = None
             self.cancel_file = None
+            self.current_task = None
             messagebox.showerror("Не удалось запустить", str(exc))
             return
         self.append_log(f"\nПапка результата: {self.result_dir}\n")
@@ -642,6 +655,8 @@ class App:
                 kind, value = self.events.get_nowait()
                 if kind == "line":
                     self.append_log(value)
+                    if self.current_task == "model" and value.startswith("Этап ") and not self.cancel_requested:
+                        self.status.set(value.strip())
                 elif kind in ("capture_ready", "capture_error"):
                     self.opening_capture = self.installing = False
                     self.progress.stop()
@@ -718,7 +733,13 @@ class App:
                     self.current_task = None
                     self.mesh_output = None
                     self.mesh_job_id = None
-                    if task == "mesh":
+                    if task == "model" and value == 0 and self.result_dir is not None:
+                        model_path = self.result_dir / "model.glb"
+                        self.status.set("3D-модель готова. Текстурированный GLB сохранён в папке результата.")
+                        self.append_log(f"3D-модель готова: {model_path}\n")
+                        self.open_result()
+                        self.open_cloud(self.result_dir / "model-mesh.ply")
+                    elif task == "mesh":
                         if value == 0 and mesh_output is not None and mesh_output.is_file():
                             self.status.set("3D-сетка построена; открываю её в просмотрщике")
                             self.append_log(f"3D-сетка готова: {mesh_output}\n")
@@ -858,6 +879,12 @@ class App:
 
 
 def main() -> int:
+    if sys.argv[1:2] == ["--model-worker"]:
+        for stream in (sys.stdout, sys.stderr):
+            if stream is not None and hasattr(stream, "reconfigure"):
+                stream.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
+        from model_worker import main as model_main
+        return model_main(sys.argv[2:])
     if sys.argv[1:2] == ["--a2-import-worker"]:
         for stream in (sys.stdout, sys.stderr):
             if stream is not None and hasattr(stream, "reconfigure"):
