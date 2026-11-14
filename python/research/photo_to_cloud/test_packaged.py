@@ -9,6 +9,7 @@ import struct
 import subprocess
 import threading
 
+from test_lan_features import verify_lan_reconstruction
 from texture_worker import inspect_glb
 
 
@@ -225,6 +226,9 @@ if __name__ == "__main__":
     check_mesh_worker_entrypoint(args.executable, args.output)
     check_texture_worker_entrypoint(args.executable, args.openmvs, args.output)
     check_cancel(args.executable, args.images, args.output)
+    lan_root = args.output / 'lan'
+    lan_root.mkdir()
+    verify_lan_reconstruction([str(args.executable)], args.images, lan_root)
     check_dense(args.executable, args.images, args.output, args.openmvs)
     check_textured_glb(args.executable, args.output, args.openmvs)
     check_opencl_no_gpu(args.executable, args.images, args.output, args.colmap_cl)

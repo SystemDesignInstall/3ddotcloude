@@ -79,6 +79,7 @@ if (-not $SkipTests) {
 }
 
 Copy-Item "WINDOWS-TEST.txt" (Join-Path $dist "SpatialPhotoCloud\README.txt") -Force
+Copy-Item "START_SECOND_PC.bat" (Split-Path -Parent $executable) -Force
 Copy-Item "README.md" (Join-Path $dist "SpatialPhotoCloud\README-SOURCE.md") -Force
 
 Write-Host "Готово: $executable" -ForegroundColor Green
