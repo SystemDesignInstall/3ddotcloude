@@ -14,7 +14,9 @@ import threading
 import uuid
 
 import tkinter as tk
-from tkinter import filedialog, font, messagebox, scrolledtext, ttk
+from tkinter import filedialog, font, messagebox, scrolledtext, simpledialog, ttk
+
+from lan_features import PAIRING_ENV, NodeError, Pairing
 
 
 MODES = {
@@ -86,6 +88,8 @@ class App:
         self.result_dir: Path | None = None
         self.viewer_hosts = []
         self.detecting_hardware = False
+        self.node_code = ""
+        self.node_status = tk.StringVar(value="Только основной ПК")
         self.images = tk.StringVar()
         self.destination = tk.StringVar()
         self.openmvs = tk.StringVar()
@@ -129,6 +133,10 @@ class App:
         self.auto_button = ttk.Button(hardware_row, text="Подобрать автоматически",
                                       command=self.auto_configure)
         self.auto_button.pack(side="right", padx=(8, 0))
+        node_row = ttk.Frame(frame)
+        node_row.pack(fill="x", pady=(6, 0))
+        ttk.Button(node_row, text="Подключить второй ПК…", command=self.configure_node).pack(side="left")
+        ttk.Label(node_row, textvariable=self.node_status).pack(side="left", padx=8)
         self.path_row(frame, "Папка OpenMVS (плотное облако и текстурирование)", self.openmvs, self.choose_openmvs)
         install_row = ttk.Frame(frame)
         install_row.pack(fill="x", pady=(3, 0))
@@ -204,6 +212,28 @@ class App:
         value = filedialog.askopenfilename(title="Исполняемый файл colmap.exe", filetypes=[("Программа", "*.exe"), ("Все файлы", "*")])
         if value:
             self.colmap.set(value)
+
+    def configure_node(self) -> None:
+        code = simpledialog.askstring(
+            "Вычисления на двух ПК",
+            "На втором ПК запустите START_SECOND_PC.bat. Вставьте код подключения из его окна.\n"
+            "Пустое поле отключает второй ПК для следующих запусков.",
+            parent=self.root, show="*",
+        )
+        if code is None:
+            return
+        code = code.strip()
+        if not code:
+            self.node_code = ""
+            self.node_status.set("Только основной ПК")
+            return
+        try:
+            node = Pairing.parse(code)
+        except NodeError as error:
+            messagebox.showerror("Некорректный код", str(error), parent=self.root)
+            return
+        self.node_code = code
+        self.node_status.set(f"Узел {node.host}:{node.port} · проверка при расчёте")
 
     def install_openmvs(self) -> None:
         if self.installing or self.process or self.detecting_hardware:
@@ -350,6 +380,9 @@ class App:
             command += ["--colmap", self.colmap.get()]
         environment = os.environ.copy()
         environment["PYTHONUTF8"] = "1"
+        environment.pop(PAIRING_ENV, None)
+        if self.node_code:
+            environment[PAIRING_ENV] = self.node_code
         try:
             self.process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                             text=True, encoding="utf-8", errors="replace", env=environment,
@@ -747,6 +780,10 @@ class App:
 
 
 def main() -> int:
+    if sys.argv[1:2] == ["--lan-node"]:
+        from lan_features import main as lan_main
+        sys.argv = [sys.argv[0], *sys.argv[2:]]
+        return lan_main()
     if sys.argv[1:2] == ["--hardware-opencl-probe"]:
         from hardware_profile import hardware_opencl_probe_main
         return hardware_opencl_probe_main(verify="--inventory-only" not in sys.argv[2:])

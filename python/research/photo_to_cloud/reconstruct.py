@@ -17,6 +17,8 @@ import sys
 import threading
 import time
 
+from lan_features import PAIRING_ENV, NodeError, Pairing, extract, extract_distributed, load_pycolmap
+
 from hardware_profile import recommended_threads as hardware_recommended_threads
 from hardware_profile import (
     cpu_model_name,
@@ -492,7 +494,7 @@ def save_report(path: Path, report: dict) -> None:
 
 def reconstruct(images: Path, output: Path, mode: str, threads: int,
                 openmvs_dir: Path | None = None, colmap: Path | None = None,
-                cancel_file: Path | None = None) -> dict:
+                cancel_file: Path | None = None, pairing: Pairing | None = None) -> dict:
     if mode not in MODES or threads < 1 or threads > MAX_THREADS:
         raise ReconstructionError("Некорректный режим или число потоков (1–64).")
 
@@ -532,12 +534,12 @@ def reconstruct(images: Path, output: Path, mode: str, threads: int,
     # reconstruction wheel. This also keeps the output folder untouched when a
     # required runtime dependency is missing.
     try:
-        import pycolmap
         from PIL import Image  # noqa: F401
+        pycolmap = load_pycolmap()
     except ImportError as exc:
         raise ReconstructionError("Установите зависимости: python -m pip install -r requirements.txt") from exc
-    if pycolmap.__version__ != "4.2.1":
-        raise ReconstructionError(f"Нужен pycolmap 4.2.1; установлен {pycolmap.__version__}.")
+    except NodeError as exc:
+        raise ReconstructionError(str(exc)) from exc
     output.mkdir(parents=True, exist_ok=False)
     report = {
         "status": "running", "mode": mode, "input_directory": str(images),
@@ -591,18 +593,25 @@ def reconstruct(images: Path, output: Path, mode: str, threads: int,
             save_report(report_path, report)
         db, sparse = output / "database.db", output / "sparse"
         sparse.mkdir()
-        extraction = pycolmap.FeatureExtractionOptions()
-        extraction.num_threads, extraction.max_image_size, extraction.use_gpu = threads, 2000, False
         matching = pycolmap.FeatureMatchingOptions()
         matching.num_threads, matching.use_gpu = threads, False
         mapping = pycolmap.IncrementalPipelineOptions()
         mapping.num_threads, mapping.min_model_size = threads, min(10, len(paths))
         print(f"Параллелизм CPU: {threads} потоков (доступно логических: {logical_processor_count()}).", flush=True)
         print("1/4. Поиск особенностей на фотографиях (CPU)...", flush=True)
-        pycolmap.extract_features(db, processing_images, image_names=image_names,
-                                  extraction_options=extraction, device=pycolmap.Device.cpu,
-                                  cancellation_token=watch.token)
+        if pairing is None:
+            extract(pycolmap, db, processing_images, image_names, threads, watch.token)
+        else:
+            distributed = extract_distributed(
+                pycolmap, db, processing_images, image_names, threads, watch.token, pairing,
+                lambda: check_cancel(cancel_file), lambda message: print(message, flush=True),
+            )
+            report["lan_feature_extraction"] = distributed
+            if distributed["remote_images"]:
+                report["compute_backends"]["feature_extraction"] = "CPU (основной ПК и узел LAN)"
+            save_report(report_path, report)
         check_cancel(cancel_file)
+
         def match_on_cpu():
             pycolmap.match_exhaustive(db, matching_options=matching, device=pycolmap.Device.cpu,
                                       cancellation_token=watch.token)
@@ -788,7 +797,10 @@ def main() -> int:
     parser.add_argument("--cancel-file", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
     try:
-        reconstruct(args.images, args.output, args.mode, args.threads, args.openmvs_dir, args.colmap, args.cancel_file)
+        code = os.environ.pop(PAIRING_ENV, "").strip()
+        pairing = Pairing.parse(code) if code else None
+        reconstruct(args.images, args.output, args.mode, args.threads, args.openmvs_dir,
+                    args.colmap, args.cancel_file, pairing)
         return 0
     except ReconstructionCancelled as exc:
         print(str(exc), file=sys.stderr, flush=True)
