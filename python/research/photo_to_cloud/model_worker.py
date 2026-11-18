@@ -9,6 +9,7 @@ import sys
 import tempfile
 import time
 
+from lan_features import Pairing
 from mesh_worker import inspect_mesh, publish_without_replacement
 from reconstruct import (MAX_THREADS, OPENMVS_QUALITY, ReconstructionCancelled, ReconstructionError,
                          check_cancel, executable, image_paths, recommended_threads,
@@ -17,7 +18,8 @@ from texture_worker import TextureCancelled, build_textured_model
 
 
 def build_model(images: Path, output: Path, threads: int, openmvs_dir: Path | None,
-                cancel_file: Path | None = None, *, quality_profile: str = "fast") -> None:
+                cancel_file: Path | None = None, *, quality_profile: str = "fast",
+                pairing: Pairing | None = None) -> None:
     images = images.expanduser().resolve()
     output = output.expanduser().resolve()
     if not 1 <= threads <= MAX_THREADS:
@@ -47,7 +49,7 @@ def build_model(images: Path, output: Path, threads: int, openmvs_dir: Path | No
     print("Этап 1 из 3. Фотографии → плотное облако", flush=True)
     started = time.monotonic()
     reconstruct(images, output, "dense-cpu", threads, openmvs_dir=openmvs_dir,
-                cancel_file=cancel_file, quality_profile=quality_profile)
+                cancel_file=cancel_file, quality_profile=quality_profile, pairing=pairing)
 
     mesh_path = output / "model-mesh.ply"
     stage = "mesh"
@@ -96,7 +98,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         build_model(args.images, args.output, args.threads, args.openmvs_dir, args.cancel_file,
-                    quality_profile=args.quality)
+                    quality_profile=args.quality, pairing=Pairing.from_environment())
     except (ReconstructionCancelled, TextureCancelled) as exc:
         print(str(exc), file=sys.stderr, flush=True)
         return 130

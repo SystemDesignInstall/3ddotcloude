@@ -76,6 +76,7 @@ jobs:
         shell: pwsh
         run: |
           Copy-Item python/research/photo_to_cloud/WINDOWS-TEST.txt dist/SpatialPhotoCloud/README.txt
+          Copy-Item python/research/photo_to_cloud/START_SECOND_PC.bat dist/SpatialPhotoCloud/
           Copy-Item -Recurse "$env:RUNNER_TEMP/photo-cloud-images" dist/SpatialPhotoCloud/test-photos
       - name: Publish test artifact
         uses: actions/upload-artifact@v4

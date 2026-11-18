@@ -3,12 +3,15 @@
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import queue
 import struct
 import subprocess
 import threading
 
+from lan_features import PAIRING_ENV
+from test_lan_features import running_node, verify_lan_reconstruction
 from texture_worker import inspect_glb
 
 
@@ -48,14 +51,18 @@ def check_cancel(executable: Path, images: Path, root: Path) -> None:
 
 
 def check_model(executable: Path, images: Path, root: Path, openmvs: Path,
-                quality: str = "fast") -> None:
+                quality: str = "fast", *, node_code: str = "") -> None:
     output = root / ("dense" if quality == "fast" else "dense-detail")
     command = [str(executable), "--model-worker", "--images", str(images),
                "--output", str(output), "--openmvs-dir", str(openmvs), "--threads", "4"]
     if quality == "detail":
         command += ["--quality", quality]
+    environment = os.environ.copy()
+    environment.pop(PAIRING_ENV, None)
+    if node_code:
+        environment[PAIRING_ENV] = node_code
     try:
-        result = subprocess.run(command, check=False, timeout=900, stdout=subprocess.PIPE,
+        result = subprocess.run(command, check=False, timeout=900, stdout=subprocess.PIPE, env=environment,
                                 stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
     except subprocess.TimeoutExpired as exc:
         print((exc.stdout or b"").decode("utf-8", errors="replace"), end="", flush=True)
@@ -72,6 +79,8 @@ def check_model(executable: Path, images: Path, root: Path, openmvs: Path,
             or not (output / "dense.ply").is_file() or not (output / "preview.html").is_file()
             or not (output / "full_viewer.html").is_file()):
         raise RuntimeError(f"invalid dense result: {report}")
+    if node_code and not report.get("lan_feature_extraction", {}).get("remote_images"):
+        raise RuntimeError("The packaged model worker did not use the LAN node")
     model = json.loads((output / "model-report.json").read_text(encoding="utf-8"))
     if (model["status"] != "succeeded" or model["stage"] != "complete"
             or model["mesh_faces"] < 1 or not (output / "model-mesh.ply").is_file()):
@@ -259,7 +268,11 @@ if __name__ == "__main__":
         check_mesh_worker_entrypoint(args.executable, args.output)
         check_texture_worker_entrypoint(args.executable, args.openmvs, args.output)
         check_cancel(args.executable, args.images, args.output)
-        check_model(args.executable, args.images, args.output, args.openmvs)
+        lan_root = args.output / "lan"
+        lan_root.mkdir()
+        verify_lan_reconstruction([str(args.executable)], args.images, lan_root)
+        with running_node([str(args.executable)], lan_root, "photo-to-glb") as (_, _, code):
+            check_model(args.executable, args.images, args.output, args.openmvs, node_code=code)
         check_model(args.executable, args.images, args.output, args.openmvs, quality="detail")
         check_textured_glb(args.executable, args.output, args.openmvs)
         check_opencl_no_gpu(args.executable, args.images, args.output, args.colmap_cl)
